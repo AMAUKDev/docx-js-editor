@@ -12,6 +12,7 @@
 import React, { useCallback, useEffect, useRef } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import type { ParagraphAlignment, Style, Theme } from '../types/document';
+import type { NumberingMap } from '../docx/numberingParser';
 import { FontPicker } from './ui/FontPicker';
 import { FontSizePicker, halfPointsToPoints } from './ui/FontSizePicker';
 import { TextColorPicker, HighlightColorPicker } from './ui/ColorPicker';
@@ -170,6 +171,12 @@ export interface ToolbarProps {
   onInsertPageBreak?: () => void;
   /** Callback when user wants to insert a table of contents */
   onInsertTOC?: () => void;
+  /** When true, hides font/size/color pickers and shows style gallery instead */
+  restrictedMode?: boolean;
+  /** Style IDs to show in the gallery (forwarded to StylePicker) */
+  allowedStyleIds?: string[];
+  /** Numbering map for computing heading prefixes in the style picker */
+  numberingMap?: NumberingMap | null;
   /** Callback when user wants to insert a shape */
   onInsertShape?: (data: {
     shapeType: string;
@@ -351,10 +358,13 @@ export function Toolbar({
   enableShortcuts = true,
   editorRef,
   children,
-  showFontPicker = true,
-  showFontSizePicker = true,
-  showTextColorPicker = true,
-  showHighlightColorPicker = true,
+  restrictedMode = false,
+  allowedStyleIds,
+  numberingMap,
+  showFontPicker: showFontPickerProp = true,
+  showFontSizePicker: showFontSizePickerProp = true,
+  showTextColorPicker: showTextColorPickerProp = true,
+  showHighlightColorPicker: showHighlightColorPickerProp = true,
   showAlignmentButtons = true,
   showListButtons = true,
   showLineSpacingPicker = true,
@@ -380,6 +390,12 @@ export function Toolbar({
   onTableAction,
 }: ToolbarProps) {
   const toolbarRef = useRef<HTMLDivElement>(null);
+
+  // In restricted mode, override show* props for pickers that expose arbitrary formatting
+  const showFontPicker = restrictedMode ? false : showFontPickerProp;
+  const showFontSizePicker = restrictedMode ? false : showFontSizePickerProp;
+  const showTextColorPicker = restrictedMode ? false : showTextColorPickerProp;
+  const showHighlightColorPicker = restrictedMode ? false : showHighlightColorPickerProp;
 
   /**
    * Handle formatting action
@@ -648,6 +664,28 @@ export function Toolbar({
     };
   }, [enableShortcuts, handleFormat, editorRef]);
 
+  // Alt+digit shortcuts for heading styles (no container guard — these are
+  // unambiguous shortcuts that should work whenever the editor is mounted)
+  useEffect(() => {
+    if (!enableShortcuts) return;
+
+    const handleAltDigit = (event: KeyboardEvent) => {
+      if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+
+      const digit = event.key;
+      if (digit >= '1' && digit <= '9') {
+        event.preventDefault();
+        handleFormat({ type: 'applyStyle', value: `Heading${digit}` });
+      } else if (digit === '0') {
+        event.preventDefault();
+        handleFormat({ type: 'applyStyle', value: 'Normal' });
+      }
+    };
+
+    document.addEventListener('keydown', handleAltDigit);
+    return () => document.removeEventListener('keydown', handleAltDigit);
+  }, [enableShortcuts, handleFormat]);
+
   // Prevent toolbar clicks from stealing focus and refocus editor
   const handleToolbarMouseDown = useCallback((e: React.MouseEvent) => {
     // Allow clicks on input/select elements to work normally
@@ -691,10 +729,10 @@ export function Toolbar({
     <div
       ref={toolbarRef}
       className={cn(
-        'flex items-center gap-0 px-2 py-2 bg-white border-b border-slate-100 min-h-[44px] overflow-x-auto',
+        'flex flex-wrap items-center gap-0 px-2 py-1.5 bg-white border-b border-slate-100 min-h-[44px]',
         className
       )}
-      style={style}
+      style={{ ...style, rowGap: '4px' }}
       role="toolbar"
       aria-label="Formatting toolbar"
       data-testid="toolbar"
@@ -796,7 +834,10 @@ export function Toolbar({
             styles={documentStyles}
             theme={theme}
             disabled={disabled}
-            width={150}
+            width={restrictedMode ? undefined : 150}
+            galleryMode={restrictedMode}
+            allowedStyleIds={allowedStyleIds}
+            numberingMap={numberingMap}
           />
         </ToolbarGroup>
       )}
@@ -946,6 +987,32 @@ export function Toolbar({
               onChange={handleLineSpacingChange}
               disabled={disabled}
             />
+          )}
+        </ToolbarGroup>
+      )}
+
+      {/* Quick Insert: Image + Table */}
+      {(onInsertImage || (showTableInsert && onInsertTable)) && (
+        <ToolbarGroup label="Insert">
+          {onInsertImage && (
+            <ToolbarButton
+              onClick={onInsertImage}
+              disabled={disabled}
+              title="Insert image"
+              ariaLabel="Insert image"
+            >
+              <MaterialSymbol name="image" size={ICON_SIZE} />
+            </ToolbarButton>
+          )}
+          {showTableInsert && onInsertTable && (
+            <ToolbarButton
+              onClick={() => handleTableInsert(3, 3)}
+              disabled={disabled}
+              title="Insert table"
+              ariaLabel="Insert table"
+            >
+              <MaterialSymbol name="grid_on" size={ICON_SIZE} />
+            </ToolbarButton>
           )}
         </ToolbarGroup>
       )}

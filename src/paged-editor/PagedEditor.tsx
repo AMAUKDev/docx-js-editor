@@ -25,7 +25,7 @@ import React, {
   memo,
 } from 'react';
 import type { CSSProperties } from 'react';
-import { NodeSelection } from 'prosemirror-state';
+import { NodeSelection, TextSelection } from 'prosemirror-state';
 import type { EditorState, Transaction, Plugin } from 'prosemirror-state';
 import { CellSelection } from 'prosemirror-tables';
 import type { EditorView } from 'prosemirror-view';
@@ -149,6 +149,8 @@ export interface PagedEditorProps {
   hfEditMode?: 'header' | 'footer' | null;
   /** Called when user clicks the body area while in HF editing mode. */
   onBodyClick?: () => void;
+  /** Numbering map for resolving list markers with correct numFmt/lvlText. */
+  numberingMap?: import('../docx/numberingParser').NumberingMap | null;
   /** Custom class name. */
   className?: string;
   /** Custom styles. */
@@ -1150,6 +1152,7 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
       onReady,
       onRenderedDomContextReady,
       pluginOverlays,
+      numberingMap,
       onHeaderFooterDoubleClick,
       hfEditMode,
       onBodyClick,
@@ -1287,7 +1290,11 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
           // Step 1: Convert PM doc to flow blocks
           let stepStart = performance.now();
           const pageContentHeight = pageSize.h - margins.top - margins.bottom;
-          const newBlocks = toFlowBlocks(state.doc, { theme: _theme, pageContentHeight });
+          const newBlocks = toFlowBlocks(state.doc, {
+            theme: _theme,
+            pageContentHeight,
+            numberingMap,
+          });
           let stepTime = performance.now() - stepStart;
           if (stepTime > 500) {
             console.warn(
@@ -2787,6 +2794,65 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
     }, []);
 
     /**
+     * Handle "Add Caption" for the selected image.
+     * Inserts a new paragraph with styleId="Caption" and "Figure N: " prefix
+     * after the image's parent paragraph.
+     */
+    const handleAddCaption = useCallback((pmPos: number) => {
+      const view = hiddenPMRef.current?.getView();
+      if (!view) return;
+
+      try {
+        const state = view.state;
+        const $pos = state.doc.resolve(pmPos);
+
+        // Find the parent paragraph
+        let parentPos = $pos.before($pos.depth);
+        let parentNode = state.doc.nodeAt(parentPos);
+        // Walk up if we're deeper than a direct paragraph child
+        for (let d = $pos.depth; d >= 1; d--) {
+          const candidate = state.doc.nodeAt($pos.before(d));
+          if (candidate?.type.name === 'paragraph') {
+            parentPos = $pos.before(d);
+            parentNode = candidate;
+            break;
+          }
+        }
+        if (!parentNode) return;
+
+        // Compute insertion position first (after the parent paragraph)
+        const insertPos = parentPos + parentNode.nodeSize;
+
+        // Count only captions that appear before the insertion position
+        // so inserting between Figure 1 and Figure 3 yields Figure 2
+        let captionCount = 0;
+        state.doc.nodesBetween(0, insertPos, (node) => {
+          if (node.type.name === 'paragraph' && node.attrs.styleId === 'Caption') {
+            captionCount++;
+          }
+          return true;
+        });
+        const figureNumber = captionCount + 1;
+        const captionText = `Figure ${figureNumber}: `;
+        const schema = state.schema;
+        const captionParagraph = schema.nodes.paragraph.create(
+          { styleId: 'Caption', alignment: 'center' },
+          schema.text(captionText)
+        );
+        const tr = state.tr.insert(insertPos, captionParagraph);
+
+        // Place cursor at end of caption text so user can type description
+        const cursorPos = insertPos + 1 + captionText.length;
+        tr.setSelection(TextSelection.create(tr.doc, cursorPos));
+
+        view.dispatch(tr.scrollIntoView());
+        hiddenPMRef.current?.focus();
+      } catch {
+        // Position may have changed
+      }
+    }, []);
+
+    /**
      * Handle image drag-to-move: move image node from its current position
      * to the drop position determined by mouse coordinates.
      */
@@ -3200,6 +3266,8 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
             onDragMove={handleImageDragMove}
             onDragStart={handleImageDragStart}
             onDragEnd={handleImageDragEnd}
+            onAddCaption={handleAddCaption}
+            readOnly={readOnly}
           />
 
           {/* Plugin overlays (highlights, annotations) */}

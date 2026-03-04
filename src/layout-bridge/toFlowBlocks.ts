@@ -33,6 +33,7 @@ import type {
   FontFamilyAttrs,
 } from '../prosemirror/schema/marks';
 import type { Theme } from '../types/document';
+import type { NumberingMap } from '../docx/numberingParser';
 import { resolveColor } from '../utils/colorResolver';
 
 /**
@@ -47,6 +48,8 @@ export type ToFlowBlocksOptions = {
   theme?: Theme | null;
   /** Page content height in pixels (pageHeight - marginTop - marginBottom). Images taller than this are scaled down to fit. */
   pageContentHeight?: number;
+  /** Numbering map for resolving list markers with correct numFmt and lvlText. */
+  numberingMap?: NumberingMap | null;
 };
 
 const DEFAULT_FONT = 'Calibri';
@@ -85,7 +88,88 @@ function nextBlockId(): string {
   return `block-${++blockIdCounter}`;
 }
 
-function formatNumberedMarker(counters: number[], level: number): string {
+/**
+ * Convert number to Roman numerals.
+ */
+function toRoman(num: number): string {
+  const romanNumerals: [number, string][] = [
+    [1000, 'M'],
+    [900, 'CM'],
+    [500, 'D'],
+    [400, 'CD'],
+    [100, 'C'],
+    [90, 'XC'],
+    [50, 'L'],
+    [40, 'XL'],
+    [10, 'X'],
+    [9, 'IX'],
+    [5, 'V'],
+    [4, 'IV'],
+    [1, 'I'],
+  ];
+  let result = '';
+  for (const [value, symbol] of romanNumerals) {
+    while (num >= value) {
+      result += symbol;
+      num -= value;
+    }
+  }
+  return result;
+}
+
+/**
+ * Format a number according to OOXML number format (numFmt).
+ */
+export function formatNumber(value: number, numFmt: string): string {
+  switch (numFmt) {
+    case 'decimal':
+    case 'decimalZero':
+      return String(value);
+    case 'lowerLetter':
+      return String.fromCharCode(96 + ((value - 1) % 26) + 1);
+    case 'upperLetter':
+      return String.fromCharCode(64 + ((value - 1) % 26) + 1);
+    case 'lowerRoman':
+      return toRoman(value).toLowerCase();
+    case 'upperRoman':
+      return toRoman(value);
+    case 'bullet':
+      return '•';
+    default:
+      return String(value);
+  }
+}
+
+/**
+ * Format a numbered list marker using the numbering definition's lvlText template.
+ * Falls back to simple decimal "1.2.3." format if no numbering map is available.
+ */
+export function formatNumberedMarker(
+  counters: number[],
+  level: number,
+  numberingMap?: NumberingMap | null,
+  numId?: number
+): string {
+  // If we have the numbering map, use the actual lvlText template
+  if (numberingMap && numId != null) {
+    const levelDef = numberingMap.getLevel(numId, level);
+    if (levelDef?.lvlText) {
+      let marker = levelDef.lvlText;
+      // Replace %1, %2, etc. with formatted counter values
+      for (let lvl = 0; lvl <= level; lvl++) {
+        const placeholder = `%${lvl + 1}`;
+        if (marker.includes(placeholder)) {
+          const value = counters[lvl] ?? 0;
+          const lvlDef = numberingMap.getLevel(numId, lvl);
+          const formatted = formatNumber(value, lvlDef?.numFmt || 'decimal');
+          marker = marker.replace(placeholder, formatted);
+        }
+      }
+      return marker;
+    }
+  }
+
+  // Fallback: simple decimal format
   const parts: number[] = [];
   for (let i = 0; i <= level; i += 1) {
     const value = counters[i] ?? 0;
@@ -301,6 +385,29 @@ function paragraphToRuns(node: PMNode, startPos: number, _options: ToFlowBlocksO
         text,
         italic: true,
         fontFamily: 'Cambria Math',
+        pmStart: childPos,
+        pmEnd: childPos + child.nodeSize,
+      };
+      runs.push(run);
+    } else if (child.type.name === 'crossRef') {
+      // Cross-reference — render as styled text showing the display text
+      const displayText = (child.attrs.displayText as string) || '[ref]';
+      const run: TextRun = {
+        kind: 'text',
+        text: displayText,
+        pmStart: childPos,
+        pmEnd: childPos + child.nodeSize,
+      };
+      runs.push(run);
+    } else if (child.type.name === 'contextTag') {
+      // Context tag — render as styled text showing the tag label or key
+      const tagKey = child.attrs.tagKey as string;
+      const label = child.attrs.label as string;
+      const displayText = label || `{${tagKey}}`;
+      const run: TextRun = {
+        kind: 'text',
+        text: displayText,
+        fontFamily: 'system-ui, sans-serif',
         pmStart: childPos,
         pmEnd: childPos + child.nodeSize,
       };
@@ -900,10 +1007,9 @@ export function toFlowBlocks(doc: PMNode, options: ToFlowBlocksOptions = {}): Fl
           const pmAttrs = node.attrs as PMParagraphAttrs;
 
           if (pmAttrs.numPr) {
-            if (!pmAttrs.listMarker) {
-              const numId = pmAttrs.numPr.numId;
-              // numId === 0 means "no numbering" per OOXML spec (ECMA-376)
-              if (numId == null || numId === 0) break;
+            const numId = pmAttrs.numPr.numId;
+            // numId === 0 means "no numbering" per OOXML spec (ECMA-376)
+            if (numId != null && numId !== 0) {
               const level = pmAttrs.numPr.ilvl ?? 0;
               const counters = listCounters.get(numId) ?? new Array(9).fill(0);
 
@@ -914,8 +1020,16 @@ export function toFlowBlocks(doc: PMNode, options: ToFlowBlocksOptions = {}): Fl
 
               listCounters.set(numId, counters);
 
-              const marker = pmAttrs.listIsBullet ? '•' : formatNumberedMarker(counters, level);
-              block.attrs = { ...block.attrs, listMarker: marker };
+              // Always recompute numbered markers so reordering updates them.
+              // Bullet markers are static, so keep any pre-set value.
+              if (pmAttrs.listIsBullet) {
+                if (!pmAttrs.listMarker) {
+                  block.attrs = { ...block.attrs, listMarker: '•' };
+                }
+              } else {
+                const marker = formatNumberedMarker(counters, level, opts.numberingMap, numId);
+                block.attrs = { ...block.attrs, listMarker: marker };
+              }
             }
           }
 

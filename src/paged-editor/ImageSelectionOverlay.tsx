@@ -48,6 +48,10 @@ export interface ImageSelectionOverlayProps {
   onDragStart?: () => void;
   /** Callback when drag ends (cancelled or completed) */
   onDragEnd?: () => void;
+  /** Callback when "Add Caption" is clicked for the selected image */
+  onAddCaption?: (pmPos: number) => void;
+  /** Whether the editor is read-only */
+  readOnly?: boolean;
 }
 
 // =============================================================================
@@ -144,6 +148,27 @@ function calculateNewDimensions(
 // COMPONENT
 // =============================================================================
 
+const captionButtonStyles: CSSProperties = {
+  position: 'absolute',
+  display: 'flex',
+  alignItems: 'center',
+  gap: '4px',
+  backgroundColor: '#fff',
+  border: `1px solid ${ACCENT_COLOR}`,
+  borderRadius: '4px',
+  color: ACCENT_COLOR,
+  fontSize: '12px',
+  fontFamily: 'system-ui, sans-serif',
+  fontWeight: 500,
+  padding: '3px 10px',
+  cursor: 'pointer',
+  pointerEvents: 'auto',
+  zIndex: 20,
+  boxShadow: '0 2px 6px rgba(0, 0, 0, 0.15)',
+  whiteSpace: 'nowrap',
+  transform: 'translateX(-50%)',
+};
+
 export function ImageSelectionOverlay({
   imageInfo,
   zoom,
@@ -154,6 +179,8 @@ export function ImageSelectionOverlay({
   onDragMove,
   onDragStart,
   onDragEnd,
+  onAddCaption,
+  readOnly,
 }: ImageSelectionOverlayProps): React.ReactElement | null {
   const [isResizing, setIsResizing] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
@@ -471,6 +498,24 @@ export function ImageSelectionOverlay({
           }}
         >
           {resizeWidth} × {resizeHeight}
+        </div>
+      )}
+
+      {/* Add Caption button - shown below image when not resizing/dragging */}
+      {!isResizing && !isDragging && !readOnly && onAddCaption && imageInfo && (
+        <div
+          style={{
+            ...captionButtonStyles,
+            left: left + width / 2,
+            top: top + height + 8,
+          }}
+          onMouseDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onAddCaption(imageInfo.pmPos);
+          }}
+        >
+          Add Caption
         </div>
       )}
     </div>

@@ -82,6 +82,8 @@ import { getBuiltinTableStyle, type TableStylePreset } from './ui/TableStyleGall
 import { DocumentAgent } from '../agent/DocumentAgent';
 import { DefaultLoadingIndicator, DefaultPlaceholder, ParseError } from './DocxEditorHelpers';
 import { parseDocx } from '../docx/parser';
+import { createNumberingMap as createNumberingMapFromDefs } from '../docx/numberingParser';
+import { formatNumberedMarker } from '../layout-bridge/toFlowBlocks';
 import { type DocxInput } from '../utils/docxInput';
 import { onFontsLoaded, loadDocumentFonts } from '../utils/fontLoader';
 import { executeCommand } from '../agent/executor';
@@ -178,6 +180,16 @@ import { PagedEditor, type PagedEditorRef } from '../paged-editor/PagedEditor';
 // Plugin API types
 import type { RenderedDomContext } from '../plugin-api/types';
 
+// Style enforcer plugin
+import {
+  createStyleEnforcerPlugin,
+  DEFAULT_ALLOWED_STYLE_IDS,
+} from '../plugins/StyleEnforcerPlugin';
+import {
+  createCrossRefUpdaterPlugin,
+  refreshAllReferences,
+} from '../prosemirror/plugins/crossRefUpdater';
+
 // ============================================================================
 // TYPES
 // ============================================================================
@@ -264,6 +276,12 @@ export interface DocxEditorProps {
    * Passed from PluginHost to render plugin-specific overlays.
    */
   pluginOverlays?: ReactNode;
+  /** When true, restrict formatting to approved styles only (hides font/size/color pickers) */
+  restrictedMode?: boolean;
+  /** Style IDs shown in the gallery when restrictedMode is true */
+  allowedStyleIds?: string[];
+  /** Context tags available for insertion (key → resolved value) */
+  contextTags?: Record<string, string>;
 }
 
 /**
@@ -294,6 +312,14 @@ export interface DocxEditorRef {
   openPrintPreview: () => void;
   /** Print the document directly */
   print: () => void;
+  /** Insert a context tag at the current cursor position */
+  insertContextTag: (tagKey: string, label?: string) => void;
+  /** Insert a cross-reference at the current cursor position */
+  insertCrossRef: (refType: 'heading' | 'figure', refTarget: string, displayText: string) => void;
+  /** Get all headings and captions in the document for cross-reference picking */
+  getReferenceable: () => Array<{ type: 'heading' | 'figure'; text: string; number: string }>;
+  /** Force-refresh all cross-ref displayText and caption figure numbers */
+  refreshNumbering: () => void;
 }
 
 /**
@@ -376,6 +402,9 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     onEditorViewReady,
     onRenderedDomContextReady,
     pluginOverlays,
+    restrictedMode = false,
+    allowedStyleIds: allowedStyleIdsProp,
+    contextTags,
   },
   ref
 ) {
@@ -438,6 +467,32 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     return mgr;
   }, []);
 
+  // Resolve allowed style IDs for restricted mode
+  const allowedStyleIds = allowedStyleIdsProp ?? DEFAULT_ALLOWED_STYLE_IDS;
+
+  // Cross-ref auto-updater plugin — uses refs so it always reads the latest data
+  // without needing plugin recreation
+  const crossRefNumMapRef = useRef<import('../docx/numberingParser').NumberingMap | null>(null);
+  const crossRefStyleResolverRef = useRef<ReturnType<typeof createStyleResolver> | null>(null);
+  const crossRefUpdaterPlugin = useMemo(
+    () =>
+      createCrossRefUpdaterPlugin({
+        getNumberingMap: () => crossRefNumMapRef.current,
+        getStyleResolver: () => crossRefStyleResolverRef.current,
+      }),
+    []
+  );
+
+  // Merge external plugins with style enforcer and cross-ref updater
+  const mergedPlugins = useMemo(() => {
+    const plugins = externalPlugins ? [...externalPlugins] : [];
+    plugins.push(crossRefUpdaterPlugin);
+    if (restrictedMode) {
+      plugins.push(createStyleEnforcerPlugin({ allowedStyleIds }));
+    }
+    return plugins;
+  }, [restrictedMode, allowedStyleIds, externalPlugins, crossRefUpdaterPlugin]);
+
   // Refs
   const pagedEditorRef = useRef<PagedEditorRef>(null);
   const hfEditorRef = useRef<InlineHeaderFooterEditorRef>(null);
@@ -453,6 +508,13 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
   // Keep history.state accessible in stable callbacks without stale closures
   const historyStateRef = useRef(history.state);
   historyStateRef.current = history.state;
+  // Keep cross-ref updater plugin refs in sync with latest data
+  crossRefNumMapRef.current = history.state?.package.numbering
+    ? createNumberingMapFromDefs(history.state.package.numbering)
+    : null;
+  crossRefStyleResolverRef.current = history.state?.package.styles
+    ? createStyleResolver(history.state.package.styles)
+    : null;
   // Track current border color/width for border presets (like Google Docs)
   const borderSpecRef = useRef({ style: 'single', size: 4, color: { rgb: '000000' } });
 
@@ -1430,9 +1492,49 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
 
             if (styleResolver) {
               const resolved = styleResolver.resolveParagraphStyle(action.value);
+
+              // Resolve list rendering from numbering definitions
+              let listNumFmt: import('../types/document').NumberFormat | undefined;
+              let listIsBullet: boolean | undefined;
+              const numPr = resolved.paragraphFormatting?.numPr;
+              if (numPr?.numId && numPr.numId !== 0 && currentDoc?.package.numbering) {
+                const numMap = createNumberingMapFromDefs(currentDoc.package.numbering);
+                const level = numMap.getLevel(numPr.numId, numPr.ilvl ?? 0);
+                if (level) {
+                  listNumFmt = level.numFmt;
+                  listIsBullet = level.numFmt === 'bullet';
+                  // Merge numbering-level indent into resolved paragraph formatting
+                  // AMA Heading2/3/4 styles have NO w:ind in their own pPr — indent
+                  // comes entirely from the numbering level definitions.
+                  if (level.pPr) {
+                    if (!resolved.paragraphFormatting) resolved.paragraphFormatting = {};
+                    if (
+                      level.pPr.indentLeft != null &&
+                      resolved.paragraphFormatting.indentLeft == null
+                    ) {
+                      resolved.paragraphFormatting.indentLeft = level.pPr.indentLeft;
+                    }
+                    if (
+                      level.pPr.hangingIndent != null &&
+                      resolved.paragraphFormatting.hangingIndent == null
+                    ) {
+                      resolved.paragraphFormatting.hangingIndent = level.pPr.hangingIndent;
+                    }
+                    if (
+                      level.pPr.indentFirstLine != null &&
+                      resolved.paragraphFormatting.indentFirstLine == null
+                    ) {
+                      resolved.paragraphFormatting.indentFirstLine = level.pPr.indentFirstLine;
+                    }
+                  }
+                }
+              }
+
               applyStyle(action.value, {
                 paragraphFormatting: resolved.paragraphFormatting,
                 runFormatting: resolved.runFormatting,
+                listNumFmt,
+                listIsBullet,
               })(view.state, view.dispatch);
             } else {
               // No styles available, just set the styleId
@@ -1846,9 +1948,138 @@ body { background: white; }
       },
       openPrintPreview: handleDirectPrint,
       print: handleDirectPrint,
+      insertContextTag: (tagKey: string, label?: string) => {
+        const view = pagedEditorRef.current?.getView();
+        if (!view) return;
+        const schema = view.state.schema;
+        const nodeType = schema.nodes.contextTag;
+        if (!nodeType) return;
+        const node = nodeType.create({
+          tagKey,
+          label: label || contextTags?.[tagKey] || '',
+        });
+        const tr = view.state.tr.replaceSelectionWith(node).scrollIntoView();
+        view.dispatch(tr);
+        pagedEditorRef.current?.focus();
+      },
+      insertCrossRef: (refType: 'heading' | 'figure', refTarget: string, displayText: string) => {
+        const view = pagedEditorRef.current?.getView();
+        if (!view) return;
+        const schema = view.state.schema;
+        const nodeType = schema.nodes.crossRef;
+        if (!nodeType) return;
+        const node = nodeType.create({ refType, refTarget, displayText });
+        const tr = view.state.tr.replaceSelectionWith(node).scrollIntoView();
+        view.dispatch(tr);
+        pagedEditorRef.current?.focus();
+      },
+      getReferenceable: () => {
+        const view = pagedEditorRef.current?.getView();
+        if (!view) return [];
+        const items: Array<{ type: 'heading' | 'figure'; text: string; number: string }> = [];
+        const headingCounters = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+        let figureCount = 0;
+
+        // Build numbering map and style resolver for lvlText formatting
+        const currentDoc = historyStateRef.current;
+        const numMap = currentDoc?.package.numbering
+          ? createNumberingMapFromDefs(currentDoc.package.numbering)
+          : null;
+        const styleRes = currentDoc?.package.styles
+          ? createStyleResolver(currentDoc.package.styles)
+          : null;
+
+        view.state.doc.descendants((node) => {
+          if (node.type.name !== 'paragraph') return true;
+          const styleId = node.attrs.styleId as string | null;
+          if (!styleId) return true;
+          // Heading numbering
+          const headingMatch = styleId.match(/^Heading(\d)$/);
+          if (headingMatch) {
+            const level = parseInt(headingMatch[1]) - 1;
+            headingCounters[level]++;
+            for (let i = level + 1; i < headingCounters.length; i++) headingCounters[i] = 0;
+
+            // Use lvlText format from numbering map when available
+            let number: string;
+            const numPr =
+              node.attrs.numPr ??
+              styleRes?.resolveParagraphStyle(styleId)?.paragraphFormatting?.numPr;
+            if (numMap && numPr?.numId) {
+              number = formatNumberedMarker(headingCounters, level, numMap, numPr.numId);
+            } else {
+              // Fallback: simple dot-join
+              const parts = headingCounters.slice(0, level + 1).filter((v) => v > 0);
+              number = parts.join('.');
+            }
+            items.push({ type: 'heading', text: node.textContent, number });
+          }
+          // Caption numbering
+          if (styleId === 'Caption') {
+            figureCount++;
+            items.push({ type: 'figure', text: node.textContent, number: `Figure ${figureCount}` });
+          }
+          return true;
+        });
+        return items;
+      },
+      refreshNumbering: () => {
+        const view = pagedEditorRef.current?.getView();
+        if (!view) return;
+        const tr = refreshAllReferences(view.state, {
+          getNumberingMap: () => crossRefNumMapRef.current,
+          getStyleResolver: () => crossRefStyleResolverRef.current,
+        });
+        if (tr) view.dispatch(tr);
+      },
     }),
-    [history.state, state.zoom, state.currentPage, state.totalPages, handleSave, handleDirectPrint]
+    [
+      history.state,
+      state.zoom,
+      state.currentPage,
+      state.totalPages,
+      handleSave,
+      handleDirectPrint,
+      contextTags,
+    ]
   );
+
+  // Auto-update context tag labels when contextTags prop changes
+  useEffect(() => {
+    if (!contextTags) return;
+    const view = pagedEditorRef.current?.getView();
+    if (!view) return;
+
+    const { state: editorState } = view;
+    const nodeType = editorState.schema.nodes.contextTag;
+    if (!nodeType) return;
+
+    let tr = editorState.tr;
+    let changed = false;
+
+    editorState.doc.descendants((node, pos) => {
+      if (node.type !== nodeType) return true;
+      const tagKey = node.attrs.tagKey as string;
+      const currentLabel = node.attrs.label as string;
+      const newLabel = contextTags[tagKey] ?? '';
+      if (currentLabel !== newLabel) {
+        tr = tr.setNodeMarkup(pos, undefined, { ...node.attrs, label: newLabel });
+        changed = true;
+      }
+      return false; // atom node, no children
+    });
+
+    if (changed) {
+      view.dispatch(tr);
+    }
+  }, [contextTags]);
+
+  // Create numbering map from document numbering definitions
+  const numberingMap = useMemo(() => {
+    const numbering = history.state?.package.numbering;
+    if (!numbering) return null;
+    return createNumberingMapFromDefs(numbering);
+  }, [history.state?.package.numbering]);
 
   // Get header and footer content from document
   const { headerContent, footerContent } = useMemo<{
@@ -1867,19 +2098,30 @@ body { background: white; }
     let header: HeaderFooter | null = null;
     let footer: HeaderFooter | null = null;
 
-    // Get default header from section references
+    // When titlePg is set, page 1 uses 'first' header/footer; otherwise use 'default'
+    const preferFirst = !!sectionProps?.titlePg;
+
+    // Get header from section references
     if (headers && sectionProps?.headerReferences) {
+      const firstRef = preferFirst
+        ? sectionProps.headerReferences.find((r) => r.type === 'first')
+        : null;
       const defaultRef = sectionProps.headerReferences.find((r) => r.type === 'default');
-      if (defaultRef?.rId) {
-        header = headers.get(defaultRef.rId) ?? null;
+      const ref = firstRef ?? defaultRef;
+      if (ref?.rId) {
+        header = headers.get(ref.rId) ?? null;
       }
     }
 
-    // Get default footer from section references
+    // Get footer from section references
     if (footers && sectionProps?.footerReferences) {
+      const firstRef = preferFirst
+        ? sectionProps.footerReferences.find((r) => r.type === 'first')
+        : null;
       const defaultRef = sectionProps.footerReferences.find((r) => r.type === 'default');
-      if (defaultRef?.rId) {
-        footer = footers.get(defaultRef.rId) ?? null;
+      const ref = firstRef ?? defaultRef;
+      if (ref?.rId) {
+        footer = footers.get(ref.rId) ?? null;
       }
     }
 
@@ -2169,6 +2411,9 @@ body { background: white; }
                       onOpenImageProperties={handleOpenImageProperties}
                       tableContext={state.pmTableContext}
                       onTableAction={handleTableAction}
+                      restrictedMode={restrictedMode}
+                      allowedStyleIds={restrictedMode ? allowedStyleIds : undefined}
+                      numberingMap={numberingMap}
                     >
                       {toolbarExtra}
                     </Toolbar>
@@ -2244,6 +2489,7 @@ body { background: white; }
                       sectionProperties={history.state?.package.document?.finalSectionProperties}
                       headerContent={headerContent}
                       footerContent={footerContent}
+                      numberingMap={numberingMap}
                       onHeaderFooterDoubleClick={handleHeaderFooterDoubleClick}
                       hfEditMode={hfEditPosition}
                       onBodyClick={handleBodyClick}
@@ -2261,7 +2507,7 @@ body { background: white; }
                           handleSelectionChange(null);
                         }
                       }}
-                      externalPlugins={externalPlugins}
+                      externalPlugins={mergedPlugins}
                       onReady={(ref) => {
                         onEditorViewReady?.(ref.getView()!);
                       }}

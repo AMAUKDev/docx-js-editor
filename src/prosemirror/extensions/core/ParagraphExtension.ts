@@ -243,6 +243,9 @@ function setParagraphAttrsCmd(attrs: Record<string, unknown>): Command {
 export interface ResolvedStyleAttrs {
   paragraphFormatting?: ParagraphFormatting;
   runFormatting?: TextFormatting;
+  /** Resolved list rendering info (from NumberingMap lookup) */
+  listNumFmt?: NumberFormat;
+  listIsBullet?: boolean;
 }
 
 // ============================================================================
@@ -398,9 +401,31 @@ function makeApplyStyle(schema: Schema) {
             if (ppr.spaceAfter !== undefined) newAttrs.spaceAfter = ppr.spaceAfter;
             if (ppr.lineSpacing !== undefined) newAttrs.lineSpacing = ppr.lineSpacing;
             if (ppr.lineSpacingRule !== undefined) newAttrs.lineSpacingRule = ppr.lineSpacingRule;
-            if (ppr.indentLeft !== undefined) newAttrs.indentLeft = ppr.indentLeft;
-            if (ppr.indentRight !== undefined) newAttrs.indentRight = ppr.indentRight;
-            if (ppr.indentFirstLine !== undefined) newAttrs.indentFirstLine = ppr.indentFirstLine;
+            // Always explicitly set indent attrs when applying a style — even if the resolved
+            // style doesn't define them — so that leftover indentation from a previous style
+            // (e.g. ListParagraph's indentLeft) is cleared rather than inherited.
+            newAttrs.indentLeft = ppr.indentLeft ?? null;
+            newAttrs.indentRight = ppr.indentRight ?? null;
+            newAttrs.indentFirstLine = ppr.indentFirstLine ?? null;
+            newAttrs.hangingIndent = ppr.hangingIndent ?? false;
+            // Apply numbering properties from the style definition
+            if (ppr.numPr !== undefined) {
+              newAttrs.numPr = ppr.numPr;
+            } else {
+              // Style has no numbering — clear all list attrs
+              newAttrs.numPr = null;
+              newAttrs.listNumFmt = null;
+              newAttrs.listIsBullet = null;
+              newAttrs.listMarker = null;
+            }
+          }
+
+          // Apply resolved list rendering attrs (numFmt, isBullet)
+          // Leave listMarker null so the layout bridge recomputes it from counters
+          if (resolvedAttrs) {
+            newAttrs.listNumFmt = resolvedAttrs.listNumFmt ?? null;
+            newAttrs.listIsBullet = resolvedAttrs.listIsBullet ?? null;
+            newAttrs.listMarker = null;
           }
 
           tr = tr.setNodeMarkup(pos, undefined, newAttrs);

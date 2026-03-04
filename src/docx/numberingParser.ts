@@ -43,6 +43,8 @@ export type NumberingMap = {
   getAbstract: (abstractNumId: number) => AbstractNumbering | null;
   /** Check if numId exists */
   hasNumbering: (numId: number) => boolean;
+  /** Reverse lookup: find numId + ilvl for a paragraph style linked via pStyle */
+  findByPStyle: (styleId: string) => { numId: number; ilvl: number } | null;
 };
 
 /**
@@ -287,6 +289,15 @@ function parseListLevel(element: XmlElement): ListLevel | null {
       if (!isNaN(restartNum)) {
         level.lvlRestart = restartNum;
       }
+    }
+  }
+
+  // Parse pStyle (paragraph style linked to this level)
+  const pStyleEl = findChild(element, 'w', 'pStyle');
+  if (pStyleEl) {
+    const pStyleVal = getAttribute(pStyleEl, 'w', 'val');
+    if (pStyleVal) {
+      level.pStyle = pStyleVal;
     }
   }
 
@@ -551,7 +562,7 @@ function parseLevelRunProps(rPr: XmlElement): TextFormatting {
 /**
  * Create a NumberingMap with helper functions
  */
-function createNumberingMap(definitions: NumberingDefinitions): NumberingMap {
+export function createNumberingMap(definitions: NumberingDefinitions): NumberingMap {
   // Build lookup maps for efficient access
   const abstractMap = new Map<number, AbstractNumbering>();
   for (const abs of definitions.abstractNums) {
@@ -617,6 +628,31 @@ function createNumberingMap(definitions: NumberingDefinitions): NumberingMap {
 
     hasNumbering(numId: number): boolean {
       return numMap.has(numId);
+    },
+
+    findByPStyle(styleId: string): { numId: number; ilvl: number } | null {
+      // Search numbering instances for a level whose pStyle matches the given styleId
+      for (const num of numMap.values()) {
+        let abstractNum = abstractMap.get(num.abstractNumId);
+        if (!abstractNum) continue;
+
+        // Follow numStyleLink if needed
+        if (abstractNum.numStyleLink && abstractNum.levels.length === 0) {
+          for (const candidate of abstractMap.values()) {
+            if (candidate.styleLink === abstractNum.numStyleLink && candidate.levels.length > 0) {
+              abstractNum = candidate;
+              break;
+            }
+          }
+        }
+
+        for (const level of abstractNum.levels) {
+          if (level.pStyle === styleId) {
+            return { numId: num.numId, ilvl: level.ilvl };
+          }
+        }
+      }
+      return null;
     },
   };
 }

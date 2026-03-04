@@ -104,6 +104,8 @@ export interface ListLevel {
   lvlRestart?: number;
   /** Is legal numbering style */
   isLgl?: boolean;
+  /** Paragraph style linked to this level (w:pStyle) */
+  pStyle?: string;
   /** Legacy settings */
   legacy?: {
     legacy?: boolean;

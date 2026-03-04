@@ -491,6 +491,40 @@ function extractParagraphContent(paragraph: PMNode): ParagraphContent[] {
         currentMarksKey = null;
       }
       content.push(createMathFromNode(node));
+    } else if (node.type.name === 'crossRef') {
+      // Cross-reference — serialize as plain text with the display value
+      if (currentRun) {
+        content.push(currentRun);
+        currentRun = null;
+        currentMarksKey = null;
+      }
+      const displayText = (node.attrs.displayText as string) || '[ref]';
+      const textContent: TextContent = {
+        type: 'text',
+        text: displayText,
+      };
+      const refRun: Run = {
+        type: 'run',
+        content: [textContent],
+      };
+      content.push(refRun);
+    } else if (node.type.name === 'contextTag') {
+      // Context tag — serialize as {tag_key} text (docxtemplater-compatible)
+      if (currentRun) {
+        content.push(currentRun);
+        currentRun = null;
+        currentMarksKey = null;
+      }
+      const tagKey = node.attrs.tagKey as string;
+      const textContent: TextContent = {
+        type: 'text',
+        text: `{${tagKey}}`,
+      };
+      const tagRun: Run = {
+        type: 'run',
+        content: [textContent],
+      };
+      content.push(tagRun);
     }
   });
 

@@ -2,7 +2,7 @@
 
 # Run type checking
 echo "Running TypeScript type check..."
-bun run typecheck
+npx tsc --noEmit
 if [ $? -ne 0 ]; then
   echo "TypeScript type check failed. Please fix the errors before committing."
   exit 1

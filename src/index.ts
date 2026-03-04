@@ -726,6 +726,14 @@ export {
   type TagType,
 } from './plugins/template';
 
+// Style Enforcer Plugin
+export {
+  createStyleEnforcerPlugin,
+  styleEnforcerPluginKey,
+  DEFAULT_ALLOWED_STYLE_IDS,
+  type StyleEnforcerOptions,
+} from './plugins/StyleEnforcerPlugin';
+
 // ============================================================================
 // CORE PLUGIN SYSTEM
 // ============================================================================

@@ -13,3 +13,10 @@ export {
 } from './selectionTracker';
 
 export type { SelectionContext, SelectionChangeCallback } from './selectionTracker';
+
+export {
+  createCrossRefUpdaterPlugin,
+  crossRefUpdaterKey,
+  refreshAllReferences,
+} from './crossRefUpdater';
+export type { CrossRefUpdaterConfig } from './crossRefUpdater';
