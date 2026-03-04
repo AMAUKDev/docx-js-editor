@@ -414,6 +414,57 @@ function paragraphToRuns(node: PMNode, startPos: number, _options: ToFlowBlocksO
         pmEnd: childPos + child.nodeSize,
       };
       runs.push(run);
+    } else if (child.type.name === 'shape') {
+      // Shape node — render as an inline SVG image
+      const attrs = child.attrs;
+      const w = (attrs.width as number) || 100;
+      const h = (attrs.height as number) || 4;
+      const shapeType = (attrs.shapeType as string) || 'rect';
+      const fillType = (attrs.fillType as string) || 'solid';
+      const fillColor = fillType === 'none' ? 'none' : (attrs.fillColor as string) || '#ffffff';
+      const strokeWidth = (attrs.outlineWidth as number) || 1;
+      const strokeColor = (attrs.outlineColor as string) || '#000000';
+      const strokeStyle = (attrs.outlineStyle as string) || 'solid';
+      const strokeDash =
+        strokeStyle === 'dashed'
+          ? ' stroke-dasharray="8 4"'
+          : strokeStyle === 'dotted'
+            ? ' stroke-dasharray="2 2"'
+            : '';
+
+      // Build SVG path based on shape type
+      let svgPath: string;
+      switch (shapeType) {
+        case 'line':
+        case 'straightConnector1':
+          svgPath = `<line x1="0" y1="${h / 2}" x2="${w}" y2="${h / 2}" />`;
+          break;
+        case 'ellipse':
+        case 'oval':
+          svgPath = `<ellipse cx="${w / 2}" cy="${h / 2}" rx="${w / 2}" ry="${h / 2}" />`;
+          break;
+        default:
+          svgPath = `<rect x="0" y="0" width="${w}" height="${h}" />`;
+          break;
+      }
+
+      const svg =
+        `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">` +
+        `<g fill="${fillColor}" stroke="${strokeColor}" stroke-width="${strokeWidth}"${strokeDash}>` +
+        svgPath +
+        `</g></svg>`;
+
+      const dataUrl = `data:image/svg+xml,${encodeURIComponent(svg)}`;
+      const run: ImageRun = {
+        kind: 'image',
+        src: dataUrl,
+        width: w,
+        height: Math.max(h, strokeWidth + 2),
+        displayMode: 'inline',
+        pmStart: childPos,
+        pmEnd: childPos + child.nodeSize,
+      };
+      runs.push(run);
     } else if (child.type.name === 'sdt') {
       // SDT (Structured Document Tag / content control) — inline wrapper node.
       // Descend into its children to extract the actual text runs.

@@ -31,6 +31,7 @@ import type {
   SoftHyphenContent,
   NoBreakHyphenContent,
   DrawingContent,
+  ShapeContent,
   TextFormatting,
   ColorValue,
   ShadingProperties,
@@ -52,6 +53,7 @@ import {
 } from './xmlParser';
 import { resolveThemeFontRef } from './themeParser';
 import { parseImage } from './imageParser';
+import { parseShapeFromDrawing } from './shapeParser';
 
 /**
  * Parse color value from attributes
@@ -504,18 +506,27 @@ function parseDrawingContent(
   element: XmlElement,
   rels: RelationshipMap | null,
   media: Map<string, MediaFile> | null
-): DrawingContent | null {
-  // Use the full imageParser to parse the drawing
+): DrawingContent | ShapeContent | null {
+  // Try parsing as an image first
   const image = parseImage(element, rels ?? undefined, media ?? undefined);
 
-  if (!image) {
-    return null;
+  if (image) {
+    return {
+      type: 'drawing',
+      image,
+    };
   }
 
-  return {
-    type: 'drawing',
-    image,
-  };
+  // Fall back to shape parsing (e.g. connector lines, basic shapes)
+  const shape = parseShapeFromDrawing(element);
+  if (shape) {
+    return {
+      type: 'shape',
+      shape,
+    };
+  }
+
+  return null;
 }
 
 /**
