@@ -1364,6 +1364,8 @@ function convertHyperlink(
       for (const content of child.content) {
         if (content.type === 'text' && content.text) {
           nodes.push(schema.text(content.text, allMarks));
+        } else if (content.type === 'tab') {
+          nodes.push(schema.node('tab'));
         }
       }
     }

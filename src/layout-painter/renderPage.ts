@@ -564,6 +564,32 @@ function renderHeaderFooterContent(
 
       containerEl.appendChild(fragEl);
       cursorY += paragraphMeasure.totalHeight;
+    } else if (block?.kind === 'table' && measure?.kind === 'table') {
+      const tableBlock = block as TableBlock;
+      const tableMeasure = measure as TableMeasure;
+
+      // Calculate table height from row measures
+      const tableHeight = tableMeasure.rows.reduce((h, row) => h + row.height, 0);
+
+      // Create a synthetic TableFragment for the full table
+      const syntheticFragment: TableFragment = {
+        kind: 'table',
+        blockId: tableBlock.id,
+        x: 0,
+        y: cursorY,
+        width: contentWidth,
+        height: tableHeight,
+        fromRow: 0,
+        toRow: tableBlock.rows.length,
+      };
+
+      const tableEl = renderTableFragment(syntheticFragment, tableBlock, tableMeasure, context, {
+        document: doc,
+      });
+
+      tableEl.style.position = 'relative';
+      containerEl.appendChild(tableEl);
+      cursorY += tableHeight;
     }
   }
 
