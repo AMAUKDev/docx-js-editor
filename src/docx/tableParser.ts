@@ -749,8 +749,21 @@ function parseCellContent(
       // Parse nested table (recursive)
       const table = parseTable(child, styles, theme, numbering, rels, media);
       content.push(table);
+    } else if (localName === 'sdt') {
+      // Structured Document Tag — extract content from w:sdtContent
+      const sdtContent = findChild(child, 'w', 'sdtContent');
+      if (sdtContent?.elements) {
+        for (const inner of sdtContent.elements) {
+          if (!inner.name) continue;
+          const innerLocal = inner.name.split(':').pop();
+          if (innerLocal === 'p') {
+            content.push(parseParagraph(inner, styles, theme, numbering, rels, media));
+          } else if (innerLocal === 'tbl') {
+            content.push(parseTable(inner, styles, theme, numbering, rels, media));
+          }
+        }
+      }
     }
-    // Other content types in cells are rare but could be added
   }
 
   // Ensure at least one empty paragraph (Word requires this)
@@ -838,9 +851,31 @@ export function parseTableRow(
     row.formatting = formatting;
   }
 
-  // Parse cells
-  const cells = findChildren(trElement, 'w', 'tc');
-  for (const cellElement of cells) {
+  // Parse cells — collect w:tc elements from direct children AND from
+  // w:sdt/w:sdtContent wrappers (Structured Document Tags can wrap entire cells).
+  const cellElements: XmlElement[] = [];
+  if (trElement.elements) {
+    for (const child of trElement.elements) {
+      if (child.type !== 'element') continue;
+      const name = child.name || '';
+      if (name === 'w:tc' || name.endsWith(':tc')) {
+        cellElements.push(child);
+      } else if (name === 'w:sdt' || name.endsWith(':sdt')) {
+        // Look inside sdtContent for w:tc
+        const sdtContent = findChild(child, 'w', 'sdtContent');
+        if (sdtContent?.elements) {
+          for (const inner of sdtContent.elements) {
+            if (inner.type !== 'element') continue;
+            const innerName = inner.name || '';
+            if (innerName === 'w:tc' || innerName.endsWith(':tc')) {
+              cellElements.push(inner);
+            }
+          }
+        }
+      }
+    }
+  }
+  for (const cellElement of cellElements) {
     const cell = parseTableCell(cellElement, styles, theme, numbering, rels, media);
     row.cells.push(cell);
   }
