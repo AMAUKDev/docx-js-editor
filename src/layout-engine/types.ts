@@ -272,6 +272,8 @@ export type TableCell = {
   colSpan?: number;
   rowSpan?: number;
   width?: number;
+  /** Cell width in OOXML fiftieths-of-a-percent (e.g. 622 = 12.44%). */
+  widthPct?: number;
   verticalAlign?: 'top' | 'center' | 'bottom';
   background?: string;
   borders?: CellBorders;

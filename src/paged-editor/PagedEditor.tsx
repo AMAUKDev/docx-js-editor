@@ -395,26 +395,71 @@ function measureTableBlock(tableBlock: TableBlock, contentWidth: number): TableM
 
   // Calculate cell widths based on colSpan and columnWidths,
   // skipping columns occupied by spanning cells from previous rows.
+  const tableWidthPx = explicitWidthPx ?? contentWidth;
   const rows = tableBlock.rows.map((row, rowIdx) => {
     let columnIndex = 0;
     const occupied = occupiedColumnsPerRow.get(rowIdx) ?? new Set<number>();
     while (occupied.has(columnIndex)) columnIndex++;
 
-    return {
-      cells: row.cells.map((cell) => {
+    // Check if cells have percentage widths from DOCX.
+    // When present, use them directly instead of grid column mapping.
+    // Grid column mapping breaks when a row's cells don't span all columns
+    // (valid OOXML — Word handles by using cell preferred widths).
+    const hasPctWidths = row.cells.some((c) => c.widthPct != null);
+
+    const cellMeasures: { cellWidth: number; cell: (typeof row.cells)[0] }[] = [];
+
+    if (hasPctWidths && tableWidthPx > 0) {
+      for (const cell of row.cells) {
         const colSpan = cell.colSpan ?? 1;
-        // Calculate cell width as sum of spanned columns
+        let cellWidth: number;
+        if (cell.widthPct != null) {
+          // widthPct is in fiftieths-of-a-percent (5000 = 100%)
+          cellWidth = (cell.widthPct / 5000) * tableWidthPx;
+        } else {
+          // Fallback: grid column mapping for cells without pct
+          cellWidth = 0;
+          for (let c = 0; c < colSpan && columnIndex + c < columnWidths.length; c++) {
+            cellWidth += columnWidths[columnIndex + c] ?? 0;
+          }
+          if (cellWidth === 0) cellWidth = cell.width ?? 100;
+        }
+        columnIndex += colSpan;
+        while (occupied.has(columnIndex)) columnIndex++;
+        cellMeasures.push({ cellWidth, cell });
+      }
+      // Distribute remaining width to last cell (rows that don't cover full table)
+      const totalCellWidth = cellMeasures.reduce((sum, m) => sum + m.cellWidth, 0);
+      if (totalCellWidth < tableWidthPx - 1 && cellMeasures.length > 0) {
+        cellMeasures[cellMeasures.length - 1].cellWidth += tableWidthPx - totalCellWidth;
+      }
+    } else {
+      // Grid column mapping (no pct widths available)
+      for (const cell of row.cells) {
+        const colSpan = cell.colSpan ?? 1;
         let cellWidth = 0;
         for (let c = 0; c < colSpan && columnIndex + c < columnWidths.length; c++) {
           cellWidth += columnWidths[columnIndex + c] ?? 0;
         }
-        // Fallback to cell.width or default if columnWidths not available
         if (cellWidth === 0) {
           cellWidth = cell.width ?? 100;
         }
         columnIndex += colSpan;
         while (occupied.has(columnIndex)) columnIndex++;
+        cellMeasures.push({ cellWidth, cell });
+      }
+      // Distribute remaining column widths to the last cell
+      if (columnIndex < columnWidths.length && cellMeasures.length > 0) {
+        let remaining = 0;
+        for (let c = columnIndex; c < columnWidths.length; c++) {
+          if (!occupied.has(c)) remaining += columnWidths[c] ?? 0;
+        }
+        cellMeasures[cellMeasures.length - 1].cellWidth += remaining;
+      }
+    }
 
+    return {
+      cells: cellMeasures.map(({ cellWidth, cell }) => {
         const padLeft = cell.padding?.left ?? DEFAULT_CELL_PADDING_X;
         const padRight = cell.padding?.right ?? DEFAULT_CELL_PADDING_X;
         const cellContentWidth = Math.max(1, cellWidth - padLeft - padRight);

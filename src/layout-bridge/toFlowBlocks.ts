@@ -831,14 +831,15 @@ function convertTableCell(node: PMNode, startPos: number, options: ToFlowBlocksO
 
   // Convert cell width based on widthType
   let cellWidth: number | undefined;
+  let cellWidthPct: number | undefined;
   const rawWidth = attrs.width as number | undefined;
   const cellWidthType = attrs.widthType as string | undefined;
   if (rawWidth) {
     if (cellWidthType === 'pct') {
-      // Percentage width — will be resolved against table width by the layout engine.
-      // Store as negative to signal "percentage" to the table layout code.
-      // We don't resolve here because we don't know the table's pixel width yet.
-      cellWidth = undefined; // Let columnWidths from table attrs handle sizing
+      // Percentage width — store the raw fiftieths-of-percent value for measureTableBlock
+      // to resolve against the table's pixel width. This is needed because grid column
+      // mapping produces wrong widths when a row's cells don't cover all grid columns.
+      cellWidthPct = rawWidth;
     } else {
       // Default: treat as twips (dxa)
       cellWidth = twipsToPixels(rawWidth);
@@ -851,6 +852,7 @@ function convertTableCell(node: PMNode, startPos: number, options: ToFlowBlocksO
     colSpan: attrs.colspan as number,
     rowSpan: attrs.rowspan as number,
     width: cellWidth,
+    widthPct: cellWidthPct,
     verticalAlign: attrs.verticalAlign as 'top' | 'center' | 'bottom' | undefined,
     background: attrs.backgroundColor ? `#${attrs.backgroundColor}` : undefined,
     borders: extractCellBorders(attrs as Record<string, unknown>),
