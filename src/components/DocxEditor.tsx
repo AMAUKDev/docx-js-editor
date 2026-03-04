@@ -2168,15 +2168,37 @@ body { background: white; }
     let header: HeaderFooter | null = null;
     let footer: HeaderFooter | null = null;
 
+    // Resolve header/footer references.
+    // In multi-section documents, the final sectPr may not have headerReferences —
+    // OOXML sections inherit header/footer refs from earlier sections.
+    // Walk all sections to find references.
+    let headerRefs = sectionProps?.headerReferences;
+    let footerRefs = sectionProps?.footerReferences;
+    let titlePg = sectionProps?.titlePg;
+
+    if ((!headerRefs || !footerRefs) && pkg.document?.sections) {
+      // Walk sections in reverse — later sections inherit from earlier ones
+      for (let i = pkg.document.sections.length - 1; i >= 0; i--) {
+        const sp = pkg.document.sections[i].properties;
+        if (!headerRefs && sp?.headerReferences) {
+          headerRefs = sp.headerReferences;
+          if (titlePg === undefined && sp.titlePg !== undefined) {
+            titlePg = sp.titlePg;
+          }
+        }
+        if (!footerRefs && sp?.footerReferences) {
+          footerRefs = sp.footerReferences;
+        }
+      }
+    }
+
     // When titlePg is set, page 1 uses 'first' header/footer; otherwise use 'default'
-    const preferFirst = !!sectionProps?.titlePg;
+    const preferFirst = !!titlePg;
 
     // Get header from section references
-    if (headers && sectionProps?.headerReferences) {
-      const firstRef = preferFirst
-        ? sectionProps.headerReferences.find((r) => r.type === 'first')
-        : null;
-      const defaultRef = sectionProps.headerReferences.find((r) => r.type === 'default');
+    if (headers && headerRefs) {
+      const firstRef = preferFirst ? headerRefs.find((r) => r.type === 'first') : null;
+      const defaultRef = headerRefs.find((r) => r.type === 'default');
       const ref = firstRef ?? defaultRef;
       if (ref?.rId) {
         header = headers.get(ref.rId) ?? null;
@@ -2184,11 +2206,9 @@ body { background: white; }
     }
 
     // Get footer from section references
-    if (footers && sectionProps?.footerReferences) {
-      const firstRef = preferFirst
-        ? sectionProps.footerReferences.find((r) => r.type === 'first')
-        : null;
-      const defaultRef = sectionProps.footerReferences.find((r) => r.type === 'default');
+    if (footers && footerRefs) {
+      const firstRef = preferFirst ? footerRefs.find((r) => r.type === 'first') : null;
+      const defaultRef = footerRefs.find((r) => r.type === 'default');
       const ref = firstRef ?? defaultRef;
       if (ref?.rId) {
         footer = footers.get(ref.rId) ?? null;
