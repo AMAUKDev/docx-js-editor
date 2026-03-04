@@ -279,6 +279,8 @@ function getLeaderChar(leader: string): string | null {
       return '_';
     case 'middleDot':
       return '·';
+    case 'heavy':
+      return '━';
     default:
       return null;
   }

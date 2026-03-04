@@ -369,10 +369,12 @@ function paragraphToRuns(node: PMNode, startPos: number, _options: ToFlowBlocksO
               : ft === 'TIME'
                 ? 'TIME'
                 : 'OTHER';
+      const formatting = extractRunFormatting(child.marks, theme);
       const run: FieldRun = {
         kind: 'field',
         fieldType: mappedType,
         fallback: (child.attrs.displayText as string) || '',
+        ...formatting,
         pmStart: childPos,
         pmEnd: childPos + child.nodeSize,
       };
@@ -619,7 +621,14 @@ function convertParagraphAttrs(pmAttrs: PMParagraphAttrs): ParagraphAttrs {
     attrs.tabs = pmAttrs.tabs.map((tab) => ({
       val: mapTabAlignment(tab.alignment),
       pos: tab.position,
-      leader: tab.leader as 'none' | 'dot' | 'hyphen' | 'underscore' | undefined,
+      leader: tab.leader as
+        | 'none'
+        | 'dot'
+        | 'hyphen'
+        | 'underscore'
+        | 'heavy'
+        | 'middleDot'
+        | undefined,
     }));
   }
 
@@ -820,12 +829,28 @@ function convertTableCell(node: PMNode, startPos: number, options: ToFlowBlocksO
     left: margins?.left != null ? twipsToPixels(margins.left) : 7,
   };
 
+  // Convert cell width based on widthType
+  let cellWidth: number | undefined;
+  const rawWidth = attrs.width as number | undefined;
+  const cellWidthType = attrs.widthType as string | undefined;
+  if (rawWidth) {
+    if (cellWidthType === 'pct') {
+      // Percentage width — will be resolved against table width by the layout engine.
+      // Store as negative to signal "percentage" to the table layout code.
+      // We don't resolve here because we don't know the table's pixel width yet.
+      cellWidth = undefined; // Let columnWidths from table attrs handle sizing
+    } else {
+      // Default: treat as twips (dxa)
+      cellWidth = twipsToPixels(rawWidth);
+    }
+  }
+
   return {
     id: nextBlockId(),
     blocks,
     colSpan: attrs.colspan as number,
     rowSpan: attrs.rowspan as number,
-    width: attrs.width ? twipsToPixels(attrs.width as number) : undefined,
+    width: cellWidth,
     verticalAlign: attrs.verticalAlign as 'top' | 'center' | 'bottom' | undefined,
     background: attrs.backgroundColor ? `#${attrs.backgroundColor}` : undefined,
     borders: extractCellBorders(attrs as Record<string, unknown>),

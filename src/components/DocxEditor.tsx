@@ -173,6 +173,7 @@ import {
   type TableContextInfo,
 } from '../prosemirror';
 import { collectHeadings } from '../utils/headingCollector';
+import { textFormattingToMarks } from '../prosemirror/extensions/marks/markUtils';
 
 // Paginated editor
 import { PagedEditor, type PagedEditorRef } from '../paged-editor/PagedEditor';
@@ -1238,6 +1239,75 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
         case 'borderRight':
           setCellBorder('right', borderSpecRef.current)(view.state, view.dispatch);
           break;
+        case 'addCaption': {
+          // Insert a "Table N: " caption paragraph after the table
+          const { state } = view;
+          const { $from } = state.selection;
+          const schema = state.schema;
+
+          // Walk up from cursor to find the table node
+          let tablePos: number | null = null;
+          let tableNode: import('prosemirror-model').Node | null = null;
+          for (let d = $from.depth; d >= 1; d--) {
+            const node = $from.node(d);
+            if (node.type.name === 'table') {
+              tablePos = $from.before(d);
+              tableNode = node;
+              break;
+            }
+          }
+          if (tablePos != null && tableNode) {
+            const insertPos = tablePos + tableNode.nodeSize;
+
+            // Count existing "Table" captions before insertion position
+            let tableCaptionCount = 0;
+            state.doc.nodesBetween(0, insertPos, (node) => {
+              if (
+                node.type.name === 'paragraph' &&
+                node.attrs.styleId === 'Caption' &&
+                node.textContent.startsWith('Table ')
+              ) {
+                tableCaptionCount++;
+              }
+              return true;
+            });
+            const tableNumber = tableCaptionCount + 1;
+            const captionText = `Table ${tableNumber}: `;
+
+            // Resolve Caption style's run formatting and build marks
+            let captionMarks: import('prosemirror-model').Mark[] = [];
+            const currentDoc = historyStateRef.current;
+            if (currentDoc?.package.styles) {
+              const styleResolver = createStyleResolver(currentDoc.package.styles);
+              const resolved = styleResolver.resolveParagraphStyle('Caption');
+              if (resolved.runFormatting) {
+                captionMarks = textFormattingToMarks(resolved.runFormatting, schema);
+              }
+            }
+
+            const textNode =
+              captionMarks.length > 0
+                ? schema.text(captionText, captionMarks)
+                : schema.text(captionText);
+            const captionParagraph = schema.nodes.paragraph.create(
+              { styleId: 'Caption', alignment: 'center' },
+              textNode
+            );
+            const tr = state.tr.insert(insertPos, captionParagraph);
+
+            // Place cursor at end of caption text
+            const cursorPos = insertPos + 1 + captionText.length;
+            tr.setSelection(TextSelection.create(tr.doc, cursorPos));
+
+            // Set stored marks so continued typing inherits caption formatting
+            if (captionMarks.length > 0) {
+              tr.setStoredMarks(captionMarks);
+            }
+
+            view.dispatch(tr.scrollIntoView());
+          }
+          break;
+        }
         default:
           // Handle complex actions (with parameters)
           if (typeof action === 'object') {

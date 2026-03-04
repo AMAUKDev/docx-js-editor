@@ -36,6 +36,7 @@ export type TableAction =
   | 'selectTable'
   | 'selectRow'
   | 'selectColumn'
+  | 'addCaption'
   | 'borderAll'
   | 'borderOutside'
   | 'borderInside'
@@ -479,7 +480,7 @@ export function TableToolbar({
       </ToolbarGroup>
 
       {/* Merge/Split operations */}
-      <ToolbarGroup showSeparator={false}>
+      <ToolbarGroup>
         <TableToolbarButton
           action="mergeCells"
           label="Merge Cells"
@@ -504,6 +505,19 @@ export function TableToolbar({
           icon={<DeleteTableIcon />}
           disabled={disabled}
           onClick={() => handleAction('deleteTable')}
+          showLabel={showLabels}
+          compact={compact}
+        />
+      </ToolbarGroup>
+
+      {/* Caption */}
+      <ToolbarGroup showSeparator={false}>
+        <TableToolbarButton
+          action="addCaption"
+          label="Add Caption"
+          icon={<MaterialSymbol name="closed_caption" size={ICON_SIZE} />}
+          disabled={disabled}
+          onClick={() => handleAction('addCaption')}
           showLabel={showLabels}
           compact={compact}
         />
@@ -1027,6 +1041,7 @@ export function getActionLabel(action: TableAction): string {
     selectTable: 'Select Table',
     selectRow: 'Select Row',
     selectColumn: 'Select Column',
+    addCaption: 'Add Caption',
     borderAll: 'All Borders',
     borderOutside: 'Outside Borders',
     borderInside: 'Inside Borders',

@@ -175,7 +175,7 @@ export type TabStop = {
   /** Position in twips from left margin */
   pos: number;
   /** Optional leader character */
-  leader?: 'none' | 'dot' | 'hyphen' | 'underscore';
+  leader?: 'none' | 'dot' | 'hyphen' | 'underscore' | 'heavy' | 'middleDot';
 };
 
 /**

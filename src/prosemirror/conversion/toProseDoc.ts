@@ -936,9 +936,10 @@ function convertField(
         for (const c of r.content) {
           if (c.type === 'text') displayText += c.text;
         }
-        // Use formatting from the first run that has it
-        if (!fieldFormatting && r.formatting) {
-          fieldFormatting = r.formatting;
+        // Merge formatting from all runs so per-run overrides (e.g. bold on
+        // the reference number) are preserved on the atom field node.
+        if (r.formatting) {
+          fieldFormatting = mergeTextFormatting(fieldFormatting, r.formatting);
         }
       }
     }

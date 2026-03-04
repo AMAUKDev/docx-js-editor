@@ -43,6 +43,8 @@ import type {
   Measure,
   ParagraphBlock,
   TableBlock,
+  TableRow as FlowTableRow,
+  TableCell as FlowTableCell,
   TableMeasure,
   ImageBlock,
   ImageRun,
@@ -105,6 +107,8 @@ import {
 } from '../layout-bridge/footnoteLayout';
 import type { RenderedDomContext } from '../plugin-api/types';
 import { createRenderedDomContext } from '../plugin-api/RenderedDomContext';
+import { createStyleResolver } from '../prosemirror/styles/styleResolver';
+import { textFormattingToMarks } from '../prosemirror/extensions/marks/markUtils';
 
 // =============================================================================
 // TYPES
@@ -1039,6 +1043,92 @@ function convertHeaderFooterToContent(
         blocks.push(paragraphBlock);
       }
     }
+
+    // Handle Document Table type (e.g. AMA header contains a table with logo + company info)
+    if (itemObj.type === 'table' && Array.isArray(itemObj.rows)) {
+      const tableRows: FlowTableRow[] = [];
+      const docRows = itemObj.rows as unknown[];
+
+      for (const row of docRows) {
+        const rowObj = row as Record<string, unknown>;
+        if (!Array.isArray(rowObj.cells)) continue;
+
+        const tableCells: FlowTableCell[] = [];
+        for (const cell of rowObj.cells as unknown[]) {
+          const cellObj = cell as Record<string, unknown>;
+          const cellBlocks: FlowBlock[] = [];
+
+          // Convert cell content (paragraphs)
+          if (Array.isArray(cellObj.content)) {
+            for (const cellItem of cellObj.content as unknown[]) {
+              const ci = cellItem as Record<string, unknown>;
+              if (ci.type === 'paragraph' && Array.isArray(ci.content)) {
+                const cellRuns = convertDocumentRunsToFlowRuns(ci.content as unknown[]);
+                if (cellRuns.length > 0) {
+                  const cellFormatting = ci.formatting as Record<string, unknown> | undefined;
+                  const cellAttrs: ParagraphAttrs = {};
+                  if (cellFormatting?.alignment) {
+                    const a = cellFormatting.alignment as string;
+                    if (a === 'both') cellAttrs.alignment = 'justify';
+                    else if (['left', 'center', 'right', 'justify'].includes(a)) {
+                      cellAttrs.alignment = a as 'left' | 'center' | 'right' | 'justify';
+                    }
+                  }
+                  cellBlocks.push({
+                    kind: 'paragraph',
+                    id: String(blocks.length + tableRows.length + tableCells.length),
+                    runs: cellRuns,
+                    attrs: Object.keys(cellAttrs).length > 0 ? cellAttrs : undefined,
+                  });
+                }
+              }
+            }
+          }
+
+          // Extract cell formatting
+          const cellFmt = cellObj.formatting as Record<string, unknown> | undefined;
+          const cellWidth = cellFmt?.width as { size?: number; type?: string } | undefined;
+          let widthPx: number | undefined;
+          if (cellWidth?.size && cellWidth.type !== 'pct') {
+            widthPx = twipsToPixels(cellWidth.size);
+          }
+
+          tableCells.push({
+            id: String(blocks.length + tableRows.length + tableCells.length),
+            blocks:
+              cellBlocks.length > 0
+                ? cellBlocks
+                : [
+                    {
+                      kind: 'paragraph',
+                      id: String(blocks.length),
+                      runs: [{ kind: 'text', text: '' }],
+                    },
+                  ],
+            width: widthPx,
+            background: cellFmt?.shading
+              ? `#${(cellFmt.shading as Record<string, unknown>).fill || 'FFFFFF'}`
+              : undefined,
+          });
+        }
+
+        tableRows.push({
+          id: String(blocks.length + tableRows.length),
+          cells: tableCells,
+        });
+      }
+
+      if (tableRows.length > 0) {
+        const colWidths = (itemObj.columnWidths as number[] | undefined)?.map(twipsToPixels);
+        const tableBlock: TableBlock = {
+          kind: 'table',
+          id: String(blocks.length),
+          rows: tableRows,
+          columnWidths: colWidths,
+        };
+        blocks.push(tableBlock);
+      }
+    }
   }
 
   if (blocks.length === 0) {
@@ -1068,6 +1158,11 @@ function convertHeaderFooterToContent(
   const totalHeight = measures.reduce((h, m) => {
     if (m.kind === 'paragraph') {
       return h + m.totalHeight;
+    }
+    if (m.kind === 'table') {
+      const tm = m as TableMeasure;
+      const tableH = tm.rows.reduce((rh, row) => rh + row.height, 0);
+      return h + tableH;
     }
     return h;
   }, 0);
@@ -2798,59 +2893,88 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
      * Inserts a new paragraph with styleId="Caption" and "Figure N: " prefix
      * after the image's parent paragraph.
      */
-    const handleAddCaption = useCallback((pmPos: number) => {
-      const view = hiddenPMRef.current?.getView();
-      if (!view) return;
+    const handleAddCaption = useCallback(
+      (pmPos: number, prefix?: string) => {
+        const view = hiddenPMRef.current?.getView();
+        if (!view) return;
 
-      try {
-        const state = view.state;
-        const $pos = state.doc.resolve(pmPos);
+        try {
+          const state = view.state;
+          const $pos = state.doc.resolve(pmPos);
+          const schema = state.schema;
 
-        // Find the parent paragraph
-        let parentPos = $pos.before($pos.depth);
-        let parentNode = state.doc.nodeAt(parentPos);
-        // Walk up if we're deeper than a direct paragraph child
-        for (let d = $pos.depth; d >= 1; d--) {
-          const candidate = state.doc.nodeAt($pos.before(d));
-          if (candidate?.type.name === 'paragraph') {
-            parentPos = $pos.before(d);
-            parentNode = candidate;
-            break;
+          // Find the parent block (paragraph or table)
+          let parentPos = $pos.before($pos.depth);
+          let parentNode = state.doc.nodeAt(parentPos);
+          // Walk up if we're deeper than a direct paragraph child
+          for (let d = $pos.depth; d >= 1; d--) {
+            const candidate = state.doc.nodeAt($pos.before(d));
+            if (candidate?.type.name === 'paragraph' || candidate?.type.name === 'table') {
+              parentPos = $pos.before(d);
+              parentNode = candidate;
+              break;
+            }
           }
+          if (!parentNode) return;
+
+          // Compute insertion position (after the parent block)
+          const insertPos = parentPos + parentNode.nodeSize;
+
+          // Determine caption prefix: use provided prefix or default to "Figure"
+          const captionPrefix = prefix || 'Figure';
+
+          // Count only captions with the same prefix before the insertion position
+          let captionCount = 0;
+          state.doc.nodesBetween(0, insertPos, (node) => {
+            if (node.type.name === 'paragraph' && node.attrs.styleId === 'Caption') {
+              // Check if this caption uses the same prefix
+              const text = node.textContent;
+              if (text.startsWith(captionPrefix + ' ')) {
+                captionCount++;
+              }
+            }
+            return true;
+          });
+          const number = captionCount + 1;
+          const captionText = `${captionPrefix} ${number}: `;
+
+          // Resolve Caption style's run formatting and build marks
+          let captionMarks: import('prosemirror-model').Mark[] = [];
+          if (styles) {
+            const resolver = createStyleResolver(styles);
+            const resolved = resolver.resolveParagraphStyle('Caption');
+            if (resolved.runFormatting) {
+              captionMarks = textFormattingToMarks(resolved.runFormatting, schema);
+            }
+          }
+
+          const textNode =
+            captionMarks.length > 0
+              ? schema.text(captionText, captionMarks)
+              : schema.text(captionText);
+          const captionParagraph = schema.nodes.paragraph.create(
+            { styleId: 'Caption', alignment: 'center' },
+            textNode
+          );
+          const tr = state.tr.insert(insertPos, captionParagraph);
+
+          // Place cursor at end of caption text so user can type description
+          const cursorPos = insertPos + 1 + captionText.length;
+          tr.setSelection(TextSelection.create(tr.doc, cursorPos));
+
+          // Set stored marks so continued typing inherits the caption formatting
+          if (captionMarks.length > 0) {
+            tr.setStoredMarks(captionMarks);
+          }
+
+          view.dispatch(tr.scrollIntoView());
+          hiddenPMRef.current?.focus();
+        } catch {
+          // Position may have changed
         }
-        if (!parentNode) return;
-
-        // Compute insertion position first (after the parent paragraph)
-        const insertPos = parentPos + parentNode.nodeSize;
-
-        // Count only captions that appear before the insertion position
-        // so inserting between Figure 1 and Figure 3 yields Figure 2
-        let captionCount = 0;
-        state.doc.nodesBetween(0, insertPos, (node) => {
-          if (node.type.name === 'paragraph' && node.attrs.styleId === 'Caption') {
-            captionCount++;
-          }
-          return true;
-        });
-        const figureNumber = captionCount + 1;
-        const captionText = `Figure ${figureNumber}: `;
-        const schema = state.schema;
-        const captionParagraph = schema.nodes.paragraph.create(
-          { styleId: 'Caption', alignment: 'center' },
-          schema.text(captionText)
-        );
-        const tr = state.tr.insert(insertPos, captionParagraph);
-
-        // Place cursor at end of caption text so user can type description
-        const cursorPos = insertPos + 1 + captionText.length;
-        tr.setSelection(TextSelection.create(tr.doc, cursorPos));
-
-        view.dispatch(tr.scrollIntoView());
-        hiddenPMRef.current?.focus();
-      } catch {
-        // Position may have changed
-      }
-    }, []);
+      },
+      [styles]
+    );
 
     /**
      * Handle image drag-to-move: move image node from its current position

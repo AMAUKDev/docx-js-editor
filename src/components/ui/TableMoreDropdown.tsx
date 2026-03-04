@@ -284,6 +284,7 @@ export function TableMoreDropdown({
           })}
           {menuItem('autoFit', 'fit_width', 'Auto-fit to contents', { type: 'autoFitContents' })}
           {menuItem('noWrap', 'wrap_text', 'Toggle no-wrap', { type: 'toggleNoWrap' })}
+          {menuItem('addCaption', 'closed_caption', 'Add caption', 'addCaption')}
 
           <div style={separatorStyles} role="separator" />
 
