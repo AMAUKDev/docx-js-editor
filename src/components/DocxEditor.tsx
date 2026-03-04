@@ -2151,33 +2151,35 @@ body { background: white; }
     return createNumberingMapFromDefs(numbering);
   }, [history.state?.package.numbering]);
 
-  // Get header and footer content from document
-  const { headerContent, footerContent } = useMemo<{
+  // Get header and footer content from document.
+  // When titlePg is set, page 1 gets 'first' header/footer and pages 2+ get 'default'.
+  const { headerContent, footerContent, firstPageHeaderContent, firstPageFooterContent } = useMemo<{
     headerContent: HeaderFooter | null;
     footerContent: HeaderFooter | null;
+    firstPageHeaderContent: HeaderFooter | null;
+    firstPageFooterContent: HeaderFooter | null;
   }>(() => {
-    if (!history.state?.package) {
-      return { headerContent: null, footerContent: null };
-    }
+    const empty = {
+      headerContent: null,
+      footerContent: null,
+      firstPageHeaderContent: null,
+      firstPageFooterContent: null,
+    };
+    if (!history.state?.package) return empty;
 
     const pkg = history.state.package;
     const sectionProps = pkg.document?.finalSectionProperties;
     const headers = pkg.headers;
     const footers = pkg.footers;
 
-    let header: HeaderFooter | null = null;
-    let footer: HeaderFooter | null = null;
-
     // Resolve header/footer references.
     // In multi-section documents, the final sectPr may not have headerReferences —
     // OOXML sections inherit header/footer refs from earlier sections.
-    // Walk all sections to find references.
     let headerRefs = sectionProps?.headerReferences;
     let footerRefs = sectionProps?.footerReferences;
     let titlePg = sectionProps?.titlePg;
 
     if ((!headerRefs || !footerRefs) && pkg.document?.sections) {
-      // Walk sections in reverse — later sections inherit from earlier ones
       for (let i = pkg.document.sections.length - 1; i >= 0; i--) {
         const sp = pkg.document.sections[i].properties;
         if (!headerRefs && sp?.headerReferences) {
@@ -2192,30 +2194,42 @@ body { background: white; }
       }
     }
 
-    // When titlePg is set, page 1 uses 'first' header/footer; otherwise use 'default'
-    const preferFirst = !!titlePg;
+    const hasTitlePg = !!titlePg;
 
-    // Get header from section references
+    // Resolve headers: when titlePg, page 1 = 'first', pages 2+ = 'default'
+    let defaultHeader: HeaderFooter | null = null;
+    let firstPageHeader: HeaderFooter | null = null;
     if (headers && headerRefs) {
-      const firstRef = preferFirst ? headerRefs.find((r) => r.type === 'first') : null;
       const defaultRef = headerRefs.find((r) => r.type === 'default');
-      const ref = firstRef ?? defaultRef;
-      if (ref?.rId) {
-        header = headers.get(ref.rId) ?? null;
+      if (defaultRef?.rId) defaultHeader = headers.get(defaultRef.rId) ?? null;
+
+      if (hasTitlePg) {
+        const firstRef = headerRefs.find((r) => r.type === 'first');
+        if (firstRef?.rId) firstPageHeader = headers.get(firstRef.rId) ?? null;
       }
     }
 
-    // Get footer from section references
+    // Resolve footers: same logic
+    let defaultFooter: HeaderFooter | null = null;
+    let firstPageFooter: HeaderFooter | null = null;
     if (footers && footerRefs) {
-      const firstRef = preferFirst ? footerRefs.find((r) => r.type === 'first') : null;
       const defaultRef = footerRefs.find((r) => r.type === 'default');
-      const ref = firstRef ?? defaultRef;
-      if (ref?.rId) {
-        footer = footers.get(ref.rId) ?? null;
+      if (defaultRef?.rId) defaultFooter = footers.get(defaultRef.rId) ?? null;
+
+      if (hasTitlePg) {
+        const firstRef = footerRefs.find((r) => r.type === 'first');
+        if (firstRef?.rId) firstPageFooter = footers.get(firstRef.rId) ?? null;
       }
     }
 
-    return { headerContent: header, footerContent: footer };
+    // When no titlePg differentiation, headerContent is used for all pages.
+    // When titlePg is set, headerContent = default (pages 2+), firstPage* = page 1.
+    return {
+      headerContent: defaultHeader,
+      footerContent: defaultFooter,
+      firstPageHeaderContent: firstPageHeader,
+      firstPageFooterContent: firstPageFooter,
+    };
   }, [history.state]);
 
   // Handle header/footer double-click — open editing overlay
@@ -2579,6 +2593,8 @@ body { background: white; }
                       sectionProperties={history.state?.package.document?.finalSectionProperties}
                       headerContent={headerContent}
                       footerContent={footerContent}
+                      firstPageHeaderContent={firstPageHeaderContent}
+                      firstPageFooterContent={firstPageFooterContent}
                       numberingMap={numberingMap}
                       onHeaderFooterDoubleClick={handleHeaderFooterDoubleClick}
                       hfEditMode={hfEditPosition}

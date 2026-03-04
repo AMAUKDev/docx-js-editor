@@ -223,9 +223,21 @@ function renderTextRun(run: TextRun, doc: Document): HTMLElement {
       anchor.title = run.hyperlink.tooltip;
     }
     anchor.textContent = run.text;
-    // Style hyperlink
-    anchor.style.color = run.color || '#0563c1'; // Default Word hyperlink color
-    anchor.style.textDecoration = 'underline';
+    // Style hyperlink — internal links (#bookmark) are typically TOC entries
+    // and should inherit their paragraph style (black, no underline).
+    // External links get the standard Word hyperlink style (blue, underlined).
+    const isInternal = run.hyperlink.href.startsWith('#');
+    if (isInternal) {
+      // Reset the span's run-level color (e.g. Hyperlink character style blue)
+      // so the anchor inherits the paragraph's color instead.
+      span.style.color = 'inherit';
+      span.style.textDecorationLine = 'none';
+      anchor.style.color = 'inherit';
+      anchor.style.textDecoration = 'none';
+    } else {
+      anchor.style.color = run.color || '#0563c1';
+      anchor.style.textDecoration = run.underline ? 'underline' : 'underline';
+    }
     span.appendChild(anchor);
   } else {
     // Set text content

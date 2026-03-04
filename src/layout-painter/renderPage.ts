@@ -138,10 +138,14 @@ export interface RenderPageOptions {
   backgroundColor?: string;
   /** Drop shadow on pages */
   showShadow?: boolean;
-  /** Header content to render. */
+  /** Header content to render (default / all pages). */
   headerContent?: HeaderFooterContent;
-  /** Footer content to render. */
+  /** Footer content to render (default / all pages). */
   footerContent?: HeaderFooterContent;
+  /** Header content for the first page only (titlePg). */
+  firstPageHeaderContent?: HeaderFooterContent;
+  /** Footer content for the first page only (titlePg). */
+  firstPageFooterContent?: HeaderFooterContent;
   /** Distance from page top to header content. */
   headerDistance?: number;
   /** Distance from page bottom to footer content. */
@@ -997,6 +1001,15 @@ function buildPageRenderArgs(
     section: 'body',
   };
   const pageOptions: RenderPageOptions = { ...options };
+
+  // Select per-page header/footer when titlePg differentiation is available
+  if (page.number === 1 && options.firstPageHeaderContent) {
+    pageOptions.headerContent = options.firstPageHeaderContent;
+  }
+  if (page.number === 1 && options.firstPageFooterContent) {
+    pageOptions.footerContent = options.firstPageFooterContent;
+  }
+
   if (options.footnotesByPage) {
     const fns = options.footnotesByPage.get(page.number);
     if (fns && fns.length > 0) {

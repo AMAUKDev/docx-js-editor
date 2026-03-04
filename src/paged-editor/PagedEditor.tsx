@@ -123,10 +123,14 @@ export interface PagedEditorProps {
   theme?: Theme | null;
   /** Section properties (page size, margins). */
   sectionProperties?: SectionProperties | null;
-  /** Header content for all pages. */
+  /** Header content for all pages (or default pages when firstPageHeaderContent is set). */
   headerContent?: HeaderFooter | null;
-  /** Footer content for all pages. */
+  /** Footer content for all pages (or default pages when firstPageFooterContent is set). */
   footerContent?: HeaderFooter | null;
+  /** Header content for the first page only (when titlePg is set). */
+  firstPageHeaderContent?: HeaderFooter | null;
+  /** Footer content for the first page only (when titlePg is set). */
+  firstPageFooterContent?: HeaderFooter | null;
   /** Whether the editor is read-only. */
   readOnly?: boolean;
   /** Gap between pages in pixels. */
@@ -402,9 +406,10 @@ function measureTableBlock(tableBlock: TableBlock, contentWidth: number): TableM
     while (occupied.has(columnIndex)) columnIndex++;
 
     // Check if cells have percentage widths from DOCX.
-    // When present, use them directly instead of grid column mapping.
-    // Grid column mapping breaks when a row's cells don't span all columns
-    // (valid OOXML — Word handles by using cell preferred widths).
+    // Prefer pct widths when available — they describe each cell's intended
+    // proportion of the table independently of grid column structure.
+    // Grid column mapping is unreliable when ProseMirror normalises column
+    // counts (e.g. OOXML has 7 grid cols but PM compresses to 6).
     const hasPctWidths = row.cells.some((c) => c.widthPct != null);
 
     const cellMeasures: { cellWidth: number; cell: (typeof row.cells)[0] }[] = [];
@@ -428,10 +433,15 @@ function measureTableBlock(tableBlock: TableBlock, contentWidth: number): TableM
         while (occupied.has(columnIndex)) columnIndex++;
         cellMeasures.push({ cellWidth, cell });
       }
-      // Distribute remaining width to last cell (rows that don't cover full table)
+      // Scale cells proportionally to fill the table width.
+      // Rows with vertical merge gaps have pct widths summing to less
+      // than 100%; scaling preserves the proportions while filling the row.
       const totalCellWidth = cellMeasures.reduce((sum, m) => sum + m.cellWidth, 0);
-      if (totalCellWidth < tableWidthPx - 1 && cellMeasures.length > 0) {
-        cellMeasures[cellMeasures.length - 1].cellWidth += tableWidthPx - totalCellWidth;
+      if (totalCellWidth > 0 && totalCellWidth < tableWidthPx - 1 && cellMeasures.length > 0) {
+        const scale = tableWidthPx / totalCellWidth;
+        for (const m of cellMeasures) {
+          m.cellWidth *= scale;
+        }
       }
     } else {
       // Grid column mapping (no pct widths available)
@@ -448,13 +458,13 @@ function measureTableBlock(tableBlock: TableBlock, contentWidth: number): TableM
         while (occupied.has(columnIndex)) columnIndex++;
         cellMeasures.push({ cellWidth, cell });
       }
-      // Distribute remaining column widths to the last cell
-      if (columnIndex < columnWidths.length && cellMeasures.length > 0) {
-        let remaining = 0;
-        for (let c = columnIndex; c < columnWidths.length; c++) {
-          if (!occupied.has(c)) remaining += columnWidths[c] ?? 0;
+      // Scale to fill table width when grid columns don't sum to full width
+      const totalCellWidth = cellMeasures.reduce((sum, m) => sum + m.cellWidth, 0);
+      if (totalCellWidth > 0 && totalCellWidth < tableWidthPx - 1 && cellMeasures.length > 0) {
+        const scale = tableWidthPx / totalCellWidth;
+        for (const m of cellMeasures) {
+          m.cellWidth *= scale;
         }
-        cellMeasures[cellMeasures.length - 1].cellWidth += remaining;
       }
     }
 
@@ -1282,6 +1292,8 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
       sectionProperties,
       headerContent,
       footerContent,
+      firstPageHeaderContent,
+      firstPageFooterContent,
       readOnly = false,
       pageGap = DEFAULT_PAGE_GAP,
       zoom = 1,
@@ -1467,6 +1479,14 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
           // to compute effective margins when header content exceeds available space)
           const headerContentForRender = convertHeaderFooterToContent(headerContent, contentWidth);
           const footerContentForRender = convertHeaderFooterToContent(footerContent, contentWidth);
+          const firstPageHeaderForRender = convertHeaderFooterToContent(
+            firstPageHeaderContent ?? null,
+            contentWidth
+          );
+          const firstPageFooterForRender = convertHeaderFooterToContent(
+            firstPageFooterContent ?? null,
+            contentWidth
+          );
 
           // Adjust margins if header/footer content exceeds available space
           // (Word and Google Docs push body content down when header grows)
@@ -1474,8 +1494,14 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
           const footerDistance = margins.footer ?? 48;
           const availableHeaderSpace = margins.top - headerDistance;
           const availableFooterSpace = margins.bottom - footerDistance;
-          const headerContentHeight = headerContentForRender?.height ?? 0;
-          const footerContentHeight = footerContentForRender?.height ?? 0;
+          const headerContentHeight = Math.max(
+            headerContentForRender?.height ?? 0,
+            firstPageHeaderForRender?.height ?? 0
+          );
+          const footerContentHeight = Math.max(
+            footerContentForRender?.height ?? 0,
+            firstPageFooterForRender?.height ?? 0
+          );
 
           let effectiveMargins = margins;
           if (
@@ -1585,6 +1611,8 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
               blockLookup,
               headerContent: headerContentForRender,
               footerContent: footerContentForRender,
+              firstPageHeaderContent: firstPageHeaderForRender,
+              firstPageFooterContent: firstPageFooterForRender,
               headerDistance: sectionProperties?.headerDistance
                 ? twipsToPixels(sectionProperties.headerDistance)
                 : undefined,
@@ -1635,6 +1663,8 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
         syncCoordinator,
         headerContent,
         footerContent,
+        firstPageHeaderContent,
+        firstPageFooterContent,
         sectionProperties,
         onRenderedDomContextReady,
         document,
@@ -3241,7 +3271,13 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
       if (view) {
         runLayoutPipeline(view.state);
       }
-    }, [headerContent, footerContent, runLayoutPipeline]);
+    }, [
+      headerContent,
+      footerContent,
+      firstPageHeaderContent,
+      firstPageFooterContent,
+      runLayoutPipeline,
+    ]);
 
     // Re-compute selection overlay when the container resizes.
     // Page elements shift during window resize (centering, scrollbar changes),
