@@ -36,7 +36,7 @@ export const ContextTagExtension = createNodeExtension({
     ],
     toDOM(node) {
       const { tagKey, label } = node.attrs as { tagKey: string; label: string };
-      const displayText = label || `{${tagKey}}`;
+      const displayText = String(label || `{${tagKey}}`);
       return [
         'span',
         {

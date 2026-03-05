@@ -2656,6 +2656,11 @@ body { background: white; }
                       }}
                       onRenderedDomContextReady={onRenderedDomContextReady}
                       pluginOverlays={pluginOverlays}
+                      onPageCountChange={(pageCount) => {
+                        setState((prev) =>
+                          prev.totalPages !== pageCount ? { ...prev, totalPages: pageCount } : prev
+                        );
+                      }}
                     />
 
                     {/* Page navigation / indicator */}

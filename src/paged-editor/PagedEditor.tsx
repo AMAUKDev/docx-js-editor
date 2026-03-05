@@ -157,6 +157,8 @@ export interface PagedEditorProps {
   hfEditMode?: 'header' | 'footer' | null;
   /** Called when user clicks the body area while in HF editing mode. */
   onBodyClick?: () => void;
+  /** Called after layout when the page count changes. */
+  onPageCountChange?: (pageCount: number) => void;
   /** Numbering map for resolving list markers with correct numFmt/lvlText. */
   numberingMap?: import('../docx/numberingParser').NumberingMap | null;
   /** Custom class name. */
@@ -1308,6 +1310,7 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
       onHeaderFooterDoubleClick,
       hfEditMode,
       onBodyClick,
+      onPageCountChange,
       className,
       style,
     } = props;
@@ -1327,12 +1330,14 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
     const onDocumentChangeRef = useRef(onDocumentChange);
     const onReadyRef = useRef(onReady);
     const onRenderedDomContextReadyRef = useRef(onRenderedDomContextReady);
+    const onPageCountChangeRef = useRef(onPageCountChange);
 
     // Keep refs in sync with latest props
     onSelectionChangeRef.current = onSelectionChange;
     onDocumentChangeRef.current = onDocumentChange;
     onReadyRef.current = onReady;
     onRenderedDomContextReadyRef.current = onRenderedDomContextReady;
+    onPageCountChangeRef.current = onPageCountChange;
 
     // State
     const [layout, setLayout] = useState<Layout | null>(null);
@@ -1584,6 +1589,7 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
             );
           }
           setLayout(newLayout);
+          onPageCountChangeRef.current?.(newLayout.pages.length);
 
           // Step 4: Paint to DOM
           if (pagesContainerRef.current && painterRef.current) {
