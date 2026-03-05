@@ -146,7 +146,9 @@ function createInitialState(
   externalPlugins: Plugin[] = []
 ): EditorState {
   const activeSchema = manager?.getSchema() ?? schema;
-  const doc = document ? toProseDoc(document, { styles: styles ?? undefined }) : createEmptyDoc();
+  const doc = document
+    ? toProseDoc(document, { styles: styles ?? undefined, schema: activeSchema })
+    : createEmptyDoc();
 
   const plugins: Plugin[] = [...(manager?.getPlugins() ?? []), ...externalPlugins];
 

@@ -12,8 +12,12 @@
  * - Inline properties (highest priority)
  */
 
-import type { Node as PMNode } from 'prosemirror-model';
-import { schema } from '../schema';
+import type { Node as PMNode, Schema } from 'prosemirror-model';
+import { schema as defaultSchema } from '../schema';
+
+// Module-level active schema — temporarily overridden during toProseDoc when
+// a runtime schema (with extensions like contextTag) is provided.
+let schema: typeof defaultSchema = defaultSchema;
 import type { ParagraphAttrs } from '../schema/nodes';
 import type {
   Document,
@@ -50,6 +54,8 @@ import type { TableAttrs, TableRowAttrs, TableCellAttrs } from '../schema/nodes'
 export interface ToProseDocOptions {
   /** Style definitions for resolving paragraph styles */
   styles?: StyleDefinitions;
+  /** Runtime schema (includes extension nodes like contextTag). Falls back to base schema. */
+  schema?: Schema;
 }
 
 /**
@@ -59,38 +65,47 @@ export interface ToProseDocOptions {
  * @param options - Conversion options including style definitions
  */
 export function toProseDoc(document: Document, options?: ToProseDocOptions): PMNode {
-  const paragraphs = document.package.document.content;
-  const nodes: PMNode[] = [];
+  // Override module-level schema with runtime schema (includes extension nodes
+  // like contextTag) so all helpers use it during this conversion pass.
+  const savedSchema = schema;
+  if (options?.schema) schema = options.schema as typeof defaultSchema;
 
-  // Create style resolver if styles are provided
-  const styleResolver = options?.styles ? createStyleResolver(options.styles) : null;
+  try {
+    const paragraphs = document.package.document.content;
+    const nodes: PMNode[] = [];
 
-  for (const block of paragraphs) {
-    if (block.type === 'paragraph') {
-      // Extract text boxes from paragraph runs before converting
-      const textBoxes = extractTextBoxesFromParagraph(block);
-      const pmParagraph = convertParagraph(block, styleResolver);
-      nodes.push(pmParagraph);
-      // Append any text box nodes after the paragraph
-      for (const tb of textBoxes) {
-        nodes.push(convertTextBox(tb, styleResolver));
+    // Create style resolver if styles are provided
+    const styleResolver = options?.styles ? createStyleResolver(options.styles) : null;
+
+    for (const block of paragraphs) {
+      if (block.type === 'paragraph') {
+        // Extract text boxes from paragraph runs before converting
+        const textBoxes = extractTextBoxesFromParagraph(block);
+        const pmParagraph = convertParagraph(block, styleResolver);
+        nodes.push(pmParagraph);
+        // Append any text box nodes after the paragraph
+        for (const tb of textBoxes) {
+          nodes.push(convertTextBox(tb, styleResolver));
+        }
+        // If any run in this paragraph contains a page break, emit a pageBreak node after
+        if (paragraphHasPageBreak(block)) {
+          nodes.push(schema.node('pageBreak'));
+        }
+      } else if (block.type === 'table') {
+        const pmTable = convertTable(block, styleResolver);
+        nodes.push(pmTable);
       }
-      // If any run in this paragraph contains a page break, emit a pageBreak node after
-      if (paragraphHasPageBreak(block)) {
-        nodes.push(schema.node('pageBreak'));
-      }
-    } else if (block.type === 'table') {
-      const pmTable = convertTable(block, styleResolver);
-      nodes.push(pmTable);
     }
-  }
 
-  // Ensure we have at least one paragraph
-  if (nodes.length === 0) {
-    nodes.push(schema.node('paragraph', {}, []));
-  }
+    // Ensure we have at least one paragraph
+    if (nodes.length === 0) {
+      nodes.push(schema.node('paragraph', {}, []));
+    }
 
-  return schema.node('doc', null, nodes);
+    return schema.node('doc', null, nodes);
+  } finally {
+    schema = savedSchema;
+  }
 }
 
 /**
