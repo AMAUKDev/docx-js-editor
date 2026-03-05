@@ -635,8 +635,10 @@ export function serializeDocument(doc: Document): string {
 
   // Document body
   parts.push('<w:body>');
-  const bodyXml = serializeDocumentBody(doc.package.document);
-  parts.push(ensureFieldBalance(bodyXml));
+  let bodyXml = serializeDocumentBody(doc.package.document);
+  bodyXml = ensureFieldBalance(bodyXml);
+  bodyXml = ensureBookmarkBalance(bodyXml);
+  parts.push(bodyXml);
   parts.push('</w:body>');
 
   // Close document element
@@ -691,6 +693,69 @@ function ensureFieldBalance(bodyXml: string): string {
     if (actualRunStart >= 0 && runEnd > actualRunStart) {
       result = result.slice(0, actualRunStart) + result.slice(runEnd + 6);
     }
+  }
+
+  return result;
+}
+
+/**
+ * Ensure bookmarkStart/bookmarkEnd elements are balanced.
+ *
+ * Content loss during the parse→PM→serialize round-trip can drop bookmarkStart
+ * elements (e.g. when they're in paragraphs with mc:AlternateContent that gets
+ * stripped) while leaving the corresponding bookmarkEnd. Word validates bookmark
+ * balance and flags orphaned markers as corruption.
+ *
+ * This function strips orphaned bookmarkEnd elements (those without a matching
+ * bookmarkStart) and orphaned bookmarkStart elements (those without a matching
+ * bookmarkEnd).
+ */
+function ensureBookmarkBalance(bodyXml: string): string {
+  // Collect all bookmark start IDs
+  const startIds = new Set<string>();
+  const startRegex = /<w:bookmarkStart\s+w:id="(\d+)"/g;
+  let match;
+  while ((match = startRegex.exec(bodyXml)) !== null) {
+    startIds.add(match[1]);
+  }
+
+  // Collect all bookmark end IDs
+  const endIds = new Set<string>();
+  const endRegex = /<w:bookmarkEnd\s+w:id="(\d+)"/g;
+  while ((match = endRegex.exec(bodyXml)) !== null) {
+    endIds.add(match[1]);
+  }
+
+  // Find orphaned ends (no matching start)
+  const orphanedEndIds = new Set<string>();
+  for (const id of endIds) {
+    if (!startIds.has(id)) {
+      orphanedEndIds.add(id);
+    }
+  }
+
+  // Find orphaned starts (no matching end)
+  const orphanedStartIds = new Set<string>();
+  for (const id of startIds) {
+    if (!endIds.has(id)) {
+      orphanedStartIds.add(id);
+    }
+  }
+
+  if (orphanedEndIds.size === 0 && orphanedStartIds.size === 0) return bodyXml;
+
+  let result = bodyXml;
+
+  // Remove orphaned bookmarkEnd elements
+  for (const id of orphanedEndIds) {
+    const re = new RegExp(`<w:bookmarkEnd\\s+w:id="${id}"\\s*/>`, 'g');
+    result = result.replace(re, '');
+  }
+
+  // Remove orphaned bookmarkStart elements
+  for (const id of orphanedStartIds) {
+    const re = new RegExp(`<w:bookmarkStart\\s+w:id="${id}"\\s+w:name="[^"]*"\\s*/>`, 'g');
+    result = result.replace(re, '');
   }
 
   return result;
