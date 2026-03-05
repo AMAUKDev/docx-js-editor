@@ -64,6 +64,7 @@ export function fromProseDoc(pmDoc: PMNode, baseDocument?: Document): Document {
     content: blocks,
     finalSectionProperties: baseDocument?.package.document.finalSectionProperties,
     sections: baseDocument?.package.document.sections,
+    rawDocumentTag: baseDocument?.package.document.rawDocumentTag,
   };
 
   // If we have a base document, preserve its package structure

@@ -64,6 +64,8 @@ const NAMESPACES = {
   w16: 'http://schemas.microsoft.com/office/word/2018/wordml',
   w16sdtdh: 'http://schemas.microsoft.com/office/word/2020/wordml/sdtdatahash',
   w16se: 'http://schemas.microsoft.com/office/word/2015/wordml/symex',
+  w16sdtfl: 'http://schemas.microsoft.com/office/word/2024/wordml/sdtformatlock',
+  w16du: 'http://schemas.microsoft.com/office/word/2023/wordml/word16du',
   wpg: 'http://schemas.microsoft.com/office/word/2010/wordprocessingGroup',
   wpi: 'http://schemas.microsoft.com/office/word/2010/wordprocessingInk',
   wne: 'http://schemas.microsoft.com/office/word/2006/wordml',
@@ -74,25 +76,11 @@ const NAMESPACES = {
  * Build namespace declaration string for document element
  */
 function buildNamespaceDeclarations(): string {
-  // Minimal set of commonly used namespaces
-  const minimalNamespaces = {
-    wpc: NAMESPACES.wpc,
-    mc: NAMESPACES.mc,
-    o: NAMESPACES.o,
-    r: NAMESPACES.r,
-    m: NAMESPACES.m,
-    v: NAMESPACES.v,
-    wp14: NAMESPACES.wp14,
-    wp: NAMESPACES.wp,
-    w10: NAMESPACES.w10,
-    w: NAMESPACES.w,
-    w14: NAMESPACES.w14,
-    w15: NAMESPACES.w15,
-    wpg: NAMESPACES.wpg,
-    wps: NAMESPACES.wps,
-  };
-
-  return Object.entries(minimalNamespaces)
+  // Include ALL namespaces to match Word's output.
+  // Missing namespace declarations can cause Word to reject documents
+  // that contain raw XML fragments (e.g. rawXml sectPr) referencing
+  // those namespace prefixes.
+  return Object.entries(NAMESPACES)
     .map(([prefix, uri]) => `xmlns:${prefix}="${uri}"`)
     .join(' ');
 }
@@ -636,9 +624,15 @@ export function serializeDocument(doc: Document): string {
   // XML declaration
   parts.push('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>');
 
-  // Document element with namespaces
-  const nsDecl = buildNamespaceDeclarations();
-  parts.push(`<w:document ${nsDecl} mc:Ignorable="w14 w15 wp14">`);
+  // Document element with namespaces — use original tag if available for lossless round-trip
+  if (doc.package.document.rawDocumentTag) {
+    parts.push(doc.package.document.rawDocumentTag);
+  } else {
+    const nsDecl = buildNamespaceDeclarations();
+    parts.push(
+      `<w:document ${nsDecl} mc:Ignorable="w14 w15 w16se w16cid w16 w16cex w16sdtdh w16sdtfl w16du wp14">`
+    );
+  }
 
   // Document body
   parts.push('<w:body>');

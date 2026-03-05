@@ -491,6 +491,16 @@ export function parseDocumentBody(
     return result;
   }
 
+  // Capture the raw opening tag of w:document for lossless round-trip.
+  // This preserves namespace declarations and mc:Ignorable exactly as the
+  // original document had them — critical for Word validation.
+  if (documentEl.attributes) {
+    const attrs = Object.entries(documentEl.attributes as Record<string, string>)
+      .map(([key, val]) => `${key}="${val}"`)
+      .join(' ');
+    result.rawDocumentTag = `<w:document ${attrs}>`;
+  }
+
   // Find body element (w:body)
   const bodyEl = findChild(documentEl, 'w', 'body');
   if (!bodyEl) {

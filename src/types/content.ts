@@ -1273,4 +1273,6 @@ export interface DocumentBody {
   finalSectionProperties?: SectionProperties;
   /** Comments from comments.xml */
   comments?: Comment[];
+  /** Raw opening tag of w:document element (namespace declarations + mc:Ignorable) for lossless round-trip */
+  rawDocumentTag?: string;
 }
