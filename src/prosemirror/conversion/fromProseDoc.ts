@@ -520,13 +520,15 @@ function extractParagraphContent(paragraph: PMNode): ParagraphContent[] {
       content.push(refRun);
     } else if (node.type.name === 'contextTag') {
       // Context tag — serialize as {{ tag_key }} (Jinja2/docxtpl syntax)
-      if (currentRun) {
-        content.push(currentRun);
-        currentRun = null;
-        currentMarksKey = null;
-      }
+      // Context tags have marks:'' so node.marks is empty. Merge into
+      // the current run to inherit surrounding text formatting.
       const tagKey = node.attrs.tagKey as string;
-      content.push(createRunFromText(`{{ ${tagKey} }}`, node.marks));
+      const tagText = `{{ ${tagKey} }}`;
+      if (currentRun) {
+        appendTextToRun(currentRun, tagText);
+      } else {
+        content.push(createRunFromText(tagText, []));
+      }
     }
   });
 

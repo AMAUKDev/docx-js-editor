@@ -404,15 +404,15 @@ function paragraphToRuns(node: PMNode, startPos: number, _options: ToFlowBlocksO
       };
       runs.push(run);
     } else if (child.type.name === 'contextTag') {
-      // Context tag — render as styled text showing the tag label or key
+      // Context tag — render as plain text showing the tag label or key.
+      // Context tags have marks:'' (no PM marks) so they inherit the
+      // paragraph's default formatting from the layout painter.
       const tagKey = child.attrs.tagKey as string;
       const label = child.attrs.label as string;
       const displayText = label || `{${tagKey}}`;
-      const formatting = extractRunFormatting(child.marks, theme);
       const run: TextRun = {
         kind: 'text',
         text: displayText,
-        ...formatting,
         pmStart: childPos,
         pmEnd: childPos + child.nodeSize,
       };

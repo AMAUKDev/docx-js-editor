@@ -291,7 +291,7 @@ export interface DocxEditorProps {
   contextTags?: Record<string, string>;
   /** Called when document is loaded/parsed with the set of tagKeys found in the doc */
   onContextTagsDiscovered?: (tagKeys: string[]) => void;
-  /** When true, non-admin users cannot edit locked paragraphs */
+  /** When true, locked paragraphs cannot be edited (plugin is active) */
   lockedEditing?: boolean;
 }
 
@@ -361,10 +361,13 @@ function replaceContextTagNodes(
     if (child.type.name === 'contextTag') {
       const tagKey = child.attrs.tagKey as string;
       const resolved = tags[tagKey];
+      // Context tags have marks:'' so child.marks is empty. Inherit marks
+      // from the nearest adjacent sibling for correct formatting.
+      const siblingMarks = children.length > 0 ? children[children.length - 1].marks : child.marks;
       if (resolved) {
-        children.push(schema.text(resolved, child.marks));
+        children.push(schema.text(resolved, siblingMarks));
       } else if (mode === 'keep') {
-        children.push(schema.text(`{${tagKey}}`, child.marks));
+        children.push(schema.text(`{${tagKey}}`, siblingMarks));
       }
       // 'omit' → skip the node entirely
     } else {

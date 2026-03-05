@@ -16,6 +16,7 @@ export const ContextTagExtension = createNodeExtension({
     group: 'inline',
     atom: true,
     selectable: true,
+    marks: '',
     attrs: {
       /** The context variable key (e.g., "case_no", "vessel", "client") */
       tagKey: { default: '' },
