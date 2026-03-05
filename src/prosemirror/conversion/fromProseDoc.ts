@@ -263,6 +263,8 @@ function paragraphAttrsToFormatting(attrs: ParagraphAttrs): ParagraphFormatting 
     if (attrs.pageBreakBefore !== (orig.pageBreakBefore || undefined)) {
       result.pageBreakBefore = attrs.pageBreakBefore || undefined;
     }
+    // Locked state is always overridden from the PM attr (admin can toggle it)
+    result.locked = attrs.locked || undefined;
 
     return result;
   }
@@ -283,7 +285,8 @@ function paragraphAttrsToFormatting(attrs: ParagraphAttrs): ParagraphFormatting 
     attrs.shading ||
     attrs.tabs ||
     attrs.outlineLevel != null ||
-    attrs.contextualSpacing;
+    attrs.contextualSpacing ||
+    attrs.locked;
 
   if (!hasFormatting) {
     return undefined;
@@ -306,6 +309,7 @@ function paragraphAttrsToFormatting(attrs: ParagraphAttrs): ParagraphFormatting 
     tabs: attrs.tabs || undefined,
     outlineLevel: attrs.outlineLevel ?? undefined,
     contextualSpacing: attrs.contextualSpacing || undefined,
+    locked: attrs.locked || undefined,
   };
 }
 

@@ -606,6 +606,12 @@ export function parseParagraphProperties(
     formatting.runProperties = parseRunProperties(rPr, theme, styles);
   }
 
+  // === Lock State (custom extension for selective editing) ===
+  const fpLocked = findChild(pPr, 'w', 'fpLocked');
+  if (fpLocked) {
+    formatting.locked = parseBooleanElement(fpLocked);
+  }
+
   return Object.keys(formatting).length > 0 ? formatting : undefined;
 }
 

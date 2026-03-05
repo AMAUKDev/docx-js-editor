@@ -32,7 +32,7 @@
 import JSZip from 'jszip';
 import type { Document } from '../types/document';
 import type { BlockContent, Image } from '../types/content';
-import { serializeDocument } from './serializer/documentSerializer';
+import { serializeDocument, documentHasLockedParagraphs } from './serializer/documentSerializer';
 import { serializeHeaderFooter } from './serializer/headerFooterSerializer';
 import { RELATIONSHIP_TYPES } from './relsParser';
 import { type RawDocxContent } from './unzip';
@@ -303,6 +303,39 @@ export async function repackDocx(doc: Document, options: RepackOptions = {}): Pr
   // TextBox content (wps:txbx), shape properties, and embedded data (o:gfxdata).
   // Re-serializing overwrites the originals with corrupted versions.
   // Headers/footers are read-only in the editor, so preserving originals is correct.
+
+  // If document has locked paragraphs, inject w:documentProtection into settings.xml
+  // so Word enforces editing restrictions (only unlocked regions marked with permStart/permEnd are editable)
+  if (doc.contentDirty && documentHasLockedParagraphs(doc)) {
+    const settingsFile = newZip.file('word/settings.xml');
+    if (settingsFile) {
+      let settingsXml = await settingsFile.async('text');
+      // Remove any existing documentProtection
+      settingsXml = settingsXml.replace(/<w:documentProtection[^/]*\/>/g, '');
+      // Insert documentProtection before closing </w:settings>
+      settingsXml = settingsXml.replace(
+        '</w:settings>',
+        '<w:documentProtection w:edit="readOnly" w:enforcement="1"/></w:settings>'
+      );
+      newZip.file('word/settings.xml', settingsXml, {
+        compression: 'DEFLATE',
+        compressionOptions: { level: compressionLevel },
+      });
+    }
+  } else if (doc.contentDirty) {
+    // No locked paragraphs — remove any existing document protection
+    const settingsFile = newZip.file('word/settings.xml');
+    if (settingsFile) {
+      let settingsXml = await settingsFile.async('text');
+      if (settingsXml.includes('w:documentProtection')) {
+        settingsXml = settingsXml.replace(/<w:documentProtection[^/]*\/>/g, '');
+        newZip.file('word/settings.xml', settingsXml, {
+          compression: 'DEFLATE',
+          compressionOptions: { level: compressionLevel },
+        });
+      }
+    }
+  }
 
   // Optionally update modification date in docProps/core.xml
   if (updateModifiedDate) {

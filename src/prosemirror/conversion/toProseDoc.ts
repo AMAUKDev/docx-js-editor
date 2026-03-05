@@ -270,6 +270,8 @@ function paragraphFormattingToAttrs(
     listMarker: paragraph.listRendering?.marker,
     // Store original inline formatting for lossless serialization round-trip
     _originalFormatting: formatting || undefined,
+    // Lock state for selective editing (direct property, not style-inherited)
+    locked: formatting?.locked || false,
   };
 
   // If we have a style resolver, resolve the style and get base properties

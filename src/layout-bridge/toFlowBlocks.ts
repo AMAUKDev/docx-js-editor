@@ -734,6 +734,11 @@ function convertParagraphAttrs(pmAttrs: PMParagraphAttrs): ParagraphAttrs {
     }
   }
 
+  // Lock state for selective editing
+  if (pmAttrs.locked) {
+    attrs.locked = true;
+  }
+
   return attrs;
 }
 

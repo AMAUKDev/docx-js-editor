@@ -195,6 +195,7 @@ import {
   createCrossRefUpdaterPlugin,
   refreshAllReferences,
 } from '../prosemirror/plugins/crossRefUpdater';
+import { createSelectiveEditablePlugin } from '../prosemirror/plugins/SelectiveEditablePlugin';
 
 // ============================================================================
 // TYPES
@@ -290,6 +291,8 @@ export interface DocxEditorProps {
   contextTags?: Record<string, string>;
   /** Called when document is loaded/parsed with the set of tagKeys found in the doc */
   onContextTagsDiscovered?: (tagKeys: string[]) => void;
+  /** When true, non-admin users cannot edit locked paragraphs */
+  lockedEditing?: boolean;
 }
 
 /**
@@ -335,6 +338,14 @@ export interface DocxEditorRef {
     contextTags?: Record<string, string>;
     unknownTagMode?: 'omit' | 'keep';
   }) => Promise<ArrayBuffer | null>;
+  /** Lock paragraphs in a position range (admin) */
+  lockParagraphs: (from: number, to: number) => void;
+  /** Unlock paragraphs in a position range (admin) */
+  unlockParagraphs: (from: number, to: number) => void;
+  /** Lock all paragraphs in the document (admin) */
+  lockAll: () => void;
+  /** Unlock all paragraphs in the document (admin) */
+  unlockAll: () => void;
 }
 
 /** Walk a PM doc tree, replacing contextTag atom nodes with plain text. */
@@ -447,6 +458,7 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     allowedStyleIds: allowedStyleIdsProp,
     contextTags,
     onContextTagsDiscovered,
+    lockedEditing = false,
   },
   ref
 ) {
@@ -525,15 +537,18 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     []
   );
 
-  // Merge external plugins with style enforcer and cross-ref updater
+  // Merge external plugins with style enforcer, cross-ref updater, and selective editable
   const mergedPlugins = useMemo(() => {
     const plugins = externalPlugins ? [...externalPlugins] : [];
     plugins.push(crossRefUpdaterPlugin);
     if (restrictedMode) {
       plugins.push(createStyleEnforcerPlugin({ allowedStyleIds }));
     }
+    if (lockedEditing) {
+      plugins.push(createSelectiveEditablePlugin());
+    }
     return plugins;
-  }, [restrictedMode, allowedStyleIds, externalPlugins, crossRefUpdaterPlugin]);
+  }, [restrictedMode, allowedStyleIds, externalPlugins, crossRefUpdaterPlugin, lockedEditing]);
 
   // Refs
   const pagedEditorRef = useRef<PagedEditorRef>(null);
@@ -941,7 +956,10 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
   const handleInsertTOC = useCallback(() => {
     const view = getActiveEditorView();
     if (!view) return;
-    generateTOC(view.state, view.dispatch);
+    generateTOC(view.state, (tr) => {
+      tr.setMeta('allowLockedEdit', true);
+      view.dispatch(tr);
+    });
     focusActiveEditor();
   }, [getActiveEditorView, focusActiveEditor]);
 
@@ -2076,6 +2094,7 @@ body { background: white; }
           label: label || contextTags?.[tagKey] || '',
         });
         const tr = view.state.tr.replaceSelectionWith(node).scrollIntoView();
+        tr.setMeta('allowLockedEdit', true);
         view.dispatch(tr);
         pagedEditorRef.current?.focus();
       },
@@ -2143,13 +2162,38 @@ body { background: white; }
       refreshNumbering: (tocStyleOverride?: string) => {
         const view = pagedEditorRef.current?.getView();
         if (!view) return;
-        const tr = refreshAllReferences(view.state, {
+        let tr = refreshAllReferences(view.state, {
           getNumberingMap: () => crossRefNumMapRef.current,
           getStyleResolver: () => crossRefStyleResolverRef.current,
           getLayout: () => pagedEditorRef.current?.getLayout() ?? null,
           tocStyleOverride,
         });
-        if (tr) view.dispatch(tr);
+
+        // Also refresh context tag labels (in case they've gotten stale)
+        const tags = contextTags ?? {};
+        const ctNodeType = view.state.schema.nodes.contextTag;
+        if (ctNodeType) {
+          if (!tr) tr = view.state.tr;
+          const doc = tr.doc;
+          doc.descendants((node, pos) => {
+            if (node.type !== ctNodeType) return true;
+            const tagKey = node.attrs.tagKey as string;
+            const currentLabel = node.attrs.label as string;
+            const newLabel = tags[tagKey] ?? '';
+            if (currentLabel !== newLabel) {
+              tr = tr!.setNodeMarkup(tr!.mapping.map(pos), undefined, {
+                ...node.attrs,
+                label: newLabel,
+              });
+            }
+            return false;
+          });
+        }
+
+        if (tr && tr.docChanged) {
+          tr.setMeta('allowLockedEdit', true);
+          view.dispatch(tr);
+        }
       },
       getAvailableStyles: () => {
         const resolver = crossRefStyleResolverRef.current;
@@ -2182,6 +2226,60 @@ body { background: white; }
         // Serialize to DOCX buffer
         const tempAgent = new DocumentAgent(renderedDocument);
         return tempAgent.toBuffer();
+      },
+      lockParagraphs: (from: number, to: number) => {
+        const view = pagedEditorRef.current?.getView();
+        if (!view) return;
+        let tr = view.state.tr;
+        tr.setMeta('allowLockedEdit', true);
+        const seen = new Set<number>();
+        view.state.doc.nodesBetween(from, to, (node, pos) => {
+          if (node.type.name === 'paragraph' && !seen.has(pos)) {
+            seen.add(pos);
+            tr = tr.setNodeMarkup(pos, undefined, { ...node.attrs, locked: true });
+          }
+        });
+        view.dispatch(tr);
+      },
+      unlockParagraphs: (from: number, to: number) => {
+        const view = pagedEditorRef.current?.getView();
+        if (!view) return;
+        let tr = view.state.tr;
+        tr.setMeta('allowLockedEdit', true);
+        const seen = new Set<number>();
+        view.state.doc.nodesBetween(from, to, (node, pos) => {
+          if (node.type.name === 'paragraph' && !seen.has(pos)) {
+            seen.add(pos);
+            tr = tr.setNodeMarkup(pos, undefined, { ...node.attrs, locked: false });
+          }
+        });
+        view.dispatch(tr);
+      },
+      lockAll: () => {
+        const view = pagedEditorRef.current?.getView();
+        if (!view) return;
+        let tr = view.state.tr;
+        tr.setMeta('allowLockedEdit', true);
+        view.state.doc.descendants((node, pos) => {
+          if (node.type.name === 'paragraph') {
+            tr = tr.setNodeMarkup(pos, undefined, { ...node.attrs, locked: true });
+          }
+          return true;
+        });
+        view.dispatch(tr);
+      },
+      unlockAll: () => {
+        const view = pagedEditorRef.current?.getView();
+        if (!view) return;
+        let tr = view.state.tr;
+        tr.setMeta('allowLockedEdit', true);
+        view.state.doc.descendants((node, pos) => {
+          if (node.type.name === 'paragraph') {
+            tr = tr.setNodeMarkup(pos, undefined, { ...node.attrs, locked: false });
+          }
+          return true;
+        });
+        view.dispatch(tr);
       },
     }),
     [
@@ -2237,6 +2335,7 @@ body { background: white; }
       });
 
       if (changed) {
+        tr.setMeta('allowLockedEdit', true);
         view.dispatch(tr);
       }
 

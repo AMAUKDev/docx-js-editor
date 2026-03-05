@@ -579,10 +579,69 @@ function serializeBlockContent(block: BlockContent): string {
 }
 
 /**
- * Serialize document body content
+ * Check if any paragraph in the content tree has locked=true.
+ */
+function hasLockedParagraphs(content: BlockContent[]): boolean {
+  for (const block of content) {
+    if (block.type === 'paragraph' && block.formatting?.locked) return true;
+    if (block.type === 'table') {
+      for (const row of block.rows) {
+        for (const cell of row.cells) {
+          if (hasLockedParagraphs(cell.content)) return true;
+        }
+      }
+    }
+    if (block.type === 'blockSdt' && hasLockedParagraphs(block.content)) return true;
+  }
+  return false;
+}
+
+/**
+ * Serialize document body content.
+ *
+ * When locked paragraphs exist, wraps unlocked paragraphs with
+ * w:permStart/w:permEnd so Word's document protection (set in settings.xml)
+ * allows editing only the unlocked regions.
  */
 function serializeBodyContent(content: BlockContent[]): string {
-  return content.map((block) => serializeBlockContent(block)).join('');
+  const hasLocked = hasLockedParagraphs(content);
+  if (!hasLocked) {
+    return content.map((block) => serializeBlockContent(block)).join('');
+  }
+
+  // Insert permission ranges around unlocked paragraph runs
+  const parts: string[] = [];
+  let permId = 100;
+  let inUnlockedRun = false;
+
+  for (const block of content) {
+    const isUnlockedParagraph = block.type === 'paragraph' && !block.formatting?.locked;
+
+    if (isUnlockedParagraph && !inUnlockedRun) {
+      parts.push(`<w:permStart w:id="${permId}" w:edGrp="everyone"/>`);
+      inUnlockedRun = true;
+    } else if (!isUnlockedParagraph && inUnlockedRun) {
+      parts.push(`<w:permEnd w:id="${permId}"/>`);
+      permId++;
+      inUnlockedRun = false;
+    }
+
+    parts.push(serializeBlockContent(block));
+  }
+
+  if (inUnlockedRun) {
+    parts.push(`<w:permEnd w:id="${permId}"/>`);
+  }
+
+  return parts.join('');
+}
+
+/**
+ * Check if a Document has any locked paragraphs in its body content.
+ * Used by rezip to decide whether to inject w:documentProtection into settings.xml.
+ */
+export function documentHasLockedParagraphs(doc: Document): boolean {
+  return hasLockedParagraphs(doc.package.document.content);
 }
 
 // ============================================================================

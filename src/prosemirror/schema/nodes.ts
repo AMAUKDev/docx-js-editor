@@ -101,6 +101,9 @@ export interface ParagraphAttrs {
   /** Original inline paragraph formatting from DOCX (pre-style-resolution).
    *  Used by fromProseDoc for lossless round-trip serialization. */
   _originalFormatting?: ParagraphFormatting;
+
+  /** Whether this paragraph is locked (non-editable in locked-editing mode) */
+  locked?: boolean;
 }
 
 /**

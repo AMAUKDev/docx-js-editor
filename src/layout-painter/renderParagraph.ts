@@ -963,6 +963,15 @@ export function renderParagraphFragment(
     fragmentEl.style.backgroundColor = block.attrs.shading;
   }
 
+  // Locked paragraph visual indicator
+  if (block.attrs?.locked) {
+    if (!block.attrs.shading) {
+      fragmentEl.style.backgroundColor = 'rgba(0, 0, 0, 0.03)';
+    }
+    fragmentEl.style.borderLeft = '3px solid #b0b0b0';
+    fragmentEl.style.paddingLeft = parseInt(fragmentEl.style.paddingLeft || '0', 10) + 4 + 'px';
+  }
+
   // Calculate available width for justify
   // Subtract indentation since those are applied as CSS margins on the fragment
   const availableWidth = fragment.width - indentLeft - indentRight;

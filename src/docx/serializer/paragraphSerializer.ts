@@ -484,6 +484,11 @@ export function serializeParagraphFormatting(formatting: ParagraphFormatting | u
     }
   }
 
+  // Lock state (custom extension for selective editing)
+  if (formatting.locked) {
+    parts.push('<w:fpLocked/>');
+  }
+
   if (parts.length === 0) return '';
 
   return `<w:pPr>${parts.join('')}</w:pPr>`;

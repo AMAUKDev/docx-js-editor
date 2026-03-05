@@ -326,6 +326,10 @@ export interface ParagraphFormatting {
   // Default run properties for this paragraph
   /** Run properties to apply to all runs (w:rPr) */
   runProperties?: TextFormatting;
+
+  // Lock state for selective editing
+  /** Whether this paragraph is locked (custom extension, serialized as w:fpLocked in pPr) */
+  locked?: boolean;
 }
 
 // ============================================================================

@@ -228,6 +228,8 @@ export type ParagraphAttrs = {
   // Default font for empty paragraphs (from style's rPr / pPr/rPr)
   defaultFontSize?: number; // in points
   defaultFontFamily?: string;
+  /** Whether this paragraph is locked (non-editable in locked-editing mode) */
+  locked?: boolean;
 };
 
 /**

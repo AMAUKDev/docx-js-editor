@@ -129,6 +129,7 @@ const paragraphNodeSpec: NodeSpec = {
     outlineLevel: { default: null },
     bookmarks: { default: null },
     _originalFormatting: { default: null },
+    locked: { default: false },
   },
   parseDOM: [
     {
@@ -529,6 +530,8 @@ export const ParagraphExtension = createNodeExtension({
         insertSectionBreak: (breakType: 'nextPage' | 'continuous' | 'oddPage' | 'evenPage') =>
           setParagraphAttr('sectionBreakType', breakType),
         removeSectionBreak: () => setParagraphAttr('sectionBreakType', null),
+        lockParagraph: () => setParagraphAttr('locked', true),
+        unlockParagraph: () => setParagraphAttr('locked', false),
         generateTOC: () => {
           return (
             state: EditorState,

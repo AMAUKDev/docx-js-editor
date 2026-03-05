@@ -20,3 +20,5 @@ export {
   refreshAllReferences,
 } from './crossRefUpdater';
 export type { CrossRefUpdaterConfig } from './crossRefUpdater';
+
+export { createSelectiveEditablePlugin, selectiveEditableKey } from './SelectiveEditablePlugin';
