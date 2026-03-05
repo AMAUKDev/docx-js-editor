@@ -776,16 +776,29 @@ function serializeShapeContent(content: ShapeContent): string {
     } else {
       textBody = [`<wps:bodyPr ${bpAttrs.join(' ')}/>`].join('');
     }
+  } else {
+    // wps:bodyPr is required by OOXML schema even when there's no text content
+    textBody = '<wps:bodyPr/>';
   }
 
+  // Connector shapes (lines, connectors) use cNvCnPr; other shapes use cNvSpPr
+  const connectorTypes = new Set([
+    'line',
+    'straightConnector1',
+    'bentConnector2',
+    'bentConnector3',
+    'bentConnector4',
+    'bentConnector5',
+    'curvedConnector2',
+    'curvedConnector3',
+    'curvedConnector4',
+    'curvedConnector5',
+  ]);
+  const isConnector = connectorTypes.has(shape.shapeType);
+  const cNvPr = isConnector ? '<wps:cNvCnPr/>' : `<wps:cNvSpPr${isTextBox ? ' txBox="1"' : ''}/>`;
+
   // Build wps:wsp
-  const wsp = [
-    '<wps:wsp>',
-    `<wps:cNvSpPr${isTextBox ? ' txBox="1"' : ''}/>`,
-    spPr,
-    textBody,
-    '</wps:wsp>',
-  ].join('');
+  const wsp = ['<wps:wsp>', cNvPr, spPr, textBody, '</wps:wsp>'].join('');
 
   // Wrap in a:graphic
   const graphic = [
