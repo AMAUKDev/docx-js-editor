@@ -790,6 +790,29 @@ function parseParagraphContents(
   let afterSeparator = false;
   let complexFieldLock = false;
   let complexFieldDirty = false;
+  // All runs consumed by the current field tracking (in order).
+  // Includes the begin run, instrText runs, separate run, code/result runs.
+  let complexFieldAllRuns: Run[] = [];
+
+  // Helper: flush accumulated field state as raw runs when a complex field
+  // cannot be closed within this paragraph (e.g. TOC spans multiple paragraphs).
+  // This preserves fldChar begin/instrText/separate markers so the serializer
+  // can produce balanced fldChar sequences.
+  function flushIncompleteFieldState(): void {
+    // Emit all accumulated runs in their original order
+    for (const r of complexFieldAllRuns) {
+      contents.push(r);
+    }
+    // Reset field tracking state
+    inComplexField = false;
+    afterSeparator = false;
+    complexFieldInstr = '';
+    complexFieldCodeRuns = [];
+    complexFieldResultRuns = [];
+    complexFieldAllRuns = [];
+    complexFieldLock = false;
+    complexFieldDirty = false;
+  }
 
   for (const child of children) {
     const localName = getLocalName(child.name);
@@ -828,11 +851,16 @@ function parseParagraphContents(
           complexFieldInstr = '';
           complexFieldCodeRuns = [];
           complexFieldResultRuns = [];
+          complexFieldAllRuns = [];
           complexFieldLock = false;
           complexFieldDirty = false;
         }
 
         if (inComplexField) {
+          // Track every run consumed by the field state machine so we can
+          // flush them as regular runs if the field spans multiple paragraphs.
+          complexFieldAllRuns.push(run);
+
           if (instrText) {
             complexFieldInstr += instrText;
           }
@@ -866,6 +894,7 @@ function parseParagraphContents(
 
             contents.push(complexField);
             inComplexField = false;
+            complexFieldAllRuns = [];
           }
         } else {
           // Regular run, not part of a field
@@ -875,6 +904,12 @@ function parseParagraphContents(
       }
 
       case 'hyperlink':
+        // If we're tracking a cross-paragraph complex field, flush the accumulated
+        // field markers as regular runs before handling the hyperlink. This preserves
+        // fldChar begin/instrText/separate for multi-paragraph fields like TOC.
+        if (inComplexField) {
+          flushIncompleteFieldState();
+        }
         contents.push(parseHyperlink(child, rels, styles, theme, media));
         break;
 
@@ -1000,6 +1035,14 @@ function parseParagraphContents(
         // Unknown element - skip
         break;
     }
+  }
+
+  // If a complex field was started but never closed within this paragraph,
+  // flush the accumulated runs as regular content. This handles fields that
+  // span multiple paragraphs (e.g. TOC, INDEX) — preserving the fldChar
+  // markers ensures balanced begin/end sequences in the serialized output.
+  if (inComplexField) {
+    flushIncompleteFieldState();
   }
 
   return contents;

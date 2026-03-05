@@ -635,13 +635,65 @@ export function serializeDocument(doc: Document): string {
 
   // Document body
   parts.push('<w:body>');
-  parts.push(serializeDocumentBody(doc.package.document));
+  const bodyXml = serializeDocumentBody(doc.package.document);
+  parts.push(ensureFieldBalance(bodyXml));
   parts.push('</w:body>');
 
   // Close document element
   parts.push('</w:document>');
 
   return parts.join('');
+}
+
+/**
+ * Ensure fldChar begin/end elements are balanced in the serialized body XML.
+ *
+ * Multi-paragraph fields (TOC, INDEX, etc.) can lose their outer wrapper
+ * during the parse→PM→serialize round-trip, leaving orphaned fldChar end
+ * elements. Word rejects documents with unbalanced fldChar sequences.
+ *
+ * This function strips orphaned fldChar end elements (those without a matching
+ * begin) by removing the containing <w:r>...</w:r> element.
+ */
+function ensureFieldBalance(bodyXml: string): string {
+  // Find all fldChar elements with their positions
+  const fldCharRegex = /<w:fldChar\s+w:fldCharType="(begin|separate|end)"[^/]*\/>/g;
+  let depth = 0;
+  const orphanedEndPositions: number[] = [];
+
+  let match;
+  while ((match = fldCharRegex.exec(bodyXml)) !== null) {
+    const charType = match[1];
+    if (charType === 'begin') {
+      depth++;
+    } else if (charType === 'end') {
+      depth--;
+      if (depth < 0) {
+        // This end has no matching begin — mark for removal
+        orphanedEndPositions.push(match.index);
+        depth = 0;
+      }
+    }
+  }
+
+  if (orphanedEndPositions.length === 0) return bodyXml;
+
+  // Remove orphaned fldChar end elements by stripping their containing <w:r>
+  let result = bodyXml;
+  // Process in reverse order so positions remain valid after each removal
+  for (let i = orphanedEndPositions.length - 1; i >= 0; i--) {
+    const pos = orphanedEndPositions[i];
+    // Find the enclosing <w:r> ... </w:r>
+    const runStart = result.lastIndexOf('<w:r>', pos);
+    const runStartWithAttrs = result.lastIndexOf('<w:r ', pos);
+    const actualRunStart = Math.max(runStart, runStartWithAttrs);
+    const runEnd = result.indexOf('</w:r>', pos);
+    if (actualRunStart >= 0 && runEnd > actualRunStart) {
+      result = result.slice(0, actualRunStart) + result.slice(runEnd + 6);
+    }
+  }
+
+  return result;
 }
 
 /**
