@@ -515,7 +515,7 @@ function extractParagraphContent(paragraph: PMNode): ParagraphContent[] {
       };
       content.push(refRun);
     } else if (node.type.name === 'contextTag') {
-      // Context tag — serialize as {tag_key} text (docxtemplater-compatible)
+      // Context tag — serialize as {{ tag_key }} (Jinja2/docxtpl syntax)
       if (currentRun) {
         content.push(currentRun);
         currentRun = null;
@@ -524,7 +524,7 @@ function extractParagraphContent(paragraph: PMNode): ParagraphContent[] {
       const tagKey = node.attrs.tagKey as string;
       const textContent: TextContent = {
         type: 'text',
-        text: `{${tagKey}}`,
+        text: `{{ ${tagKey} }}`,
       };
       const tagRun: Run = {
         type: 'run',
@@ -941,6 +941,11 @@ function createShapeRun(node: PMNode): Run {
   }
 
   const shapeContent: ShapeContent = { type: 'shape', shape };
+
+  // Restore original XML for lossless round-trip
+  if (attrs._originalDrawingXml) {
+    shapeContent.originalXml = attrs._originalDrawingXml;
+  }
 
   return {
     type: 'run',

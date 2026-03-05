@@ -124,6 +124,8 @@ export interface ShapeContent {
   type: 'shape';
   /** Shape data */
   shape: Shape;
+  /** Original mc:AlternateContent or w:drawing XML for lossless round-trip */
+  originalXml?: string;
 }
 
 /**

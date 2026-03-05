@@ -320,7 +320,9 @@ export interface DocxEditorRef {
   /** Get all headings and captions in the document for cross-reference picking */
   getReferenceable: () => Array<{ type: 'heading' | 'figure'; text: string; number: string }>;
   /** Force-refresh all cross-ref displayText and caption figure numbers */
-  refreshNumbering: () => void;
+  refreshNumbering: (tocStyleOverride?: string) => void;
+  /** Get available paragraph styles for TOC style picker */
+  getAvailableStyles: () => Array<{ styleId: string; name: string }>;
 }
 
 /**
@@ -2099,15 +2101,24 @@ body { background: white; }
         });
         return items;
       },
-      refreshNumbering: () => {
+      refreshNumbering: (tocStyleOverride?: string) => {
         const view = pagedEditorRef.current?.getView();
         if (!view) return;
         const tr = refreshAllReferences(view.state, {
           getNumberingMap: () => crossRefNumMapRef.current,
           getStyleResolver: () => crossRefStyleResolverRef.current,
           getLayout: () => pagedEditorRef.current?.getLayout() ?? null,
+          tocStyleOverride,
         });
         if (tr) view.dispatch(tr);
+      },
+      getAvailableStyles: () => {
+        const resolver = crossRefStyleResolverRef.current;
+        if (!resolver) return [];
+        return resolver.getParagraphStyles().map((s) => ({
+          styleId: s.styleId,
+          name: s.name ?? s.styleId,
+        }));
       },
     }),
     [
@@ -2149,7 +2160,7 @@ body { background: white; }
     if (changed) {
       view.dispatch(tr);
     }
-  }, [contextTags]);
+  }, [contextTags, state.isLoading]);
 
   // Create numbering map from document numbering definitions
   const numberingMap = useMemo(() => {

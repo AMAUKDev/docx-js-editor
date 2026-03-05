@@ -52,6 +52,8 @@ export interface ShapeAttrs {
   glowColor?: string;
   /** Glow radius in pixels */
   glowRadius?: number;
+  /** Original drawing XML for lossless round-trip (internal, not rendered) */
+  _originalDrawingXml?: string;
 }
 
 /**
@@ -143,6 +145,7 @@ export const ShapeExtension = createNodeExtension({
       shadowOffsetY: { default: null },
       glowColor: { default: null },
       glowRadius: { default: null },
+      _originalDrawingXml: { default: null },
     },
     parseDOM: [
       {

@@ -1099,6 +1099,34 @@ function mergeTextFormatting(
   return result;
 }
 
+/** Regex to detect {{ context.tag }} or {context.tag} patterns in text */
+const CONTEXT_TAG_RE = /\{\{\s*(context\.[\w.]+)\s*\}\}|\{(context\.[\w.]+)\}/g;
+
+/**
+ * Split text containing {{ tag }} patterns into text and contextTag nodes.
+ * Plain text without tags returns a single text node (fast path).
+ */
+function splitContextTags(text: string, marks: ReturnType<typeof schema.mark>[]): PMNode[] {
+  const ctType = schema.nodes.contextTag;
+  if (!ctType) return [schema.text(text, marks)];
+
+  const nodes: PMNode[] = [];
+  let lastIndex = 0;
+
+  for (const match of text.matchAll(CONTEXT_TAG_RE)) {
+    const before = text.slice(lastIndex, match.index);
+    if (before) nodes.push(schema.text(before, marks));
+    const tagKey = match[1] || match[2]; // group 1 = {{ }}, group 2 = { }
+    nodes.push(ctType.create({ tagKey, label: '' }));
+    lastIndex = match.index! + match[0].length;
+  }
+
+  const after = text.slice(lastIndex);
+  if (after) nodes.push(schema.text(after, marks));
+
+  return nodes.length > 0 ? nodes : [schema.text(text, marks)];
+}
+
 /**
  * Convert RunContent to ProseMirror nodes
  */
@@ -1106,7 +1134,7 @@ function convertRunContent(content: RunContent, marks: ReturnType<typeof schema.
   switch (content.type) {
     case 'text':
       if (content.text) {
-        return [schema.text(content.text, marks)];
+        return splitContextTags(content.text, marks);
       }
       return [];
 
@@ -1135,7 +1163,7 @@ function convertRunContent(content: RunContent, marks: ReturnType<typeof schema.
         // Skip - handled by extractTextBoxesFromParagraph
         return [];
       }
-      return [convertShape(shp)];
+      return [convertShape(shp, content.originalXml)];
     }
 
     case 'footnoteRef':
@@ -1532,7 +1560,7 @@ function textFormattingToMarks(
 /**
  * Convert a Shape to a ProseMirror shape node (inline SVG)
  */
-function convertShape(shape: Shape): PMNode {
+function convertShape(shape: Shape, originalXml?: string): PMNode {
   const widthPx = shape.size ? emuToPixels(shape.size.width) : 100;
   const heightPx = shape.size ? emuToPixels(shape.size.height) : 80;
 
@@ -1603,6 +1631,7 @@ function convertShape(shape: Shape): PMNode {
     outlineColor,
     outlineStyle,
     transform,
+    _originalDrawingXml: originalXml || null,
   });
 }
 

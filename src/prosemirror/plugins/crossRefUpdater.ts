@@ -17,10 +17,11 @@
 import { Plugin, PluginKey, type Transaction } from 'prosemirror-state';
 import type { EditorState } from 'prosemirror-state';
 import { Fragment as PMFragment } from 'prosemirror-model';
-import type { Mark, Node as PMNode } from 'prosemirror-model';
+import type { Mark, Node as PMNode, Schema } from 'prosemirror-model';
 import type { NumberingMap } from '../../docx/numberingParser';
 import { formatNumberedMarker } from '../../layout-bridge/toFlowBlocks';
 import type { Layout } from '../../layout-engine/types';
+import { textFormattingToMarks } from '../extensions/marks/markUtils';
 
 export const crossRefUpdaterKey = new PluginKey('crossRefUpdater');
 
@@ -37,10 +38,13 @@ export interface CrossRefUpdaterConfig {
         lineSpacing?: number;
         lineSpacingRule?: string;
       };
+      runFormatting?: import('../../types/document').TextFormatting;
     };
   } | null;
   /** Return the current page layout (for TOC page numbers). */
   getLayout?: () => Layout | null;
+  /** When set, TOC entries inherit font/size/spacing from this style instead of per-level TOC1-9 styles. */
+  tocStyleOverride?: string;
 }
 
 /** Recognised caption prefixes and their sequence counters */
@@ -512,6 +516,15 @@ export function refreshAllReferences(
       // tab stops with correct width and dot leaders
       const tabType = schema.nodes.tab;
       const styleResolver = config.getStyleResolver?.() ?? null;
+
+      // Resolve override style once (if set) for font/size/spacing on all TOC entries
+      const overrideResolved = config.tocStyleOverride
+        ? (styleResolver?.resolveParagraphStyle(config.tocStyleOverride) ?? null)
+        : null;
+      const overrideMarks: Mark[] = overrideResolved?.runFormatting
+        ? textFormattingToMarks(overrideResolved.runFormatting, schema as Schema)
+        : [];
+
       for (const h of tocHeadings) {
         const pageNum = getPageForPmPos(layout, h.pmPos);
         const tocStyleId = `TOC${h.level + 1}`;
@@ -520,28 +533,30 @@ export function refreshAllReferences(
           href: `#${h.bookmarkName}`,
         });
 
+        // Combine link mark with optional override formatting marks
+        const entryMarks = overrideMarks.length > 0 ? [linkMark, ...overrideMarks] : [linkMark];
+
         const entryContent: PMNode[] = [];
 
         // Heading number + tab + title (or just title if no number)
         if (h.number) {
-          entryContent.push(schema.text(h.number, [linkMark]));
+          entryContent.push(schema.text(h.number, entryMarks));
           if (tabType) {
             entryContent.push(tabType.create());
           }
-          entryContent.push(schema.text(h.text, [linkMark]));
+          entryContent.push(schema.text(h.text, entryMarks));
         } else {
-          entryContent.push(schema.text(h.text, [linkMark]));
+          entryContent.push(schema.text(h.text, entryMarks));
         }
 
         // Tab node (right-aligned with dot leader) + page number
         if (tabType) {
           entryContent.push(tabType.create());
         }
-        entryContent.push(schema.text(String(pageNum), [linkMark]));
+        entryContent.push(schema.text(String(pageNum), entryMarks));
 
-        // Resolve spacing from the TOC style definition so paragraph spacing
-        // matches the original document (e.g. TOC1 → spaceBefore: 120 twips)
-        const resolvedStyle = styleResolver?.resolveParagraphStyle(tocStyleId);
+        // Use override spacing when set, otherwise fall back to per-level TOC style
+        const resolvedStyle = overrideResolved ?? styleResolver?.resolveParagraphStyle(tocStyleId);
         const pFmt = resolvedStyle?.paragraphFormatting;
 
         tocNodes.push(

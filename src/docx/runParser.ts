@@ -49,6 +49,7 @@ import {
   getTextContent,
   parseBooleanElement,
   parseNumericAttribute,
+  elementToXml,
   type XmlElement,
 } from './xmlParser';
 import { resolveThemeFontRef } from './themeParser';
@@ -605,17 +606,25 @@ function parseRunContents(
         contents.push({ type: 'noBreakHyphen' } as NoBreakHyphenContent);
         break;
 
-      case 'drawing':
+      case 'drawing': {
         // Drawing/image
         const drawing = parseDrawingContent(child, rels, media);
         if (drawing) {
+          // Capture original drawing XML for shapes (not images, which may change)
+          if (drawing.type === 'shape') {
+            (drawing as ShapeContent).originalXml = elementToXml(child);
+          }
           contents.push(drawing);
         }
         break;
+      }
 
       case 'AlternateContent': {
         // mc:AlternateContent wraps modern content in mc:Choice with
         // mc:Fallback for legacy consumers. Prefer the Choice branch.
+        // Capture the entire mc:AlternateContent XML for lossless round-trip of shapes.
+        const originalXml = elementToXml(child);
+
         const choiceEl = child.elements?.find(
           (e) => e.type === 'element' && (e.name === 'mc:Choice' || e.name?.endsWith(':Choice'))
         );
@@ -631,7 +640,12 @@ function parseRunContents(
             const innerLocal = getLocalName(inner.name);
             if (innerLocal === 'drawing') {
               const d = parseDrawingContent(inner, rels, media);
-              if (d) contents.push(d);
+              if (d) {
+                if (d.type === 'shape') {
+                  (d as ShapeContent).originalXml = originalXml;
+                }
+                contents.push(d);
+              }
             }
           }
         }

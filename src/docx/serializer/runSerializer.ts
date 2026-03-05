@@ -719,6 +719,11 @@ function serializeShapeTextBody(paragraphs: Paragraph[]): string {
  * Serialize shape content to full DrawingML XML (wps:wsp inside w:drawing)
  */
 function serializeShapeContent(content: ShapeContent): string {
+  // If we have preserved original XML, emit it verbatim (lossless round-trip)
+  if (content.originalXml) {
+    return content.originalXml;
+  }
+
   const shape = content.shape;
   const cx = shape.size.width;
   const cy = shape.size.height;
