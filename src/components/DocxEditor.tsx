@@ -283,6 +283,8 @@ export interface DocxEditorProps {
   allowedStyleIds?: string[];
   /** Context tags available for insertion (key → resolved value) */
   contextTags?: Record<string, string>;
+  /** Called when document is loaded/parsed with the set of tagKeys found in the doc */
+  onContextTagsDiscovered?: (tagKeys: string[]) => void;
 }
 
 /**
@@ -408,6 +410,7 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     restrictedMode = false,
     allowedStyleIds: allowedStyleIdsProp,
     contextTags,
+    onContextTagsDiscovered,
   },
   ref
 ) {
@@ -2135,9 +2138,11 @@ body { background: white; }
   // Auto-update context tag labels when contextTags prop changes or document loads.
   // The view may not be ready immediately when isLoading flips to false (the
   // HiddenProseMirror EditorView is created in a child effect), so we poll briefly.
-  useEffect(() => {
-    if (!contextTags) return;
+  // Also reports discovered tagKeys back to the parent so it can show them in the panel.
+  const onContextTagsDiscoveredRef = useRef(onContextTagsDiscovered);
+  onContextTagsDiscoveredRef.current = onContextTagsDiscovered;
 
+  useEffect(() => {
     let cancelled = false;
     let attempts = 0;
 
@@ -2153,14 +2158,17 @@ body { background: white; }
       const nodeType = editorState.schema.nodes.contextTag;
       if (!nodeType) return;
 
+      const tags = contextTags ?? {};
       let tr = editorState.tr;
       let changed = false;
+      const discoveredKeys = new Set<string>();
 
       editorState.doc.descendants((node, pos) => {
         if (node.type !== nodeType) return true;
         const tagKey = node.attrs.tagKey as string;
+        discoveredKeys.add(tagKey);
         const currentLabel = node.attrs.label as string;
-        const newLabel = contextTags[tagKey] ?? '';
+        const newLabel = tags[tagKey] ?? '';
         if (currentLabel !== newLabel) {
           tr = tr.setNodeMarkup(pos, undefined, { ...node.attrs, label: newLabel });
           changed = true;
@@ -2170,6 +2178,11 @@ body { background: white; }
 
       if (changed) {
         view.dispatch(tr);
+      }
+
+      // Report discovered tagKeys to parent
+      if (discoveredKeys.size > 0) {
+        onContextTagsDiscoveredRef.current?.([...discoveredKeys]);
       }
     };
 
