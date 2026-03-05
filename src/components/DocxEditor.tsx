@@ -2132,34 +2132,51 @@ body { background: white; }
     ]
   );
 
-  // Auto-update context tag labels when contextTags prop changes
+  // Auto-update context tag labels when contextTags prop changes or document loads.
+  // The view may not be ready immediately when isLoading flips to false (the
+  // HiddenProseMirror EditorView is created in a child effect), so we poll briefly.
   useEffect(() => {
     if (!contextTags) return;
-    const view = pagedEditorRef.current?.getView();
-    if (!view) return;
 
-    const { state: editorState } = view;
-    const nodeType = editorState.schema.nodes.contextTag;
-    if (!nodeType) return;
+    let cancelled = false;
+    let attempts = 0;
 
-    let tr = editorState.tr;
-    let changed = false;
-
-    editorState.doc.descendants((node, pos) => {
-      if (node.type !== nodeType) return true;
-      const tagKey = node.attrs.tagKey as string;
-      const currentLabel = node.attrs.label as string;
-      const newLabel = contextTags[tagKey] ?? '';
-      if (currentLabel !== newLabel) {
-        tr = tr.setNodeMarkup(pos, undefined, { ...node.attrs, label: newLabel });
-        changed = true;
+    const applyLabels = () => {
+      if (cancelled) return;
+      const view = pagedEditorRef.current?.getView();
+      if (!view) {
+        if (attempts++ < 20) setTimeout(applyLabels, 50);
+        return;
       }
-      return false; // atom node, no children
-    });
 
-    if (changed) {
-      view.dispatch(tr);
-    }
+      const { state: editorState } = view;
+      const nodeType = editorState.schema.nodes.contextTag;
+      if (!nodeType) return;
+
+      let tr = editorState.tr;
+      let changed = false;
+
+      editorState.doc.descendants((node, pos) => {
+        if (node.type !== nodeType) return true;
+        const tagKey = node.attrs.tagKey as string;
+        const currentLabel = node.attrs.label as string;
+        const newLabel = contextTags[tagKey] ?? '';
+        if (currentLabel !== newLabel) {
+          tr = tr.setNodeMarkup(pos, undefined, { ...node.attrs, label: newLabel });
+          changed = true;
+        }
+        return false; // atom node, no children
+      });
+
+      if (changed) {
+        view.dispatch(tr);
+      }
+    };
+
+    applyLabels();
+    return () => {
+      cancelled = true;
+    };
   }, [contextTags, state.isLoading]);
 
   // Create numbering map from document numbering definitions
