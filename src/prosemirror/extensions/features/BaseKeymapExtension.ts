@@ -147,6 +147,17 @@ const splitBlockClearBorders: Command = (state, dispatch, view) => {
         }
       }
 
+      // Clear identity attrs that must NOT be duplicated across paragraphs.
+      // ProseMirror's splitBlock copies all attrs from the source node; these
+      // are per-paragraph identifiers that would cause DOCX corruption
+      // (duplicate w14:paraId / bookmarkStart ids) if carried to the new node.
+      for (const key of ['paraId', 'textId', 'bookmarks', '_originalFormatting'] as const) {
+        if (newAttrs[key] != null) {
+          newAttrs[key] = null;
+          attrsChanged = true;
+        }
+      }
+
       // Clear borders (Word does not propagate paragraph borders on Enter)
       if (newAttrs.borders) {
         newAttrs.borders = null;

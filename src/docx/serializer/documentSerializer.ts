@@ -639,6 +639,7 @@ export function serializeDocument(doc: Document): string {
   let bodyXml = serializeDocumentBody(doc.package.document);
   bodyXml = ensureFieldBalance(bodyXml);
   bodyXml = ensureBookmarkBalance(bodyXml);
+  bodyXml = deduplicateParaIds(bodyXml);
   parts.push(bodyXml);
   parts.push('</w:body>');
 
@@ -712,54 +713,89 @@ function ensureFieldBalance(bodyXml: string): string {
  * bookmarkEnd).
  */
 function ensureBookmarkBalance(bodyXml: string): string {
-  // Collect all bookmark start IDs
+  let result = bodyXml;
+
+  // --- Pass 1: Remove duplicate bookmark IDs (keep only the first occurrence) ---
+  // Duplicate bookmark IDs cause Word to reject the file as corrupt.
+  // This can happen when paragraphs are split and attrs (including bookmarks)
+  // are inadvertently copied to the new paragraph.
+  const seenStartIds = new Set<string>();
+  result = result.replace(
+    /<w:bookmarkStart\s+w:id="(\d+)"\s+w:name="[^"]*"[^/]*\/>/g,
+    (fullMatch, id) => {
+      if (seenStartIds.has(id)) return ''; // Remove duplicate
+      seenStartIds.add(id);
+      return fullMatch;
+    }
+  );
+  const seenEndIds = new Set<string>();
+  result = result.replace(/<w:bookmarkEnd\s+w:id="(\d+)"\s*\/>/g, (fullMatch, id) => {
+    if (seenEndIds.has(id)) return ''; // Remove duplicate
+    seenEndIds.add(id);
+    return fullMatch;
+  });
+
+  // --- Pass 2: Remove orphaned bookmarks (start without end or vice versa) ---
   const startIds = new Set<string>();
   const startRegex = /<w:bookmarkStart\s+w:id="(\d+)"/g;
   let match;
-  while ((match = startRegex.exec(bodyXml)) !== null) {
+  while ((match = startRegex.exec(result)) !== null) {
     startIds.add(match[1]);
   }
 
-  // Collect all bookmark end IDs
   const endIds = new Set<string>();
   const endRegex = /<w:bookmarkEnd\s+w:id="(\d+)"/g;
-  while ((match = endRegex.exec(bodyXml)) !== null) {
+  while ((match = endRegex.exec(result)) !== null) {
     endIds.add(match[1]);
   }
 
-  // Find orphaned ends (no matching start)
   const orphanedEndIds = new Set<string>();
   for (const id of endIds) {
-    if (!startIds.has(id)) {
-      orphanedEndIds.add(id);
-    }
+    if (!startIds.has(id)) orphanedEndIds.add(id);
   }
 
-  // Find orphaned starts (no matching end)
   const orphanedStartIds = new Set<string>();
   for (const id of startIds) {
-    if (!endIds.has(id)) {
-      orphanedStartIds.add(id);
-    }
+    if (!endIds.has(id)) orphanedStartIds.add(id);
   }
 
-  if (orphanedEndIds.size === 0 && orphanedStartIds.size === 0) return bodyXml;
+  if (orphanedEndIds.size === 0 && orphanedStartIds.size === 0) return result;
 
-  let result = bodyXml;
-
-  // Remove orphaned bookmarkEnd elements
   for (const id of orphanedEndIds) {
     const re = new RegExp(`<w:bookmarkEnd\\s+w:id="${id}"\\s*/>`, 'g');
     result = result.replace(re, '');
   }
 
-  // Remove orphaned bookmarkStart elements
   for (const id of orphanedStartIds) {
-    const re = new RegExp(`<w:bookmarkStart\\s+w:id="${id}"\\s+w:name="[^"]*"\\s*/>`, 'g');
+    const re = new RegExp(`<w:bookmarkStart\\s+w:id="${id}"\\s+w:name="[^"]*"[^/]*/>`, 'g');
     result = result.replace(re, '');
   }
 
   return result;
+}
+
+/**
+ * Remove duplicate w14:paraId values from the body XML.
+ *
+ * Each paragraph must have a unique paraId; duplicates cause Word to flag
+ * the file as corrupt. Keeps the first occurrence and strips the attribute
+ * from subsequent paragraphs with the same value.
+ */
+function deduplicateParaIds(bodyXml: string): string {
+  const seen = new Set<string>();
+  return bodyXml.replace(/w14:paraId="([A-Fa-f0-9]+)"/g, (fullMatch, id) => {
+    if (seen.has(id)) return `w14:paraId="${generateParaId()}"`;
+    seen.add(id);
+    return fullMatch;
+  });
+}
+
+/** Generate a random 8-character hex paraId (OOXML format). */
+function generateParaId(): string {
+  return Math.floor(Math.random() * 0xffffffff)
+    .toString(16)
+    .toUpperCase()
+    .padStart(8, '0');
 }
 
 /**
