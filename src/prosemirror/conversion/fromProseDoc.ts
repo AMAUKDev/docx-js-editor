@@ -71,6 +71,7 @@ export function fromProseDoc(pmDoc: PMNode, baseDocument?: Document): Document {
   if (baseDocument) {
     return {
       ...baseDocument,
+      contentDirty: true, // Mark as modified — serializer must re-generate document.xml
       package: {
         ...baseDocument.package,
         document: documentBody,
@@ -80,6 +81,7 @@ export function fromProseDoc(pmDoc: PMNode, baseDocument?: Document): Document {
 
   // Create a minimal document structure
   return {
+    contentDirty: true,
     package: {
       document: documentBody,
     },

@@ -197,6 +197,10 @@ export interface Document {
   package: DocxPackage;
   /** Original ArrayBuffer for round-trip */
   originalBuffer?: ArrayBuffer;
+  /** Original word/document.xml string for lossless round-trip when unedited */
+  originalDocumentXml?: string;
+  /** True when document content has been modified via editing (set by fromProseDoc) */
+  contentDirty?: boolean;
   /** Detected template variables ({{...}}) */
   templateVariables?: string[];
   /** Parsing warnings/errors */

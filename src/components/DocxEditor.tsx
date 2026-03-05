@@ -659,8 +659,12 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
   // Handle document change
   const handleDocumentChange = useCallback(
     (newDocument: Document) => {
-      history.push(newDocument);
-      onChange?.(newDocument);
+      // Mark as dirty so repackDocx re-serializes document.xml instead of using original
+      const dirtyDoc = newDocument.contentDirty
+        ? newDocument
+        : { ...newDocument, contentDirty: true };
+      history.push(dirtyDoc);
+      onChange?.(dirtyDoc);
       // Update outline headings if sidebar is open
       if (showOutlineRef.current) {
         const view = pagedEditorRef.current?.getView();

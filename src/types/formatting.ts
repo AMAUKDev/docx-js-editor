@@ -379,6 +379,8 @@ export interface TableLook {
   lastRow?: boolean;
   noHBand?: boolean;
   noVBand?: boolean;
+  /** Raw w:val hex bitmask for backward compatibility */
+  val?: string;
 }
 
 /**

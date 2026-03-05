@@ -271,6 +271,20 @@ function serializeTableLook(look: TableLook | undefined): string {
 
   const attrs: string[] = [];
 
+  // Compute w:val bitmask (required by older Word versions)
+  if (look.val) {
+    attrs.push(`w:val="${look.val}"`);
+  } else {
+    let flags = 0;
+    if (look.firstRow) flags |= 0x0020;
+    if (look.lastRow) flags |= 0x0040;
+    if (look.firstColumn) flags |= 0x0080;
+    if (look.lastColumn) flags |= 0x0100;
+    if (look.noHBand) flags |= 0x0200;
+    if (look.noVBand) flags |= 0x0400;
+    attrs.push(`w:val="${flags.toString(16).toUpperCase().padStart(4, '0')}"`);
+  }
+
   if (look.firstRow) {
     attrs.push('w:firstRow="1"');
   }
@@ -294,8 +308,6 @@ function serializeTableLook(look: TableLook | undefined): string {
   if (look.noVBand) {
     attrs.push('w:noVBand="1"');
   }
-
-  if (attrs.length === 0) return '';
 
   return `<w:tblLook ${attrs.join(' ')}/>`;
 }
@@ -374,13 +386,18 @@ export function serializeTableFormatting(formatting: TableFormatting | undefined
     parts.push(`<w:tblStyle w:val="${escapeXml(formatting.styleId)}"/>`);
   }
 
-  // Floating table properties
+  // Floating table properties (XSD position: after tblStyle)
   const floatingXml = serializeFloatingTableProperties(formatting.floating);
   if (floatingXml) {
     parts.push(floatingXml);
   }
 
-  // Bidirectional
+  // Overlap (XSD position: after tblpPr)
+  if (formatting.overlap) {
+    parts.push(`<w:tblOverlap w:val="${formatting.overlap}"/>`);
+  }
+
+  // Bidirectional (XSD position: after tblOverlap)
   if (formatting.bidi) {
     parts.push('<w:bidiVisual/>');
   }
@@ -408,38 +425,33 @@ export function serializeTableFormatting(formatting: TableFormatting | undefined
     parts.push(indentXml);
   }
 
-  // Table borders
+  // Table borders (XSD position: after tblInd)
   const bordersXml = serializeTableBorders(formatting.borders, 'tblBorders');
   if (bordersXml) {
     parts.push(bordersXml);
   }
 
-  // Default cell margins
-  const marginsXml = serializeCellMargins(formatting.cellMargins, 'tblCellMar');
-  if (marginsXml) {
-    parts.push(marginsXml);
-  }
-
-  // Table layout
-  if (formatting.layout) {
-    parts.push(`<w:tblLayout w:type="${formatting.layout}"/>`);
-  }
-
-  // Shading
+  // Shading (XSD position: after tblBorders)
   const shadingXml = serializeShading(formatting.shading);
   if (shadingXml) {
     parts.push(shadingXml);
   }
 
-  // Table look
+  // Table layout (XSD position: after shd)
+  if (formatting.layout) {
+    parts.push(`<w:tblLayout w:type="${formatting.layout}"/>`);
+  }
+
+  // Default cell margins (XSD position: after tblLayout)
+  const marginsXml = serializeCellMargins(formatting.cellMargins, 'tblCellMar');
+  if (marginsXml) {
+    parts.push(marginsXml);
+  }
+
+  // Table look (XSD position: after tblCellMar)
   const lookXml = serializeTableLook(formatting.look);
   if (lookXml) {
     parts.push(lookXml);
-  }
-
-  // Overlap
-  if (formatting.overlap) {
-    parts.push(`<w:tblOverlap w:val="${formatting.overlap}"/>`);
   }
 
   if (parts.length === 0) return '';
@@ -459,17 +471,12 @@ export function serializeTableRowFormatting(formatting: TableRowFormatting | und
 
   const parts: string[] = [];
 
-  // Can't split
+  // Can't split (XSD position: 6)
   if (formatting.cantSplit) {
     parts.push('<w:cantSplit/>');
   }
 
-  // Header row
-  if (formatting.header) {
-    parts.push('<w:tblHeader/>');
-  }
-
-  // Row height
+  // Row height (XSD position: 7)
   if (formatting.height) {
     const attrs: string[] = [`w:val="${formatting.height.value}"`];
 
@@ -480,12 +487,17 @@ export function serializeTableRowFormatting(formatting: TableRowFormatting | und
     parts.push(`<w:trHeight ${attrs.join(' ')}/>`);
   }
 
-  // Row justification
+  // Header row (XSD position: 8)
+  if (formatting.header) {
+    parts.push('<w:tblHeader/>');
+  }
+
+  // Row justification (XSD position: 10)
   if (formatting.justification) {
     parts.push(`<w:jc w:val="${formatting.justification}"/>`);
   }
 
-  // Hidden
+  // Hidden (XSD position: 11)
   if (formatting.hidden) {
     parts.push('<w:hidden/>');
   }

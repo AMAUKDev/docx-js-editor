@@ -275,17 +275,27 @@ export async function repackDocx(doc: Document, options: RepackOptions = {}): Pr
     }
   }
 
-  // Process newly inserted images (data URLs → binary media files + relationships).
-  // This mutates image rIds in-place so the serializer outputs correct references.
-  const newImages = collectNewImages(doc.package.document.content, existingRIds);
-  await processNewImages(newImages, newZip, compressionLevel);
+  // If the document content hasn't been modified (e.g. user opened and saved without
+  // editing), preserve the original document.xml to avoid lossy re-serialization.
+  // Our parser strips SDTs, mc:AlternateContent, rsid attrs, etc. — re-serializing
+  // unmodified content produces a degraded file that Word may reject as corrupt.
+  if (!doc.contentDirty && doc.originalDocumentXml) {
+    // No edits made — keep the original document.xml exactly as-is
+    newZip.file('word/document.xml', doc.originalDocumentXml, {
+      compression: 'DEFLATE',
+      compressionOptions: { level: compressionLevel },
+    });
+  } else {
+    // Content was modified — process images and re-serialize
+    const newImages = collectNewImages(doc.package.document.content, existingRIds);
+    await processNewImages(newImages, newZip, compressionLevel);
 
-  // Serialize and update document.xml (after image rIds have been rewritten)
-  const documentXml = serializeDocument(doc);
-  newZip.file('word/document.xml', documentXml, {
-    compression: 'DEFLATE',
-    compressionOptions: { level: compressionLevel },
-  });
+    const documentXml = serializeDocument(doc);
+    newZip.file('word/document.xml', documentXml, {
+      compression: 'DEFLATE',
+      compressionOptions: { level: compressionLevel },
+    });
+  }
 
   // NOTE: We intentionally do NOT re-serialize headers/footers here.
   // The original header/footer XML files are already preserved from the ZIP copy above.

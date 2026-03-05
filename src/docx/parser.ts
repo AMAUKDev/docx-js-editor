@@ -279,6 +279,8 @@ export async function parseDocx(input: DocxInput, options: ParseOptions = {}): P
     const document: Document = {
       package: pkg,
       originalBuffer: buffer,
+      originalDocumentXml: raw.documentXml ?? undefined,
+      contentDirty: false,
       templateVariables,
       warnings: warnings.length > 0 ? warnings : undefined,
     };

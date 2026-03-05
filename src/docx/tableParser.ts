@@ -310,6 +310,7 @@ export function parseTableLook(lookElement: XmlElement | null): TableLook | unde
   // Also check for the val attribute (hexadecimal flags)
   const val = getAttribute(lookElement, 'w', 'val');
   if (val) {
+    look.val = val;
     const flags = parseInt(val, 16);
     if (!isNaN(flags)) {
       if (flags & 0x0020) look.firstRow = true;
@@ -498,11 +499,13 @@ export function parseTableRowProperties(
 
   const formatting: TableRowFormatting = {};
 
-  // Row height (w:trHeight)
+  // Row height (w:trHeight) — uses w:val not w:w, so parse directly
   const heightElement = findChild(trPrElement, 'w', 'trHeight');
   if (heightElement) {
-    const height = parseWidth(heightElement);
-    if (height) formatting.height = height;
+    const heightVal = parseNumericAttribute(heightElement, 'w', 'val') ?? 0;
+    if (heightVal > 0) {
+      formatting.height = { value: heightVal, type: 'dxa' };
+    }
 
     const hRule = getAttribute(heightElement, 'w', 'hRule');
     if (hRule === 'auto' || hRule === 'atLeast' || hRule === 'exact') {
