@@ -522,15 +522,7 @@ function extractParagraphContent(paragraph: PMNode): ParagraphContent[] {
         currentMarksKey = null;
       }
       const tagKey = node.attrs.tagKey as string;
-      const textContent: TextContent = {
-        type: 'text',
-        text: `{{ ${tagKey} }}`,
-      };
-      const tagRun: Run = {
-        type: 'run',
-        content: [textContent],
-      };
-      content.push(tagRun);
+      content.push(createRunFromText(`{{ ${tagKey} }}`, node.marks));
     }
   });
 

@@ -1132,7 +1132,7 @@ function splitContextTags(text: string, marks: ReturnType<typeof schema.mark>[])
     const before = text.slice(lastIndex, match.index);
     if (before) nodes.push(schema.text(before, marks));
     const tagKey = match[1] || match[2]; // group 1 = {{ }}, group 2 = { }
-    nodes.push(ctType.create({ tagKey, label: '' }));
+    nodes.push(ctType.create({ tagKey, label: '' }, null, marks));
     lastIndex = match.index! + match[0].length;
   }
 

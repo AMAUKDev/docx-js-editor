@@ -408,10 +408,11 @@ function paragraphToRuns(node: PMNode, startPos: number, _options: ToFlowBlocksO
       const tagKey = child.attrs.tagKey as string;
       const label = child.attrs.label as string;
       const displayText = label || `{${tagKey}}`;
+      const formatting = extractRunFormatting(child.marks, theme);
       const run: TextRun = {
         kind: 'text',
         text: displayText,
-        fontFamily: 'system-ui, sans-serif',
+        ...formatting,
         pmStart: childPos,
         pmEnd: childPos + child.nodeSize,
       };

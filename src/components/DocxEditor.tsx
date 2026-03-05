@@ -351,9 +351,9 @@ function replaceContextTagNodes(
       const tagKey = child.attrs.tagKey as string;
       const resolved = tags[tagKey];
       if (resolved) {
-        children.push(schema.text(resolved));
+        children.push(schema.text(resolved, child.marks));
       } else if (mode === 'keep') {
-        children.push(schema.text(`{${tagKey}}`));
+        children.push(schema.text(`{${tagKey}}`, child.marks));
       }
       // 'omit' → skip the node entirely
     } else {
