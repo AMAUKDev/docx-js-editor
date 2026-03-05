@@ -125,6 +125,7 @@ const paragraphNodeSpec: NodeSpec = {
     contextualSpacing: { default: null },
     defaultTextFormatting: { default: null },
     sectionBreakType: { default: null },
+    _sectionProperties: { default: null },
     outlineLevel: { default: null },
     bookmarks: { default: null },
     _originalFormatting: { default: null },

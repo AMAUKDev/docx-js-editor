@@ -1442,9 +1442,11 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
           // Step 1: Convert PM doc to flow blocks
           let stepStart = performance.now();
           const pageContentHeight = pageSize.h - margins.top - margins.bottom;
+          const pageContentWidth = pageSize.w - margins.left - margins.right;
           const newBlocks = toFlowBlocks(state.doc, {
             theme: _theme,
             pageContentHeight,
+            pageContentWidth,
             numberingMap,
           });
           let stepTime = performance.now() - stepStart;

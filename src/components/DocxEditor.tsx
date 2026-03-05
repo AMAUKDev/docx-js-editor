@@ -2099,6 +2099,7 @@ body { background: white; }
         const tr = refreshAllReferences(view.state, {
           getNumberingMap: () => crossRefNumMapRef.current,
           getStyleResolver: () => crossRefStyleResolverRef.current,
+          getLayout: () => pagedEditorRef.current?.getLayout() ?? null,
         });
         if (tr) view.dispatch(tr);
       },

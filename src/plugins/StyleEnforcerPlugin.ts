@@ -19,10 +19,24 @@ export const DEFAULT_ALLOWED_STYLE_IDS = [
   'Heading3',
   'Heading4',
   'Heading5',
+  'Heading6',
+  'Heading7',
+  'Heading8',
+  'Heading9',
   'ListParagraph',
   'Caption',
   'Title',
   'Subtitle',
+  'TOCHeading',
+  'TOC1',
+  'TOC2',
+  'TOC3',
+  'TOC4',
+  'TOC5',
+  'TOC6',
+  'TOC7',
+  'TOC8',
+  'TOC9',
 ];
 
 /**
@@ -87,6 +101,7 @@ export function createStyleEnforcerPlugin(options: StyleEnforcerOptions = {}): P
       // Only process if something actually changed
       if (!transactions.some((tr) => tr.docChanged)) return null;
 
+      const savedStoredMarks = newState.storedMarks;
       const tr = newState.tr;
       let changed = false;
 
@@ -102,7 +117,13 @@ export function createStyleEnforcerPlugin(options: StyleEnforcerOptions = {}): P
         }
       });
 
-      return changed ? tr : null;
+      if (!changed) return null;
+
+      // Preserve storedMarks through this appendTransaction (setNodeMarkup clears them)
+      if (savedStoredMarks) {
+        tr.setStoredMarks(savedStoredMarks);
+      }
+      return tr;
     },
 
     props: {

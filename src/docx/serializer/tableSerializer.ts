@@ -76,8 +76,18 @@ function serializeMeasurement(
  * Serialize a single border element
  */
 function serializeBorder(border: BorderSpec | undefined, elementName: string): string {
-  if (!border || border.style === 'none' || border.style === 'nil') {
+  if (!border) {
     return '';
+  }
+
+  // Explicitly serialize 'none'/'nil' borders — they override style-inherited borders
+  if (border.style === 'none' || border.style === 'nil') {
+    const noneAttrs: string[] = [`w:val="${border.style}"`];
+    if (border.size !== undefined) noneAttrs.push(`w:sz="${border.size}"`);
+    if (border.space !== undefined) noneAttrs.push(`w:space="${border.space}"`);
+    if (border.color?.rgb) noneAttrs.push(`w:color="${border.color.rgb}"`);
+    else if (border.color?.auto) noneAttrs.push('w:color="auto"');
+    return `<w:${elementName} ${noneAttrs.join(' ')}/>`;
   }
 
   const attrs: string[] = [`w:val="${border.style}"`];

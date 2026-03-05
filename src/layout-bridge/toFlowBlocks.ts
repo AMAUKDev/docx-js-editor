@@ -48,6 +48,8 @@ export type ToFlowBlocksOptions = {
   theme?: Theme | null;
   /** Page content height in pixels (pageHeight - marginTop - marginBottom). Images taller than this are scaled down to fit. */
   pageContentHeight?: number;
+  /** Page content width in pixels (pageWidth - marginLeft - marginRight). Used to cap shape widths. */
+  pageContentWidth?: number;
   /** Numbering map for resolving list markers with correct numFmt and lvlText. */
   numberingMap?: NumberingMap | null;
 };
@@ -417,7 +419,8 @@ function paragraphToRuns(node: PMNode, startPos: number, _options: ToFlowBlocksO
     } else if (child.type.name === 'shape') {
       // Shape node — render as an inline SVG image
       const attrs = child.attrs;
-      const w = (attrs.width as number) || 100;
+      const maxW = _options.pageContentWidth || 650;
+      const w = Math.min((attrs.width as number) || 100, maxW);
       const h = (attrs.height as number) || 4;
       const shapeType = (attrs.shapeType as string) || 'rect';
       const fillType = (attrs.fillType as string) || 'solid';

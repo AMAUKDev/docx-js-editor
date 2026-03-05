@@ -28,6 +28,7 @@ import type {
   ShadingProperties,
   TextFormatting,
 } from '../../types/document';
+import { serializeSectionProperties } from './documentSerializer';
 
 import { serializeRun, serializeTextFormatting } from './runSerializer';
 
@@ -802,8 +803,18 @@ export function serializeParagraph(paragraph: Paragraph): string {
 
   // Add paragraph properties if present
   const pPrXml = serializeParagraphFormatting(paragraph.formatting);
-  if (pPrXml) {
+  const sectPrXml = paragraph.sectionProperties
+    ? serializeSectionProperties(paragraph.sectionProperties)
+    : '';
+
+  if (pPrXml && sectPrXml) {
+    // Inject sectPr inside pPr (OOXML: sectPr goes at end of pPr)
+    parts.push(pPrXml.replace('</w:pPr>', `${sectPrXml}</w:pPr>`));
+  } else if (pPrXml) {
     parts.push(pPrXml);
+  } else if (sectPrXml) {
+    // No formatting but has section properties — wrap in pPr
+    parts.push(`<w:pPr>${sectPrXml}</w:pPr>`);
   }
 
   // Add paragraph content

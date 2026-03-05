@@ -89,6 +89,9 @@ export interface ParagraphAttrs {
   // Section break type — marks end of a section
   sectionBreakType?: 'nextPage' | 'continuous' | 'oddPage' | 'evenPage';
 
+  /** Full section properties for round-trip fidelity (header/footer refs, margins, etc.) */
+  _sectionProperties?: Record<string, unknown>;
+
   // Outline level for TOC (0-9)
   outlineLevel?: number;
 

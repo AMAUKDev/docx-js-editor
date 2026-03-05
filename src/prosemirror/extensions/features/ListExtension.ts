@@ -6,9 +6,12 @@
  */
 
 import type { Command, EditorState } from 'prosemirror-state';
+import type { Mark } from 'prosemirror-model';
 import { createExtension } from '../create';
+import { textFormattingToMarks } from '../marks/markUtils';
 import { Priority } from '../types';
 import type { ExtensionRuntime } from '../types';
+import type { TextFormatting } from '../../../types/document';
 
 // ============================================================================
 // CHAIN COMMANDS HELPER
@@ -253,7 +256,30 @@ function splitListItem(): Command {
       const { tr } = state;
       const pos = $from.pos;
 
+      // Capture marks BEFORE split so we can preserve formatting on the new paragraph
+      const preMarks: readonly Mark[] = state.storedMarks || $from.marks();
+
       tr.split(pos, 1, [{ type: state.schema.nodes.paragraph, attrs: { ...paragraph.attrs } }]);
+
+      // If new paragraph is empty (Enter at end of line), set storedMarks so typed
+      // text inherits formatting (bold, font, size, etc.) from the source paragraph.
+      const { $from: postFrom } = tr.selection;
+      const newPara = postFrom.parent;
+      if (newPara.textContent.length === 0) {
+        let effectiveMarks: readonly Mark[] = preMarks;
+
+        // If no explicit marks on cursor, derive from paragraph's defaultTextFormatting
+        if (effectiveMarks.length === 0) {
+          const dtf = paragraph.attrs.defaultTextFormatting as TextFormatting | undefined;
+          if (dtf) {
+            effectiveMarks = textFormattingToMarks(dtf, state.schema);
+          }
+        }
+
+        if (effectiveMarks.length > 0) {
+          tr.setStoredMarks(effectiveMarks);
+        }
+      }
 
       dispatch(tr.scrollIntoView());
     }

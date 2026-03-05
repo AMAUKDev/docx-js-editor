@@ -510,14 +510,16 @@ function parseDrawingContent(
   // Try parsing as an image first
   const image = parseImage(element, rels ?? undefined, media ?? undefined);
 
-  if (image) {
+  if (image && (image.src || image.rId)) {
     return {
       type: 'drawing',
       image,
     };
   }
 
-  // Fall back to shape parsing (e.g. connector lines, basic shapes)
+  // Fall back to shape parsing (e.g. connector lines, basic shapes).
+  // This handles drawings that contain wps:wsp shapes (lines, rects, etc.)
+  // rather than actual images (a:blip).
   const shape = parseShapeFromDrawing(element);
   if (shape) {
     return {
@@ -610,6 +612,31 @@ function parseRunContents(
           contents.push(drawing);
         }
         break;
+
+      case 'AlternateContent': {
+        // mc:AlternateContent wraps modern content in mc:Choice with
+        // mc:Fallback for legacy consumers. Prefer the Choice branch.
+        const choiceEl = child.elements?.find(
+          (e) => e.type === 'element' && (e.name === 'mc:Choice' || e.name?.endsWith(':Choice'))
+        );
+        const branchEl =
+          choiceEl ||
+          child.elements?.find(
+            (e) =>
+              e.type === 'element' && (e.name === 'mc:Fallback' || e.name?.endsWith(':Fallback'))
+          );
+        if (branchEl?.elements) {
+          for (const inner of branchEl.elements) {
+            if (inner.type !== 'element') continue;
+            const innerLocal = getLocalName(inner.name);
+            if (innerLocal === 'drawing') {
+              const d = parseDrawingContent(inner, rels, media);
+              if (d) contents.push(d);
+            }
+          }
+        }
+        break;
+      }
 
       case 'pict':
       case 'object':

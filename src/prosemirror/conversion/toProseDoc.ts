@@ -40,6 +40,7 @@ import type {
   MathEquation,
 } from '../../types/document';
 import { emuToPixels } from '../../docx/imageParser';
+import { resolveOutlineColor, resolveFillColor } from '../../docx/shapeParser';
 import { createStyleResolver, type StyleResolver } from '../styles';
 import type { TableAttrs, TableRowAttrs, TableCellAttrs } from '../schema/nodes';
 
@@ -296,6 +297,10 @@ function paragraphFormattingToAttrs(
         attrs.sectionBreakType = st;
       }
     }
+    // Store full section properties for round-trip (header/footer refs, margins, etc.)
+    if (paragraph.sectionProperties) {
+      attrs._sectionProperties = paragraph.sectionProperties as unknown as Record<string, unknown>;
+    }
 
     // If style defines numPr but inline doesn't, use style's numPr
     // numId === 0 means "no numbering" per OOXML spec — skip it
@@ -335,6 +340,10 @@ function paragraphFormattingToAttrs(
     if (st === 'nextPage' || st === 'continuous' || st === 'oddPage' || st === 'evenPage') {
       attrs.sectionBreakType = st;
     }
+  }
+  // Store full section properties for round-trip (header/footer refs, margins, etc.)
+  if (paragraph.sectionProperties) {
+    attrs._sectionProperties = paragraph.sectionProperties as unknown as Record<string, unknown>;
   }
 
   return attrs;
@@ -1524,8 +1533,8 @@ function textFormattingToMarks(
  * Convert a Shape to a ProseMirror shape node (inline SVG)
  */
 function convertShape(shape: Shape): PMNode {
-  const widthPx = shape.size?.width ? emuToPixels(shape.size.width) : 100;
-  const heightPx = shape.size?.height ? emuToPixels(shape.size.height) : 80;
+  const widthPx = shape.size ? emuToPixels(shape.size.width) : 100;
+  const heightPx = shape.size ? emuToPixels(shape.size.height) : 80;
 
   let fillColor: string | undefined;
   let fillType: string = 'solid';
@@ -1534,9 +1543,8 @@ function convertShape(shape: Shape): PMNode {
   let gradientStops: string | undefined;
   if (shape.fill) {
     fillType = shape.fill.type;
-    if (shape.fill.color?.rgb) {
-      fillColor = `#${shape.fill.color.rgb}`;
-    }
+    // resolveFillColor handles both RGB and theme colors
+    fillColor = resolveFillColor(shape) ?? undefined;
     // Extract gradient data
     if (shape.fill.type === 'gradient' && shape.fill.gradient) {
       const g = shape.fill.gradient;
@@ -1559,9 +1567,8 @@ function convertShape(shape: Shape): PMNode {
     if (shape.outline.width) {
       outlineWidth = Math.round((shape.outline.width / 914400) * 96 * 100) / 100;
     }
-    if (shape.outline.color?.rgb) {
-      outlineColor = `#${shape.outline.color.rgb}`;
-    }
+    // resolveOutlineColor handles both RGB and theme colors
+    outlineColor = resolveOutlineColor(shape) ?? undefined;
     outlineStyle = shape.outline.style || 'solid';
   }
 

@@ -268,8 +268,12 @@ export async function repackDocx(doc: Document, options: RepackOptions = {}): Pr
     compressionOptions: { level: compressionLevel },
   });
 
-  // Serialize and update modified headers/footers
-  serializeHeadersFootersToZip(doc, newZip, compressionLevel);
+  // NOTE: We intentionally do NOT re-serialize headers/footers here.
+  // The original header/footer XML files are already preserved from the ZIP copy above.
+  // Our header/footer serializer is lossy — it drops mc:AlternateContent/VML fallbacks,
+  // TextBox content (wps:txbx), shape properties, and embedded data (o:gfxdata).
+  // Re-serializing overwrites the originals with corrupted versions.
+  // Headers/footers are read-only in the editor, so preserving originals is correct.
 
   // Optionally update modification date in docProps/core.xml
   if (updateModifiedDate) {
@@ -343,8 +347,8 @@ export async function repackDocxFromRaw(
     compressionOptions: { level: compressionLevel },
   });
 
-  // Serialize and update modified headers/footers
-  serializeHeadersFootersToZip(doc, newZip, compressionLevel);
+  // Skip header/footer re-serialization — originals preserved from ZIP copy above.
+  // See note in repackDocx() for rationale.
 
   // Optionally update core properties
   if (updateModifiedDate && rawContent.corePropsXml) {
@@ -610,7 +614,8 @@ export async function addMedia(
  * Maps rId → filename via relationships, then serializes each
  * HeaderFooter object to its corresponding word/header*.xml or word/footer*.xml
  */
-function serializeHeadersFootersToZip(doc: Document, zip: JSZip, compressionLevel: number): void {
+// @ts-expect-error Kept for reference but no longer called — our serializer is lossy for headers/footers.
+function _serializeHeadersFootersToZip(doc: Document, zip: JSZip, compressionLevel: number): void {
   const rels = doc.package.relationships;
   if (!rels) return;
 

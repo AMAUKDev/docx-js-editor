@@ -19,6 +19,7 @@ import { textFormattingToMarks } from '../marks/markUtils';
 import { Priority } from '../types';
 import type { ExtensionRuntime, ExtensionContext } from '../types';
 import type { Command, Transaction } from 'prosemirror-state';
+import { insertPageBreak } from '../../commands/pageBreak';
 import type { TextFormatting } from '../../../types/document';
 
 function chainCommands(...commands: Command[]): Command {
@@ -89,8 +90,16 @@ const INHERITED_PARA_ATTRS = [
   'contextualSpacing',
 ] as const;
 
-/** Mark types that represent style-inherited formatting (font, size, color). */
-const STYLE_MARK_NAMES = new Set(['fontFamily', 'fontSize', 'textColor']);
+/** Mark types that should be carried to the new paragraph on Enter. */
+const STYLE_MARK_NAMES = new Set([
+  'fontFamily',
+  'fontSize',
+  'textColor',
+  'bold',
+  'italic',
+  'underline',
+  'strikethrough',
+]);
 
 const splitBlockClearBorders: Command = (state, dispatch, view) => {
   // Capture source paragraph info BEFORE split (splitBlock resets everything)
@@ -149,8 +158,7 @@ const splitBlockClearBorders: Command = (state, dispatch, view) => {
       }
 
       // For empty paragraphs (Enter at end of line), set stored marks so typed text
-      // inherits font family, font size, and text color. We skip bold/italic/etc —
-      // Word doesn't carry direct formatting to new paragraphs.
+      // inherits formatting from the source paragraph (font, size, color, bold, etc.).
       if (newPara.textContent.length === 0) {
         // Determine effective style marks. When text has explicit marks (e.g. user
         // applied a font override), use those. When text inherits formatting from
@@ -216,6 +224,7 @@ export const BaseKeymapExtension = createExtension({
         Enter: splitBlockClearBorders,
         Backspace: chainCommands(deleteSelection, clearIndentOnBackspace, joinBackward),
         Delete: chainCommands(deleteSelection, joinForward),
+        'Mod-Enter': insertPageBreak,
         'Mod-a': selectAll,
         Escape: selectParentNode,
       },

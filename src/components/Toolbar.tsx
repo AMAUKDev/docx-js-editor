@@ -729,10 +729,10 @@ export function Toolbar({
     <div
       ref={toolbarRef}
       className={cn(
-        'flex flex-wrap items-center gap-0 px-2 py-1.5 bg-white border-b border-slate-100 min-h-[44px]',
+        'flex items-center gap-0 px-2 py-2 bg-white border-b border-slate-100 min-h-[44px] overflow-x-auto',
         className
       )}
-      style={{ ...style, rowGap: '4px' }}
+      style={style}
       role="toolbar"
       aria-label="Formatting toolbar"
       data-testid="toolbar"

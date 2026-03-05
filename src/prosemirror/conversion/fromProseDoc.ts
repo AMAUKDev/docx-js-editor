@@ -150,8 +150,11 @@ function convertPMParagraph(node: PMNode): Paragraph {
     content,
   };
 
-  // Restore section break type
-  if (attrs.sectionBreakType) {
+  // Restore section properties (full round-trip, or just break type for legacy)
+  if (attrs._sectionProperties) {
+    paragraph.sectionProperties =
+      attrs._sectionProperties as import('../../types/content').SectionProperties;
+  } else if (attrs.sectionBreakType) {
     paragraph.sectionProperties = {
       sectionStart: attrs.sectionBreakType as import('../../types/content').SectionStart,
     };
@@ -1380,6 +1383,9 @@ function tableCellAttrsToFormatting(attrs: TableCellAttrs): TableCellFormatting 
     }
     if (attrs.borders) {
       result.borders = attrs.borders as TableCellFormatting['borders'];
+    } else if (!attrs.borders && orig.borders) {
+      // User cleared cell borders that existed in original
+      result.borders = undefined;
     }
     if (attrs.margins) {
       const m = attrs.margins;
