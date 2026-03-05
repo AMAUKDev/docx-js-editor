@@ -38,6 +38,7 @@ import {
   getAttribute,
   parseNumericAttribute,
   parseBooleanElement,
+  elementToXml,
   type XmlElement,
 } from './xmlParser';
 import { parseHeaderReference, parseFooterReference } from './headerFooterParser';
@@ -213,6 +214,15 @@ export function parseSectionProperties(
   const props: SectionProperties = {};
 
   if (!sectPr) return props;
+
+  // Capture raw XML for lossless round-trip serialization.
+  // This preserves elements not modelled in SectionProperties (pgNumType, formProt, etc.)
+  // and maintains correct schema element ordering.
+  try {
+    props.rawXml = elementToXml(sectPr);
+  } catch {
+    // If serialization fails, we'll fall back to property-based serialization
+  }
 
   // ============================================================================
   // PAGE SIZE (w:pgSz)

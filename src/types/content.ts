@@ -1233,6 +1233,9 @@ export interface SectionProperties {
   paperSrcFirst?: number;
   /** Other pages paper source */
   paperSrcOther?: number;
+
+  /** Raw XML of the original w:sectPr element (for lossless round-trip) */
+  rawXml?: string;
 }
 
 // ============================================================================

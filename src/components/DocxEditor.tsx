@@ -1157,6 +1157,7 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
           ...history.state.package.document.finalSectionProperties,
           footnotePr,
           endnotePr,
+          rawXml: undefined, // Invalidate raw XML since properties changed
         },
       };
       history.push({
@@ -1676,6 +1677,7 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
               finalSectionProperties: {
                 ...history.state.package.document.finalSectionProperties,
                 [property]: marginTwips,
+                rawXml: undefined, // Invalidate raw XML since properties changed
               },
             },
           },
@@ -2275,6 +2277,7 @@ body { background: white; }
                 finalSectionProperties: {
                   ...sectionProps,
                   [refKey]: [...existingRefs, newRef],
+                  rawXml: undefined, // Invalidate raw XML since properties changed
                 },
               }
             : pkg.document,
@@ -2374,6 +2377,7 @@ body { background: white; }
                 finalSectionProperties: {
                   ...sectionProps,
                   [refKey]: newRefs,
+                  rawXml: undefined, // Invalidate raw XML since properties changed
                 },
               }
             : pkg.document,

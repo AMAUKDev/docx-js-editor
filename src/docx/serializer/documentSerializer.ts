@@ -453,6 +453,13 @@ function serializeDocGrid(props: SectionProperties): string {
 export function serializeSectionProperties(props: SectionProperties | undefined): string {
   if (!props) return '';
 
+  // Use raw XML when available for lossless round-trip.
+  // This preserves elements not modelled in our type (pgNumType, formProt, etc.)
+  // and maintains correct OOXML schema element ordering.
+  if (props.rawXml) {
+    return props.rawXml;
+  }
+
   const parts: string[] = [];
 
   // Header references

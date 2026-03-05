@@ -246,9 +246,10 @@ export async function repackDocx(doc: Document, options: RepackOptions = {}): Pr
 
   // Copy all files from original ZIP
   for (const [path, file] of Object.entries(originalZip.files)) {
-    // Skip directories
+    // Skip directories — OOXML ZIPs should not have directory entries.
+    // JSZip synthesizes directory entries from file paths; re-creating them
+    // adds entries that Word may flag as invalid.
     if (file.dir) {
-      newZip.folder(path.replace(/\/$/, ''));
       continue;
     }
 
@@ -342,9 +343,10 @@ export async function repackDocxFromRaw(
 
   // Copy all files from original ZIP
   for (const [path, file] of Object.entries(rawContent.originalZip.files)) {
-    // Skip directories
+    // Skip directories — OOXML ZIPs should not have directory entries.
+    // JSZip synthesizes directory entries from file paths; re-creating them
+    // adds entries that Word may flag as invalid.
     if (file.dir) {
-      newZip.folder(path.replace(/\/$/, ''));
       continue;
     }
 
