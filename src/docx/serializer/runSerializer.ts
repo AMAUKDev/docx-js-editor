@@ -37,6 +37,27 @@ import type {
 import { serializeParagraph } from './paragraphSerializer';
 
 // ============================================================================
+// DOCPR ID GENERATION
+// ============================================================================
+
+/**
+ * Counter for generating unique docPr IDs within a single serialization pass.
+ * OOXML requires all wp:docPr id values to be unique within a document part.
+ * Reset via resetDocPrIdCounter() at the start of each document serialization.
+ */
+let _nextDocPrId = 1;
+
+/** Reset the docPr ID counter — call at the start of each document serialization. */
+export function resetDocPrIdCounter(): void {
+  _nextDocPrId = 1;
+}
+
+/** Get a unique docPr ID for the current serialization pass. */
+function getNextDocPrId(): number {
+  return _nextDocPrId++;
+}
+
+// ============================================================================
 // XML ESCAPING
 // ============================================================================
 
@@ -595,12 +616,11 @@ function serializeWrap(wrap: ImageWrap): string {
 }
 
 /** Build the common a:graphic > pic:pic element for images */
-function serializePicGraphic(image: Image): string {
+function serializePicGraphic(image: Image, picCnvPrId: number): string {
   const cx = image.size.width;
   const cy = image.size.height;
   const rId = image.rId || 'rId1';
-  const id = image.id || '0';
-  const name = image.filename || `image${id}`;
+  const name = image.filename || `image${picCnvPrId}`;
 
   let xfrmAttrs = '';
   if (image.transform?.rotation) {
@@ -614,7 +634,7 @@ function serializePicGraphic(image: Image): string {
     '<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">',
     '<pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">',
     '<pic:nvPicPr>',
-    `<pic:cNvPr id="${id}" name="${escapeXml(name)}"${image.alt ? ` descr="${escapeXml(image.alt)}"` : ''}/>`,
+    `<pic:cNvPr id="${picCnvPrId}" name="${escapeXml(name)}"${image.alt ? ` descr="${escapeXml(image.alt)}"` : ''}/>`,
     '<pic:cNvPicPr/>',
     '</pic:nvPicPr>',
     '<pic:blipFill>',
@@ -647,10 +667,10 @@ function serializeDrawingContent(content: DrawingContent): string {
   const distB = image.padding?.bottom ?? image.wrap.distB ?? 0;
   const distL = image.padding?.left ?? image.wrap.distL ?? 0;
   const distR = image.padding?.right ?? image.wrap.distR ?? 0;
-  const docPrId = image.id || '1';
+  const docPrId = getNextDocPrId();
   const docPrName = image.title || image.filename || `Picture ${docPrId}`;
 
-  const graphic = serializePicGraphic(image);
+  const graphic = serializePicGraphic(image, docPrId);
 
   if (!isFloating) {
     // Inline image
@@ -708,7 +728,7 @@ function serializeShapeContent(content: ShapeContent): string {
   const distB = shape.wrap?.distB ?? 0;
   const distL = shape.wrap?.distL ?? 0;
   const distR = shape.wrap?.distR ?? 0;
-  const docPrId = shape.id || '1';
+  const docPrId = getNextDocPrId();
   const docPrName = shape.name || (isTextBox ? `TextBox ${docPrId}` : `Shape ${docPrId}`);
 
   // Build xfrm

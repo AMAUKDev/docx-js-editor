@@ -45,7 +45,7 @@ import { type RawDocxContent } from './unzip';
  * Collect all images with data-URL src from the document content.
  * These are newly inserted images that need to be added to the ZIP.
  */
-function collectNewImages(blocks: BlockContent[]): Image[] {
+function collectNewImages(blocks: BlockContent[], existingRIds: Set<string>): Image[] {
   const images: Image[] = [];
 
   for (const block of blocks) {
@@ -54,7 +54,13 @@ function collectNewImages(blocks: BlockContent[]): Image[] {
         if (item.type === 'run') {
           for (const c of item.content) {
             if (c.type === 'drawing' && c.image.src?.startsWith('data:')) {
-              images.push(c.image);
+              // Only treat as "new" if the image doesn't already have a valid rId
+              // in the original ZIP's rels. After parse→display round-trip ALL images
+              // get data URL srcs, but existing images already have their binary in
+              // the ZIP from the file-copy step — only truly new inserts lack an rId.
+              if (!c.image.rId || !existingRIds.has(c.image.rId)) {
+                images.push(c.image);
+              }
             }
           }
         }
@@ -62,7 +68,7 @@ function collectNewImages(blocks: BlockContent[]): Image[] {
     } else if (block.type === 'table') {
       for (const row of block.rows) {
         for (const cell of row.cells) {
-          images.push(...collectNewImages(cell.content));
+          images.push(...collectNewImages(cell.content, existingRIds));
         }
       }
     }
@@ -256,9 +262,21 @@ export async function repackDocx(doc: Document, options: RepackOptions = {}): Pr
     });
   }
 
+  // Build a set of existing relationship IDs from the original rels file.
+  // This lets us distinguish truly new images from existing ones that just have
+  // data URL srcs after the parse→display round-trip.
+  const existingRIds = new Set<string>();
+  const relsFile = newZip.file('word/_rels/document.xml.rels');
+  if (relsFile) {
+    const relsXml = await relsFile.async('text');
+    for (const match of relsXml.matchAll(/Id="(rId\d+)"/g)) {
+      existingRIds.add(match[1]);
+    }
+  }
+
   // Process newly inserted images (data URLs → binary media files + relationships).
   // This mutates image rIds in-place so the serializer outputs correct references.
-  const newImages = collectNewImages(doc.package.document.content);
+  const newImages = collectNewImages(doc.package.document.content, existingRIds);
   await processNewImages(newImages, newZip, compressionLevel);
 
   // Serialize and update document.xml (after image rIds have been rewritten)

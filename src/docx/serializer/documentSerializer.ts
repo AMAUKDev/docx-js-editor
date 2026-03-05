@@ -24,6 +24,7 @@ import type {
 } from '../../types/document';
 
 import { serializeParagraph } from './paragraphSerializer';
+import { resetDocPrIdCounter } from './runSerializer';
 import { serializeTable } from './tableSerializer';
 
 // ============================================================================
@@ -620,6 +621,9 @@ export function serializeDocumentBody(body: DocumentBody): string {
  * @returns Complete XML string for document.xml
  */
 export function serializeDocument(doc: Document): string {
+  // Reset the docPr ID counter so each serialization pass produces unique IDs
+  resetDocPrIdCounter();
+
   const parts: string[] = [];
 
   // XML declaration
