@@ -95,7 +95,12 @@ import { createStarterKit } from '../prosemirror/extensions/StarterKit';
 import { ExtensionManager } from '../prosemirror/extensions/ExtensionManager';
 
 // Conversion (for HF inline editor save)
-import { proseDocToBlocks } from '../prosemirror/conversion/fromProseDoc';
+import { proseDocToBlocks, fromProseDoc } from '../prosemirror/conversion/fromProseDoc';
+import {
+  Fragment as PMFragment,
+  type Node as PMNode,
+  type Schema as PMSchema,
+} from 'prosemirror-model';
 
 // ProseMirror editor
 import {
@@ -325,6 +330,37 @@ export interface DocxEditorRef {
   refreshNumbering: (tocStyleOverride?: string) => void;
   /** Get available paragraph styles for TOC style picker */
   getAvailableStyles: () => Array<{ styleId: string; name: string }>;
+  /** Render document with context tags resolved to plain text, return as DOCX buffer */
+  renderToBuffer: (options?: {
+    contextTags?: Record<string, string>;
+    unknownTagMode?: 'omit' | 'keep';
+  }) => Promise<ArrayBuffer | null>;
+}
+
+/** Walk a PM doc tree, replacing contextTag atom nodes with plain text. */
+function replaceContextTagNodes(
+  node: PMNode,
+  schema: PMSchema,
+  tags: Record<string, string>,
+  mode: 'omit' | 'keep'
+): PMNode {
+  if (node.isLeaf) return node;
+  const children: PMNode[] = [];
+  node.forEach((child) => {
+    if (child.type.name === 'contextTag') {
+      const tagKey = child.attrs.tagKey as string;
+      const resolved = tags[tagKey];
+      if (resolved) {
+        children.push(schema.text(resolved));
+      } else if (mode === 'keep') {
+        children.push(schema.text(`{${tagKey}}`));
+      }
+      // 'omit' → skip the node entirely
+    } else {
+      children.push(replaceContextTagNodes(child, schema, tags, mode));
+    }
+  });
+  return node.copy(PMFragment.from(children));
 }
 
 /**
@@ -2122,6 +2158,30 @@ body { background: white; }
           styleId: s.styleId,
           name: s.name ?? s.styleId,
         }));
+      },
+      renderToBuffer: async (options) => {
+        const view = pagedEditorRef.current?.getView();
+        const baseDoc = historyStateRef.current;
+        if (!view || !baseDoc) return null;
+
+        const tags = options?.contextTags ?? contextTags ?? {};
+        const mode = options?.unknownTagMode ?? 'keep';
+        const { schema } = view.state;
+
+        // If no contextTag node type, just do a plain save
+        if (!schema.nodes.contextTag) {
+          return agentRef.current?.toBuffer() ?? null;
+        }
+
+        // Build a new PM doc with contextTag nodes replaced by text
+        const renderedPmDoc = replaceContextTagNodes(view.state.doc, schema, tags, mode);
+
+        // Convert to full Document model (preserves styles, headers, footers, media)
+        const renderedDocument = fromProseDoc(renderedPmDoc, baseDoc);
+
+        // Serialize to DOCX buffer
+        const tempAgent = new DocumentAgent(renderedDocument);
+        return tempAgent.toBuffer();
       },
     }),
     [
