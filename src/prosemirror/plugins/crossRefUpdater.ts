@@ -616,6 +616,12 @@ export function createCrossRefUpdaterPlugin(config: CrossRefUpdaterConfig = {}):
         tr.setStoredMarks(savedStoredMarks);
       }
 
+      // Cross-reference updates must bypass the SelectiveEditablePlugin's
+      // filterTransaction — locked paragraphs still need correct numbering.
+      if (tr) {
+        tr.setMeta('allowLockedEdit', true);
+      }
+
       return tr;
     },
   });

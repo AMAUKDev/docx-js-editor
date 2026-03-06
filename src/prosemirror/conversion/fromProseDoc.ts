@@ -519,15 +519,21 @@ function extractParagraphContent(paragraph: PMNode): ParagraphContent[] {
       };
       content.push(refRun);
     } else if (node.type.name === 'contextTag') {
-      // Context tag — serialize as {{ tag_key }} (Jinja2/docxtpl syntax)
-      // Context tags have marks:'' so node.marks is empty. Merge into
-      // the current run to inherit surrounding text formatting.
+      // Context tag — serialize as {{ tag_key }} (Jinja2/docxtpl syntax).
+      // Context tags carry the same marks as surrounding text, so we
+      // coalesce them into the current run when marks match.
       const tagKey = node.attrs.tagKey as string;
       const tagText = `{{ ${tagKey} }}`;
-      if (currentRun) {
+      const marksKey = getMarksKey(node.marks);
+
+      if (currentRun && currentMarksKey === marksKey) {
         appendTextToRun(currentRun, tagText);
       } else {
-        content.push(createRunFromText(tagText, []));
+        if (currentRun) {
+          content.push(currentRun);
+        }
+        currentRun = createRunFromText(tagText, node.marks);
+        currentMarksKey = marksKey;
       }
     }
   });

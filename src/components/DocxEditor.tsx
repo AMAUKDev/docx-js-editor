@@ -291,7 +291,7 @@ export interface DocxEditorProps {
   contextTags?: Record<string, string>;
   /** Called when document is loaded/parsed with the set of tagKeys found in the doc */
   onContextTagsDiscovered?: (tagKeys: string[]) => void;
-  /** When true, locked paragraphs cannot be edited (plugin is active) */
+  /** When true, the SelectiveEditablePlugin blocks edits to locked paragraphs */
   lockedEditing?: boolean;
 }
 
@@ -346,6 +346,10 @@ export interface DocxEditorRef {
   lockAll: () => void;
   /** Unlock all paragraphs in the document (admin) */
   unlockAll: () => void;
+  /** Lock all paragraphs in headers and footers */
+  lockHeadersFooters: () => void;
+  /** Unlock all paragraphs in headers and footers */
+  unlockHeadersFooters: () => void;
 }
 
 /** Walk a PM doc tree, replacing contextTag atom nodes with plain text. */
@@ -361,13 +365,10 @@ function replaceContextTagNodes(
     if (child.type.name === 'contextTag') {
       const tagKey = child.attrs.tagKey as string;
       const resolved = tags[tagKey];
-      // Context tags have marks:'' so child.marks is empty. Inherit marks
-      // from the nearest adjacent sibling for correct formatting.
-      const siblingMarks = children.length > 0 ? children[children.length - 1].marks : child.marks;
       if (resolved) {
-        children.push(schema.text(resolved, siblingMarks));
+        children.push(schema.text(resolved, child.marks));
       } else if (mode === 'keep') {
-        children.push(schema.text(`{${tagKey}}`, siblingMarks));
+        children.push(schema.text(`{${tagKey}}`, child.marks));
       }
       // 'omit' → skip the node entirely
     } else {
@@ -375,6 +376,114 @@ function replaceContextTagNodes(
     }
   });
   return node.copy(PMFragment.from(children));
+}
+
+/** Regex matching {{ context.tag }} patterns (same as toProseDoc) */
+const HF_CONTEXT_TAG_RE = /\{\{\s*(context\.[\w.]+)\s*\}\}|\{(context\.[\w.]+)\}/g;
+
+/**
+ * Replace {{ context.tag }} text patterns in a single HeaderFooter.
+ * Returns a new object with replacements applied; original is not mutated.
+ * Returns the same object reference if nothing changed.
+ */
+function replaceContextTagsInHf(
+  hf: HeaderFooter,
+  tags: Record<string, string>,
+  mode: 'omit' | 'keep'
+): HeaderFooter {
+  let anyChanged = false;
+  const newContent = hf.content.map((block) => {
+    if (block.type !== 'paragraph') return block;
+    let paraChanged = false;
+    const newParaContent = block.content.map((item) => {
+      if (item.type !== 'run') return item;
+      const newRunContent = item.content.map((rc) => {
+        if (rc.type !== 'text' || !rc.text) return rc;
+        const replaced = rc.text.replace(HF_CONTEXT_TAG_RE, (_match, g1, g2) => {
+          const tagKey = g1 || g2;
+          const resolved = tags[tagKey];
+          if (resolved) {
+            paraChanged = true;
+            return resolved;
+          }
+          if (mode === 'omit') {
+            paraChanged = true;
+            return '';
+          }
+          return _match; // keep original
+        });
+        return replaced !== rc.text ? { ...rc, text: replaced } : rc;
+      });
+      return paraChanged ? { ...item, content: newRunContent } : item;
+    });
+    if (paraChanged) {
+      anyChanged = true;
+      return { ...block, content: newParaContent };
+    }
+    return block;
+  });
+  return anyChanged ? { ...hf, content: newContent } : hf;
+}
+
+/**
+ * Replace {{ context.tag }} text patterns in header/footer content.
+ * Operates at the Document model level (not ProseMirror).
+ * Returns a new Map with replacements applied; original is not mutated.
+ */
+function replaceContextTagsInHfMap(
+  map: Map<string, HeaderFooter> | undefined,
+  tags: Record<string, string>,
+  mode: 'omit' | 'keep'
+): Map<string, HeaderFooter> | undefined {
+  if (!map || (Object.keys(tags).length === 0 && mode === 'keep')) return map;
+
+  const newMap = new Map<string, HeaderFooter>();
+  let anyChanged = false;
+
+  for (const [rId, hf] of map) {
+    const replaced = replaceContextTagsInHf(hf, tags, mode);
+    if (replaced !== hf) anyChanged = true;
+    newMap.set(rId, replaced);
+  }
+
+  return anyChanged ? newMap : map;
+}
+
+/** Set locked state on all paragraphs in every header and footer. */
+function setHfLocked(
+  history: { state: Document | null; push: (d: Document) => void },
+  locked: boolean
+) {
+  const doc = history.state;
+  if (!doc?.package) return;
+  const pkg = doc.package;
+
+  const updateMap = (map: Map<string, HeaderFooter> | undefined) => {
+    if (!map) return map;
+    const newMap = new Map<string, HeaderFooter>();
+    for (const [rId, hf] of map) {
+      const newContent = hf.content.map((block) => {
+        if (block.type === 'paragraph') {
+          return {
+            ...block,
+            formatting: { ...block.formatting, locked: locked || undefined },
+          };
+        }
+        return block;
+      });
+      newMap.set(rId, { ...hf, content: newContent });
+    }
+    return newMap;
+  };
+
+  history.push({
+    ...doc,
+    package: {
+      ...pkg,
+      headers: updateMap(pkg.headers),
+      footers: updateMap(pkg.footers),
+    },
+  });
 }
 
 /**
@@ -2184,7 +2293,9 @@ body { background: white; }
             const currentLabel = node.attrs.label as string;
             const newLabel = tags[tagKey] ?? '';
             if (currentLabel !== newLabel) {
-              tr = tr!.setNodeMarkup(tr!.mapping.map(pos), undefined, {
+              // Use pos directly — it's from tr.doc.descendants so it's already
+              // in the correct coordinate space. tr.mapping.map(pos) would double-map.
+              tr = tr!.setNodeMarkup(pos, undefined, {
                 ...node.attrs,
                 label: newLabel,
               });
@@ -2220,11 +2331,20 @@ body { background: white; }
           return agentRef.current?.toBuffer() ?? null;
         }
 
-        // Build a new PM doc with contextTag nodes replaced by text
+        // Build a new PM doc with contextTag nodes replaced by text (body)
         const renderedPmDoc = replaceContextTagNodes(view.state.doc, schema, tags, mode);
 
         // Convert to full Document model (preserves styles, headers, footers, media)
         const renderedDocument = fromProseDoc(renderedPmDoc, baseDoc);
+
+        // Also replace context tags in headers and footers (Document model level)
+        if (renderedDocument.package && Object.keys(tags).length > 0) {
+          renderedDocument.package = {
+            ...renderedDocument.package,
+            headers: replaceContextTagsInHfMap(renderedDocument.package.headers, tags, mode),
+            footers: replaceContextTagsInHfMap(renderedDocument.package.footers, tags, mode),
+          };
+        }
 
         // Serialize to DOCX buffer
         const tempAgent = new DocumentAgent(renderedDocument);
@@ -2284,6 +2404,12 @@ body { background: white; }
         });
         view.dispatch(tr);
       },
+      lockHeadersFooters: () => {
+        setHfLocked(history, true);
+      },
+      unlockHeadersFooters: () => {
+        setHfLocked(history, false);
+      },
     }),
     [
       history.state,
@@ -2341,6 +2467,29 @@ body { background: white; }
         tr.setMeta('allowLockedEdit', true);
         view.dispatch(tr);
       }
+
+      // Also discover context tags in headers/footers (Document model level)
+      const pkg = historyStateRef.current?.package;
+      const scanHfMap = (map: Map<string, HeaderFooter> | undefined) => {
+        if (!map) return;
+        for (const [, hf] of map) {
+          for (const block of hf.content) {
+            if (block.type !== 'paragraph') continue;
+            for (const item of block.content) {
+              if (item.type !== 'run') continue;
+              for (const rc of item.content) {
+                if (rc.type !== 'text' || !rc.text) continue;
+                for (const m of rc.text.matchAll(HF_CONTEXT_TAG_RE)) {
+                  const tagKey = m[1] || m[2];
+                  if (tagKey) discoveredKeys.add(tagKey);
+                }
+              }
+            }
+          }
+        }
+      };
+      scanHfMap(pkg?.headers);
+      scanHfMap(pkg?.footers);
 
       // Report discovered tagKeys to parent
       if (discoveredKeys.size > 0) {
@@ -2434,13 +2583,30 @@ body { background: white; }
 
     // When no titlePg differentiation, headerContent is used for all pages.
     // When titlePg is set, headerContent = default (pages 2+), firstPage* = page 1.
+    //
+    // Resolve context tags for visual display only — the original document model
+    // stays unchanged so template variables survive round-trip saving.
+    const tags = contextTags ?? {};
+    const hasCtx = Object.keys(tags).length > 0;
     return {
-      headerContent: defaultHeader,
-      footerContent: defaultFooter,
-      firstPageHeaderContent: firstPageHeader,
-      firstPageFooterContent: firstPageFooter,
+      headerContent:
+        hasCtx && defaultHeader
+          ? replaceContextTagsInHf(defaultHeader, tags, 'keep')
+          : defaultHeader,
+      footerContent:
+        hasCtx && defaultFooter
+          ? replaceContextTagsInHf(defaultFooter, tags, 'keep')
+          : defaultFooter,
+      firstPageHeaderContent:
+        hasCtx && firstPageHeader
+          ? replaceContextTagsInHf(firstPageHeader, tags, 'keep')
+          : firstPageHeader,
+      firstPageFooterContent:
+        hasCtx && firstPageFooter
+          ? replaceContextTagsInHf(firstPageFooter, tags, 'keep')
+          : firstPageFooter,
     };
-  }, [history.state]);
+  }, [history.state, contextTags]);
 
   // Handle header/footer double-click — open editing overlay
   // If no header/footer exists, create an empty one so the user can add content

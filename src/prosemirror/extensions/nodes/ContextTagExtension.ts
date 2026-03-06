@@ -16,7 +16,16 @@ export const ContextTagExtension = createNodeExtension({
     group: 'inline',
     atom: true,
     selectable: true,
-    marks: '',
+    // Allow formatting marks (bold, italic, font, size, etc.) but exclude
+    // textColor and hyperlink. Theme-based textColor marks on inline atoms
+    // can diverge from surrounding text during editing, causing context tags
+    // to render in a different color (typically blue from accent1 fallback).
+    // By excluding textColor, context tags inherit color from the parent
+    // element — which is the correct default behavior for template variables.
+    marks:
+      'bold italic underline strike fontSize fontFamily superscript subscript ' +
+      'allCaps smallCaps characterSpacing emboss imprint textShadow ' +
+      'emphasisMark textOutline footnoteRef',
     attrs: {
       /** The context variable key (e.g., "case_no", "vessel", "client") */
       tagKey: { default: '' },
@@ -43,10 +52,12 @@ export const ContextTagExtension = createNodeExtension({
         {
           class: 'docx-context-tag',
           'data-tag-key': tagKey,
-          style:
-            'background: #e8f0fe; color: #1a73e8; padding: 1px 6px; border-radius: 3px; ' +
-            'font-size: 0.9em; font-family: system-ui, sans-serif; white-space: nowrap; ' +
-            'border: 1px solid #c4d9f8; cursor: default;',
+          // No background/border styling here — this DOM is the hidden
+          // ProseMirror (off-screen). Any background-color leaks to adjacent
+          // text during contenteditable mutations, which HighlightExtension's
+          // parseDOM then picks up as a highlight mark, causing the "blue
+          // background" bug. Visible rendering is handled by layout-painter.
+          style: 'white-space: nowrap; cursor: default;',
         },
         displayText,
       ];
