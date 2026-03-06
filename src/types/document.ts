@@ -205,4 +205,9 @@ export interface Document {
   templateVariables?: string[];
   /** Parsing warnings/errors */
   warnings?: string[];
+  /** Context tag replacements to apply to header/footer XML during repack */
+  contextTagReplacements?: {
+    tags: Record<string, string>;
+    mode: 'omit' | 'keep';
+  };
 }

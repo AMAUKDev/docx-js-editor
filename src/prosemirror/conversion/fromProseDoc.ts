@@ -502,22 +502,30 @@ function extractParagraphContent(paragraph: PMNode): ParagraphContent[] {
       }
       content.push(createMathFromNode(node));
     } else if (node.type.name === 'crossRef') {
-      // Cross-reference — serialize as plain text with the display value
+      // Cross-reference — serialize as a REF complex field so it round-trips.
+      // Instruction encodes refType and refTarget for reload detection.
       if (currentRun) {
         content.push(currentRun);
         currentRun = null;
         currentMarksKey = null;
       }
+      const refType = (node.attrs.refType as string) || 'heading';
+      const refTarget = (node.attrs.refTarget as string) || '';
       const displayText = (node.attrs.displayText as string) || '[ref]';
-      const textContent: TextContent = {
-        type: 'text',
-        text: displayText,
-      };
-      const refRun: Run = {
+      const formatting = node.marks.length > 0 ? marksToTextFormatting(node.marks) : undefined;
+      const displayRun: Run = {
         type: 'run',
-        content: [textContent],
+        content: [{ type: 'text' as const, text: displayText }],
+        ...(formatting && Object.keys(formatting).length > 0 ? { formatting } : {}),
       };
-      content.push(refRun);
+      const crossRefField: ComplexField = {
+        type: 'complexField',
+        instruction: ` CROSSREF ${refType} "${refTarget.replace(/"/g, '\\"')}" `,
+        fieldType: 'REF' as FieldType,
+        fieldCode: [],
+        fieldResult: [displayRun],
+      };
+      content.push(crossRefField);
     } else if (node.type.name === 'contextTag') {
       // Context tag — serialize as {{ tag_key }} (Jinja2/docxtpl syntax).
       // Context tags carry the same marks as surrounding text, so we

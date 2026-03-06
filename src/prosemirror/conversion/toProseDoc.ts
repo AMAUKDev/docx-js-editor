@@ -948,6 +948,9 @@ function convertTableCell(
  * Accepts styleFormatting so fields inherit paragraph-level formatting
  * (same as convertRun does for regular text runs).
  */
+/** Regex to detect our custom CROSSREF field instruction */
+const CROSSREF_RE = /^\s*CROSSREF\s+(heading|figure)\s+"((?:[^"\\]|\\.)*)"\s*$/;
+
 function convertField(
   field: SimpleField | ComplexField,
   styleFormatting?: TextFormatting
@@ -974,6 +977,14 @@ function convertField(
   // Merge style formatting with field run formatting (inline takes precedence)
   const mergedFormatting = mergeTextFormatting(styleFormatting, fieldFormatting);
   const marks = textFormattingToMarks(mergedFormatting);
+
+  // Detect our custom CROSSREF fields and restore as crossRef PM nodes
+  const crossRefMatch = field.instruction.match(CROSSREF_RE);
+  if (crossRefMatch && schema.nodes.crossRef) {
+    const refType = crossRefMatch[1] as 'heading' | 'figure';
+    const refTarget = crossRefMatch[2].replace(/\\"/g, '"');
+    return schema.node('crossRef', { refType, refTarget, displayText }, undefined, marks);
+  }
 
   return schema.node(
     'field',

@@ -3019,7 +3019,6 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
             return true;
           });
           const number = captionCount + 1;
-          const captionText = `${captionPrefix} ${number}: `;
 
           // Resolve Caption style's run formatting and build marks
           let captionMarks: import('prosemirror-model').Mark[] = [];
@@ -3031,18 +3030,33 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
             }
           }
 
-          const textNode =
+          // Build: text("Figure ") + field(SEQ Figure) + text(": ")
+          const prefixNode =
             captionMarks.length > 0
-              ? schema.text(captionText, captionMarks)
-              : schema.text(captionText);
+              ? schema.text(captionPrefix + ' ', captionMarks)
+              : schema.text(captionPrefix + ' ');
+          let seqField = schema.nodes.field.create({
+            fieldType: 'SEQ',
+            instruction: ` SEQ ${captionPrefix} \\* ARABIC `,
+            displayText: String(number),
+            fieldKind: 'complex',
+            dirty: false,
+          });
+          if (captionMarks.length > 0) {
+            seqField = seqField.mark(captionMarks);
+          }
+          const suffixNode =
+            captionMarks.length > 0 ? schema.text(': ', captionMarks) : schema.text(': ');
+
           const captionParagraph = schema.nodes.paragraph.create(
             { styleId: 'Caption', alignment: 'center' },
-            textNode
+            [prefixNode, seqField, suffixNode]
           );
           const tr = state.tr.insert(insertPos, captionParagraph);
 
-          // Place cursor at end of caption text so user can type description
-          const cursorPos = insertPos + 1 + captionText.length;
+          // Place cursor at end of ": " so user can type description
+          // paragraph open(1) + prefix text + field atom(1) + ": "(2)
+          const cursorPos = insertPos + 1 + captionPrefix.length + 1 + 1 + 2;
           tr.setSelection(TextSelection.create(tr.doc, cursorPos));
 
           // Set stored marks so continued typing inherits the caption formatting

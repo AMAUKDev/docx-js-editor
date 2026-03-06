@@ -297,12 +297,37 @@ export async function repackDocx(doc: Document, options: RepackOptions = {}): Pr
     });
   }
 
-  // NOTE: We intentionally do NOT re-serialize headers/footers here.
-  // The original header/footer XML files are already preserved from the ZIP copy above.
-  // Our header/footer serializer is lossy — it drops mc:AlternateContent/VML fallbacks,
-  // TextBox content (wps:txbx), shape properties, and embedded data (o:gfxdata).
-  // Re-serializing overwrites the originals with corrupted versions.
-  // Headers/footers are read-only in the editor, so preserving originals is correct.
+  // NOTE: We do NOT re-serialize headers/footers (lossy — drops mc:AlternateContent/VML).
+  // Instead, we do text-level replacement of context tags directly in the original XML.
+  if (doc.contextTagReplacements) {
+    const { tags, mode } = doc.contextTagReplacements;
+    const tagRe = /\{\{\s*(context\.[\w.]+)\s*\}\}|\{(context\.[\w.]+)\}/g;
+    for (const [path, file] of Object.entries(newZip.files)) {
+      if (file.dir) continue;
+      if (!/^word\/(header|footer)\d*\.xml$/i.test(path)) continue;
+      let xml = await file.async('text');
+      let changed = false;
+      xml = xml.replace(tagRe, (_match, g1, g2) => {
+        const tagKey = g1 || g2;
+        const resolved = tags[tagKey];
+        if (resolved) {
+          changed = true;
+          return resolved;
+        }
+        if (mode === 'omit') {
+          changed = true;
+          return '';
+        }
+        return _match;
+      });
+      if (changed) {
+        newZip.file(path, xml, {
+          compression: 'DEFLATE',
+          compressionOptions: { level: compressionLevel },
+        });
+      }
+    }
+  }
 
   // If document has locked paragraphs, inject w:documentProtection into settings.xml
   // so Word enforces editing restrictions (only unlocked regions marked with permStart/permEnd are editable)
@@ -410,8 +435,36 @@ export async function repackDocxFromRaw(
     compressionOptions: { level: compressionLevel },
   });
 
-  // Skip header/footer re-serialization — originals preserved from ZIP copy above.
-  // See note in repackDocx() for rationale.
+  // Apply context tag replacements to header/footer XML (same as repackDocx)
+  if (doc.contextTagReplacements) {
+    const { tags, mode } = doc.contextTagReplacements;
+    const tagRe = /\{\{\s*(context\.[\w.]+)\s*\}\}|\{(context\.[\w.]+)\}/g;
+    for (const [path, file] of Object.entries(newZip.files)) {
+      if (file.dir) continue;
+      if (!/^word\/(header|footer)\d*\.xml$/i.test(path)) continue;
+      let xml = await file.async('text');
+      let changed = false;
+      xml = xml.replace(tagRe, (_match, g1, g2) => {
+        const tagKey = g1 || g2;
+        const resolved = tags[tagKey];
+        if (resolved) {
+          changed = true;
+          return resolved;
+        }
+        if (mode === 'omit') {
+          changed = true;
+          return '';
+        }
+        return _match;
+      });
+      if (changed) {
+        newZip.file(path, xml, {
+          compression: 'DEFLATE',
+          compressionOptions: { level: compressionLevel },
+        });
+      }
+    }
+  }
 
   // Optionally update core properties
   if (updateModifiedDate && rawContent.corePropsXml) {

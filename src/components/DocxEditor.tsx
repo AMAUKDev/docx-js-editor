@@ -333,10 +333,11 @@ export interface DocxEditorRef {
   refreshNumbering: (tocStyleOverride?: string) => void;
   /** Get available paragraph styles for TOC style picker */
   getAvailableStyles: () => Array<{ styleId: string; name: string }>;
-  /** Render document with context tags resolved to plain text, return as DOCX buffer */
+  /** Render document with context tags resolved to plain text, return as DOCX buffer.
+   *  unknownTagMode: 'omit' = remove unknowns, 'keep' = leave unknowns, 'raw' = skip all rendering */
   renderToBuffer: (options?: {
     contextTags?: Record<string, string>;
-    unknownTagMode?: 'omit' | 'keep';
+    unknownTagMode?: 'omit' | 'keep' | 'raw';
   }) => Promise<ArrayBuffer | null>;
   /** Lock paragraphs in a position range (admin) */
   lockParagraphs: (from: number, to: number) => void;
@@ -382,9 +383,8 @@ function replaceContextTagNodes(
 const HF_CONTEXT_TAG_RE = /\{\{\s*(context\.[\w.]+)\s*\}\}|\{(context\.[\w.]+)\}/g;
 
 /**
- * Replace {{ context.tag }} text patterns in a single HeaderFooter.
+ * Replace {{ context.tag }} text patterns in a single HeaderFooter (for visual display).
  * Returns a new object with replacements applied; original is not mutated.
- * Returns the same object reference if nothing changed.
  */
 function replaceContextTagsInHf(
   hf: HeaderFooter,
@@ -410,7 +410,7 @@ function replaceContextTagsInHf(
             paraChanged = true;
             return '';
           }
-          return _match; // keep original
+          return _match;
         });
         return replaced !== rc.text ? { ...rc, text: replaced } : rc;
       });
@@ -423,30 +423,6 @@ function replaceContextTagsInHf(
     return block;
   });
   return anyChanged ? { ...hf, content: newContent } : hf;
-}
-
-/**
- * Replace {{ context.tag }} text patterns in header/footer content.
- * Operates at the Document model level (not ProseMirror).
- * Returns a new Map with replacements applied; original is not mutated.
- */
-function replaceContextTagsInHfMap(
-  map: Map<string, HeaderFooter> | undefined,
-  tags: Record<string, string>,
-  mode: 'omit' | 'keep'
-): Map<string, HeaderFooter> | undefined {
-  if (!map || (Object.keys(tags).length === 0 && mode === 'keep')) return map;
-
-  const newMap = new Map<string, HeaderFooter>();
-  let anyChanged = false;
-
-  for (const [rId, hf] of map) {
-    const replaced = replaceContextTagsInHf(hf, tags, mode);
-    if (replaced !== hf) anyChanged = true;
-    newMap.set(rId, replaced);
-  }
-
-  return anyChanged ? newMap : map;
 }
 
 /** Set locked state on all paragraphs in every header and footer. */
@@ -1416,7 +1392,7 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
           setCellBorder('right', borderSpecRef.current)(view.state, view.dispatch);
           break;
         case 'addCaption': {
-          // Insert a "Table N: " caption paragraph after the table
+          // Insert a "Table " + SEQ_FIELD + ": " caption paragraph after the table
           const { state } = view;
           const { $from } = state.selection;
           const schema = state.schema;
@@ -1448,7 +1424,6 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
               return true;
             });
             const tableNumber = tableCaptionCount + 1;
-            const captionText = `Table ${tableNumber}: `;
 
             // Resolve Caption style's run formatting and build marks
             let captionMarks: import('prosemirror-model').Mark[] = [];
@@ -1461,18 +1436,31 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
               }
             }
 
-            const textNode =
-              captionMarks.length > 0
-                ? schema.text(captionText, captionMarks)
-                : schema.text(captionText);
+            // Build: text("Table ") + field(SEQ Table) + text(": ")
+            const prefixNode =
+              captionMarks.length > 0 ? schema.text('Table ', captionMarks) : schema.text('Table ');
+            let seqField = schema.nodes.field.create({
+              fieldType: 'SEQ',
+              instruction: ' SEQ Table \\* ARABIC ',
+              displayText: String(tableNumber),
+              fieldKind: 'complex',
+              dirty: false,
+            });
+            if (captionMarks.length > 0) {
+              seqField = seqField.mark(captionMarks);
+            }
+            const suffixNode =
+              captionMarks.length > 0 ? schema.text(': ', captionMarks) : schema.text(': ');
+
             const captionParagraph = schema.nodes.paragraph.create(
               { styleId: 'Caption', alignment: 'center' },
-              textNode
+              [prefixNode, seqField, suffixNode]
             );
             const tr = state.tr.insert(insertPos, captionParagraph);
 
-            // Place cursor at end of caption text
-            const cursorPos = insertPos + 1 + captionText.length;
+            // Place cursor at end of ": " so user can type description
+            // paragraph open(1) + "Table "(6) + field atom(1) + ": "(2) = 10
+            const cursorPos = insertPos + 1 + 6 + 1 + 2;
             tr.setSelection(TextSelection.create(tr.doc, cursorPos));
 
             // Set stored marks so continued typing inherits caption formatting
@@ -2326,8 +2314,8 @@ body { background: white; }
         const mode = options?.unknownTagMode ?? 'keep';
         const { schema } = view.state;
 
-        // If no contextTag node type, just do a plain save
-        if (!schema.nodes.contextTag) {
+        // 'raw' mode: save as-is without any tag replacement (keeps {context.xxx} tags)
+        if (mode === 'raw' || !schema.nodes.contextTag) {
           return agentRef.current?.toBuffer() ?? null;
         }
 
@@ -2337,13 +2325,10 @@ body { background: white; }
         // Convert to full Document model (preserves styles, headers, footers, media)
         const renderedDocument = fromProseDoc(renderedPmDoc, baseDoc);
 
-        // Also replace context tags in headers and footers (Document model level)
-        if (renderedDocument.package && Object.keys(tags).length > 0) {
-          renderedDocument.package = {
-            ...renderedDocument.package,
-            headers: replaceContextTagsInHfMap(renderedDocument.package.headers, tags, mode),
-            footers: replaceContextTagsInHfMap(renderedDocument.package.footers, tags, mode),
-          };
+        // Pass context tag replacements for header/footer XML-level replacement during repack
+        // (Document model changes are ignored — repack preserves original XML for fidelity)
+        if (Object.keys(tags).length > 0) {
+          renderedDocument.contextTagReplacements = { tags, mode };
         }
 
         // Serialize to DOCX buffer
