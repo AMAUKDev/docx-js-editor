@@ -37,6 +37,7 @@ import { serializeHeaderFooter } from './serializer/headerFooterSerializer';
 import { RELATIONSHIP_TYPES } from './relsParser';
 import { type RawDocxContent } from './unzip';
 import { CUSTOM_XML_PATH, CUSTOM_XML_CONTENT_TYPE, serializeManifest } from './contextTagMetadata';
+import { FP_BOOKMARK_PREFIX } from './renderWithBookmarks';
 
 // ============================================================================
 // NEW IMAGE HANDLING
@@ -302,12 +303,57 @@ export async function repackDocx(doc: Document, options: RepackOptions = {}): Pr
   // Instead, we do text-level replacement of context tags directly in the original XML.
   if (doc.contextTagReplacements) {
     const { tags, mode } = doc.contextTagReplacements;
+    const ctMeta = doc.contextTagMetadata;
+
+    // Build tagKey → metaId lookup for H/F bookmark generation
+    const tagKeyToMetaId = new Map<string, string>();
+    if (ctMeta) {
+      for (const [metaId, meta] of Object.entries(ctMeta)) {
+        if (meta.tagKey && !tagKeyToMetaId.has(meta.tagKey)) {
+          tagKeyToMetaId.set(meta.tagKey, metaId);
+        }
+      }
+    }
+
+    // Regex matching a <w:r> containing a context tag in its <w:t>
+    const runWithTagRe =
+      /(<w:r\b[^>]*>(?:<w:rPr>[\s\S]*?<\/w:rPr>)?<w:t[^>]*>)([^<]*?)(\{\{\s*(context\.[\w.]+)!?\s*\}\}|\{(context\.[\w.]+)!?\})([^<]*?<\/w:t><\/w:r>)/g;
     const tagRe = /\{\{\s*(context\.[\w.]+)\s*\}\}|\{(context\.[\w.]+)\}/g;
+    let hfBookmarkId = 10000;
+
     for (const [path, file] of Object.entries(newZip.files)) {
       if (file.dir) continue;
       if (!/^word\/(header|footer)\d*\.xml$/i.test(path)) continue;
       let xml = await file.async('text');
       let changed = false;
+
+      // First pass: run-level replacement with bookmarks
+      xml = xml.replace(
+        runWithTagRe,
+        (fullMatch, beforeTag, preText, _tagMatch, g4, g5, afterTag) => {
+          const tagKey = g4 || g5;
+          const resolved = tags[tagKey];
+          const metaId = tagKeyToMetaId.get(tagKey);
+          if (resolved) {
+            changed = true;
+            const renderedRun = `${beforeTag}${preText}${resolved}${afterTag}`;
+            if (metaId) {
+              const bmStart = `<w:bookmarkStart w:id="${hfBookmarkId}" w:name="${FP_BOOKMARK_PREFIX}${metaId}"/>`;
+              const bmEnd = `<w:bookmarkEnd w:id="${hfBookmarkId}"/>`;
+              hfBookmarkId++;
+              return `${bmStart}${renderedRun}${bmEnd}`;
+            }
+            return renderedRun;
+          }
+          if (mode === 'omit') {
+            changed = true;
+            return `${beforeTag}${preText}${afterTag}`;
+          }
+          return fullMatch;
+        }
+      );
+
+      // Second pass: catch remaining tags not in own run (fallback)
       xml = xml.replace(tagRe, (_match, g1, g2) => {
         const tagKey = g1 || g2;
         const resolved = tags[tagKey];
@@ -321,6 +367,7 @@ export async function repackDocx(doc: Document, options: RepackOptions = {}): Pr
         }
         return _match;
       });
+
       if (changed) {
         newZip.file(path, xml, {
           compression: 'DEFLATE',
@@ -476,12 +523,57 @@ export async function repackDocxFromRaw(
   // Apply context tag replacements to header/footer XML (same as repackDocx)
   if (doc.contextTagReplacements) {
     const { tags, mode } = doc.contextTagReplacements;
+    const ctMeta = doc.contextTagMetadata;
+
+    // Build tagKey → metaId lookup for H/F bookmark generation
+    const tagKeyToMetaId = new Map<string, string>();
+    if (ctMeta) {
+      for (const [metaId, meta] of Object.entries(ctMeta)) {
+        if (meta.tagKey && !tagKeyToMetaId.has(meta.tagKey)) {
+          tagKeyToMetaId.set(meta.tagKey, metaId);
+        }
+      }
+    }
+
+    // Regex matching a <w:r> containing a context tag in its <w:t>
+    const runWithTagRe =
+      /(<w:r\b[^>]*>(?:<w:rPr>[\s\S]*?<\/w:rPr>)?<w:t[^>]*>)([^<]*?)(\{\{\s*(context\.[\w.]+)!?\s*\}\}|\{(context\.[\w.]+)!?\})([^<]*?<\/w:t><\/w:r>)/g;
     const tagRe = /\{\{\s*(context\.[\w.]+)\s*\}\}|\{(context\.[\w.]+)\}/g;
+    let hfBookmarkId = 10000;
+
     for (const [path, file] of Object.entries(newZip.files)) {
       if (file.dir) continue;
       if (!/^word\/(header|footer)\d*\.xml$/i.test(path)) continue;
       let xml = await file.async('text');
       let changed = false;
+
+      // First pass: run-level replacement with bookmarks
+      xml = xml.replace(
+        runWithTagRe,
+        (fullMatch, beforeTag, preText, _tagMatch, g4, g5, afterTag) => {
+          const tagKey = g4 || g5;
+          const resolved = tags[tagKey];
+          const metaId = tagKeyToMetaId.get(tagKey);
+          if (resolved) {
+            changed = true;
+            const renderedRun = `${beforeTag}${preText}${resolved}${afterTag}`;
+            if (metaId) {
+              const bmStart = `<w:bookmarkStart w:id="${hfBookmarkId}" w:name="${FP_BOOKMARK_PREFIX}${metaId}"/>`;
+              const bmEnd = `<w:bookmarkEnd w:id="${hfBookmarkId}"/>`;
+              hfBookmarkId++;
+              return `${bmStart}${renderedRun}${bmEnd}`;
+            }
+            return renderedRun;
+          }
+          if (mode === 'omit') {
+            changed = true;
+            return `${beforeTag}${preText}${afterTag}`;
+          }
+          return fullMatch;
+        }
+      );
+
+      // Second pass: catch remaining tags not in own run (fallback)
       xml = xml.replace(tagRe, (_match, g1, g2) => {
         const tagKey = g1 || g2;
         const resolved = tags[tagKey];
@@ -495,6 +587,7 @@ export async function repackDocxFromRaw(
         }
         return _match;
       });
+
       if (changed) {
         newZip.file(path, xml, {
           compression: 'DEFLATE',

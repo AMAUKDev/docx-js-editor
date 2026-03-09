@@ -97,14 +97,9 @@ import { ExtensionManager } from '../prosemirror/extensions/ExtensionManager';
 // Conversion (for HF inline editor save)
 import { proseDocToBlocks, fromProseDoc } from '../prosemirror/conversion/fromProseDoc';
 import { collectContextTagMetadata } from '../docx/contextTagMetadata';
+import { renderDocumentWithBookmarks } from '../docx/renderWithBookmarks';
 import type { ContextTagMeta, FPDocumentMeta } from '../types/document';
 import { generateMetaId } from '../prosemirror/extensions/nodes/ContextTagExtension';
-import {
-  Fragment as PMFragment,
-  type Node as PMNode,
-  type Schema as PMSchema,
-} from 'prosemirror-model';
-
 // ProseMirror editor
 import {
   type SelectionState,
@@ -370,51 +365,6 @@ export interface DocxEditorRef {
   getDocumentMeta: () => FPDocumentMeta | undefined;
   /** Set/update document-level metadata (written to Custom XML Part on next save) */
   setDocumentMeta: (meta: FPDocumentMeta) => void;
-}
-
-/**
- * Walk a PM doc tree, replacing contextTag atom nodes with plain text.
- * Returns null when a paragraph should be removed (removeIfEmpty tag with no value).
- */
-function replaceContextTagNodes(
-  node: PMNode,
-  schema: PMSchema,
-  tags: Record<string, string>,
-  mode: 'omit' | 'keep'
-): PMNode | null {
-  if (node.isLeaf) return node;
-
-  let shouldRemoveParent = false;
-  const children: PMNode[] = [];
-
-  node.forEach((child) => {
-    if (child.type.name === 'contextTag') {
-      const tagKey = child.attrs.tagKey as string;
-      const resolved = tags[tagKey];
-      if (resolved) {
-        children.push(schema.text(resolved, child.marks));
-      } else if (child.attrs.removeIfEmpty && mode === 'omit') {
-        // Tag has no value and removeIfEmpty is set — flag parent for removal
-        // Only in 'omit' mode; 'keep' mode preserves all tags and paragraphs
-        shouldRemoveParent = true;
-      } else if (mode === 'keep') {
-        children.push(schema.text(`{${tagKey}}`, child.marks));
-      }
-      // 'omit' without removeIfEmpty → skip just the node
-    } else {
-      const processed = replaceContextTagNodes(child, schema, tags, mode);
-      if (processed) {
-        children.push(processed);
-      }
-    }
-  });
-
-  // If this is a paragraph containing a removeIfEmpty tag with no value, remove it
-  if (shouldRemoveParent && node.type.name === 'paragraph') {
-    return null;
-  }
-
-  return node.copy(PMFragment.from(children));
 }
 
 /** Regex matching {{ context.tag }} patterns (same as toProseDoc).
@@ -2522,22 +2472,17 @@ body { background: white; }
           return agentRef.current?.toBuffer() ?? null;
         }
 
-        // Build a new PM doc with contextTag nodes replaced by text (body)
-        // Top-level doc node never returns null (only paragraphs can be removed)
-        const renderedPmDoc = replaceContextTagNodes(view.state.doc, schema, tags, mode)!;
+        // Convert unmodified PM doc → Document model (contextTag atoms become {{ tagKey }} text)
+        const renderedDocument = fromProseDoc(view.state.doc, baseDoc);
 
-        // Convert to full Document model (preserves styles, headers, footers, media)
-        const renderedDocument = fromProseDoc(renderedPmDoc, baseDoc);
-
-        // For 'keep' mode, preserve context tag metadata so the DOCX can be
-        // re-opened with tag properties intact. For 'omit' mode (final render),
-        // don't include metadata — tags have been resolved.
-        if (mode === 'keep' && ctMeta) {
-          renderedDocument.contextTagMetadata = ctMeta;
+        // Replace {{ tagKey }} patterns with rendered values + bookmark markers.
+        // Bookmarks (_FP_ctx_{metaId}) enable tag restoration on re-upload.
+        if (ctMeta && Object.keys(ctMeta).length > 0) {
+          renderDocumentWithBookmarks(renderedDocument, { tags, ctMeta, mode });
         }
 
         // Pass context tag replacements for header/footer XML-level replacement during repack
-        // (Document model changes are ignored — repack preserves original XML for fidelity)
+        // (headers/footers use original XML — replaced at text level, not Document model)
         if (Object.keys(tags).length > 0) {
           renderedDocument.contextTagReplacements = { tags, mode };
         }

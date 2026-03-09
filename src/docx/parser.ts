@@ -42,6 +42,7 @@ import { parseComments } from './commentParser';
 import { loadFontsWithMapping } from '../utils/fontLoader';
 import { type DocxInput, toArrayBuffer } from '../utils/docxInput';
 import { parseManifest } from './contextTagMetadata';
+import { restoreContextTagsFromBookmarks } from './renderWithBookmarks';
 
 // ============================================================================
 // PROGRESS CALLBACK
@@ -292,6 +293,11 @@ export async function parseDocx(input: DocxInput, options: ParseOptions = {}): P
       contextTagMetadata: Object.keys(fpManifest.tags).length > 0 ? fpManifest.tags : undefined,
       fpDocumentMeta: Object.keys(fpManifest.document).length > 0 ? fpManifest.document : undefined,
     };
+
+    // Restore context tags from FP bookmarks (rendered tag preservation).
+    // Converts _FP_ctx_ bookmarked text back to {{ tagKey }} patterns so
+    // toProseDoc's splitContextTags can create contextTag atoms.
+    restoreContextTagsFromBookmarks(document);
 
     const totalTime = performance.now() - parseStart;
     if (totalTime > 2000) {
