@@ -144,7 +144,6 @@ import {
   generateTOC,
   // Table commands
   getTableContext,
-  insertTable,
   addRowAbove,
   addRowBelow,
   deleteRow as pmDeleteRow,
@@ -1022,11 +1021,104 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
   }, [findReplace, hyperlinkDialog, tableSelection]);
 
   // Handle table insert from toolbar
+  // Builds the table directly from the view's schema (bypassing the command
+  // system) so that allowLockedEdit works reliably in locked-editing mode.
   const handleInsertTable = useCallback(
     (rows: number, columns: number) => {
       const view = getActiveEditorView();
       if (!view) return;
-      insertTable(rows, columns)(view.state, view.dispatch);
+
+      const { state } = view;
+      const { schema } = state;
+      const { $from } = state.selection;
+
+      // Find insertion point: after the current block-level node
+      let insertPos = $from.pos;
+      for (let d = $from.depth; d > 0; d--) {
+        const node = $from.node(d);
+        if (node.type.name === 'paragraph' || node.type.name === 'table') {
+          insertPos = $from.after(d);
+          break;
+        }
+      }
+
+      // Determine content width (default full page; narrower inside a cell)
+      let contentWidthTwips = 9360;
+      for (let d = $from.depth; d > 0; d--) {
+        const node = $from.node(d);
+        if (node.type.name === 'tableCell' || node.type.name === 'tableHeader') {
+          const cellWidth = node.attrs.width as number | undefined;
+          if (cellWidth && cellWidth > 0) {
+            contentWidthTwips = Math.max(cellWidth - 216, 360);
+          }
+          break;
+        }
+      }
+
+      // Build table node
+      const colWidthTwips = Math.floor(contentWidthTwips / columns);
+      const defaultBorder = { style: 'single', size: 4, color: { rgb: '000000' } };
+      const defaultBorders = {
+        top: defaultBorder,
+        bottom: defaultBorder,
+        left: defaultBorder,
+        right: defaultBorder,
+      };
+
+      const tableRows = [];
+      for (let r = 0; r < rows; r++) {
+        const cells = [];
+        for (let c = 0; c < columns; c++) {
+          const para = schema.nodes.paragraph.create();
+          cells.push(
+            schema.nodes.tableCell.create(
+              {
+                colspan: 1,
+                rowspan: 1,
+                borders: defaultBorders,
+                width: colWidthTwips,
+                widthType: 'dxa',
+              },
+              para
+            )
+          );
+        }
+        tableRows.push(schema.nodes.tableRow.create({ height: 360, heightRule: 'atLeast' }, cells));
+      }
+
+      const tableNode = schema.nodes.table.create(
+        {
+          columnWidths: Array(columns).fill(colWidthTwips),
+          width: contentWidthTwips,
+          widthType: 'dxa',
+        },
+        tableRows
+      );
+      const emptyParagraph = schema.nodes.paragraph.create();
+
+      // Build & dispatch transaction
+      const $insert = state.doc.resolve(insertPos);
+      const needsLeadingParagraph = $insert.nodeBefore?.type.name === 'table';
+      const insertContent = needsLeadingParagraph
+        ? [emptyParagraph, tableNode, schema.nodes.paragraph.create()]
+        : [tableNode, emptyParagraph];
+
+      const tr = state.tr;
+      tr.setMeta('allowLockedEdit', true);
+      tr.insert(insertPos, insertContent);
+
+      // Place cursor inside the first cell: table(+1) > row(+1) > cell(+1) > paragraph(+1) = 4 levels
+      let tableNodePos = insertPos;
+      if (needsLeadingParagraph) {
+        tableNodePos += emptyParagraph.nodeSize;
+      }
+      try {
+        tr.setSelection(TextSelection.create(tr.doc, tableNodePos + 4));
+      } catch {
+        // If cursor placement fails, the insert still happened — just don't crash
+      }
+
+      view.dispatch(tr.scrollIntoView());
       focusActiveEditor();
     },
     [getActiveEditorView, focusActiveEditor]
@@ -2207,6 +2299,39 @@ body { background: white; }
         const node = nodeType.create({ refType, refTarget, displayText });
         const tr = view.state.tr.replaceSelectionWith(node).scrollIntoView();
         view.dispatch(tr);
+        pagedEditorRef.current?.focus();
+      },
+      insertImage: (dataUrl: string, alt: string, width: number, height: number) => {
+        const view = pagedEditorRef.current?.getView();
+        if (!view) return;
+        const { schema } = view.state;
+        if (!schema.nodes.image) return;
+
+        // Constrain to content area width
+        const maxWidth = 612;
+        let w = width;
+        let h = height;
+        if (w > maxWidth) {
+          const scale = maxWidth / w;
+          w = maxWidth;
+          h = Math.round(h * scale);
+        }
+
+        const rId = `rId_img_${Date.now()}`;
+        const imageNode = schema.nodes.image.create({
+          src: dataUrl,
+          alt,
+          width: w,
+          height: h,
+          rId,
+          wrapType: 'inline',
+          displayMode: 'inline',
+        });
+
+        const { from } = view.state.selection;
+        const tr = view.state.tr.insert(from, imageNode);
+        tr.setMeta('allowLockedEdit', true);
+        view.dispatch(tr.scrollIntoView());
         pagedEditorRef.current?.focus();
       },
       getReferenceable: () => {

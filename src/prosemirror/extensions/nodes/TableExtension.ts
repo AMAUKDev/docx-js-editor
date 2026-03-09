@@ -757,16 +757,20 @@ export const TablePluginExtension = createExtension({
             ? [emptyParagraph, table, emptyParagraph]
             : [table, emptyParagraph];
 
-          const tr = state.tr.insert(insertPos, insertContent);
+          const tr = state.tr;
+          // Allow the insert even when cursor is near locked paragraphs
+          tr.setMeta('allowLockedEdit', true);
+          tr.insert(insertPos, insertContent);
 
-          let tableStartPos = insertPos + 1;
+          // Position of the table node itself in the new document
+          let tableNodePos = insertPos;
           if (needsLeadingParagraph) {
-            tableStartPos += emptyParagraph.nodeSize;
+            tableNodePos += emptyParagraph.nodeSize;
           }
 
-          const firstCellPos = tableStartPos + 1;
-          const firstCellContentPos = firstCellPos + 1;
-          tr.setSelection(TextSelection.create(tr.doc, firstCellContentPos));
+          // table(+1) > tableRow(+1) > tableCell(+1) > paragraph(+1) = 4 levels
+          const cursorPos = tableNodePos + 4;
+          tr.setSelection(TextSelection.create(tr.doc, cursorPos));
           dispatch(tr.scrollIntoView());
         }
 

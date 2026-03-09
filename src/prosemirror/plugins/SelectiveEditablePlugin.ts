@@ -32,18 +32,22 @@ function transactionTouchesLockedParagraph(tr: Transaction): boolean {
     const from = stepJson.from ?? stepJson.pos ?? 0;
     const to = stepJson.to ?? from;
 
-    // Check if any paragraph in the affected range is locked
-    try {
-      oldDoc.nodesBetween(from, Math.min(to, oldDoc.content.size), (node) => {
-        if (node.type.name === 'paragraph' && node.attrs.locked) {
-          throw new Error('locked'); // Short-circuit via exception
+    // Check if any paragraph in the affected range is locked.
+    // Skip for pure insertions (from == to) — the ancestor walk below
+    // handles that case correctly without false-positives at node boundaries.
+    if (from !== to) {
+      try {
+        oldDoc.nodesBetween(from, Math.min(to, oldDoc.content.size), (node) => {
+          if (node.type.name === 'paragraph' && node.attrs.locked) {
+            throw new Error('locked'); // Short-circuit via exception
+          }
+        });
+      } catch (e) {
+        if (e instanceof Error && e.message === 'locked') {
+          return true;
         }
-      });
-    } catch (e) {
-      if (e instanceof Error && e.message === 'locked') {
-        return true;
+        throw e;
       }
-      throw e;
     }
 
     // Also check if from position is inside a locked paragraph
