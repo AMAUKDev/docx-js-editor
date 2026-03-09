@@ -81,7 +81,7 @@
     "dev:remix": "cd examples/remix && npm run dev",
     "dev:astro": "cd examples/astro && npm run dev",
     "dev:demo": "bash examples/dev-all.sh",
-    "build": "tsup && bun run build:css",
+    "build": "tsup && npm run build:css",
     "build:css": "tailwindcss -c ./tailwind.config.lib.js -i ./src/styles/editor.css -o ./dist/styles.css --minify",
     "build:demo": "vite build --config examples/vite/vite.config.ts",
     "test": "bun test",
@@ -96,7 +96,7 @@
     "format": "prettier --write \"src/**/*.{ts,tsx,js,jsx,json,css}\"",
     "format:check": "prettier --check \"src/**/*.{ts,tsx,js,jsx,json,css}\"",
     "size": "size-limit",
-    "prepare": "husky"
+    "prepare": "npm run build"
   },
   "peerDependencies": {
     "react": "^18.0.0 || ^19.0.0",
@@ -168,7 +168,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/eigenpal/docx-js-editor.git"
+    "url": "https://github.com/AMAUKDev/docx-js-editor.git"
   },
   "publishConfig": {
     "access": "public"
