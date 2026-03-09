@@ -41,6 +41,7 @@ import { parseFootnotes, parseEndnotes } from './footnoteParser';
 import { parseComments } from './commentParser';
 import { loadFontsWithMapping } from '../utils/fontLoader';
 import { type DocxInput, toArrayBuffer } from '../utils/docxInput';
+import { parseManifest } from './contextTagMetadata';
 
 // ============================================================================
 // PROGRESS CALLBACK
@@ -248,6 +249,11 @@ export async function parseDocx(input: DocxInput, options: ParseOptions = {}): P
     }
 
     // ========================================================================
+    // STAGE 10b: Parse FP metadata from Custom XML Part
+    // ========================================================================
+    const fpManifest = timeStage('fpMeta', () => parseManifest(raw.fpMetaXml));
+
+    // ========================================================================
     // STAGE 11: Extract and load fonts (80-95%)
     // ========================================================================
     if (preloadFonts) {
@@ -283,6 +289,8 @@ export async function parseDocx(input: DocxInput, options: ParseOptions = {}): P
       contentDirty: false,
       templateVariables,
       warnings: warnings.length > 0 ? warnings : undefined,
+      contextTagMetadata: Object.keys(fpManifest.tags).length > 0 ? fpManifest.tags : undefined,
+      fpDocumentMeta: Object.keys(fpManifest.document).length > 0 ? fpManifest.document : undefined,
     };
 
     const totalTime = performance.now() - parseStart;

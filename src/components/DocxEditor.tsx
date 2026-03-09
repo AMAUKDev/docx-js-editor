@@ -96,6 +96,9 @@ import { ExtensionManager } from '../prosemirror/extensions/ExtensionManager';
 
 // Conversion (for HF inline editor save)
 import { proseDocToBlocks, fromProseDoc } from '../prosemirror/conversion/fromProseDoc';
+import { collectContextTagMetadata } from '../docx/contextTagMetadata';
+import type { ContextTagMeta, FPDocumentMeta } from '../types/document';
+import { generateMetaId } from '../prosemirror/extensions/nodes/ContextTagExtension';
 import {
   Fragment as PMFragment,
   type Node as PMNode,
@@ -282,9 +285,11 @@ export interface DocxEditorProps {
    * Passed from PluginHost to render plugin-specific overlays.
    */
   pluginOverlays?: ReactNode;
-  /** When true, restrict formatting to approved styles only (hides font/size/color pickers) */
+  /** When true, restrict formatting to approved styles only (hides font/size/color/bold/italic pickers) */
   restrictedMode?: boolean;
-  /** Style IDs shown in the gallery when restrictedMode is true */
+  /** When true, shows the style picker in gallery mode with formatted previews (independent of restrictedMode) */
+  styleGalleryMode?: boolean;
+  /** Style IDs shown in the gallery when restrictedMode or styleGalleryMode is true */
   allowedStyleIds?: string[];
   /** Context tags available for insertion (key → resolved value) */
   contextTags?: Record<string, string>;
@@ -292,6 +297,15 @@ export interface DocxEditorProps {
   onContextTagsDiscovered?: (tagKeys: string[]) => void;
   /** When true, the SelectiveEditablePlugin blocks edits to locked paragraphs */
   lockedEditing?: boolean;
+  /** Called when user right-clicks a context tag in the editor */
+  onContextTagRightClick?: (info: {
+    tagKey: string;
+    label: string;
+    removeIfEmpty: boolean;
+    pmPos: number;
+    clientX: number;
+    clientY: number;
+  }) => void;
 }
 
 /**
@@ -323,7 +337,7 @@ export interface DocxEditorRef {
   /** Print the document directly */
   print: () => void;
   /** Insert a context tag at the current cursor position */
-  insertContextTag: (tagKey: string, label?: string) => void;
+  insertContextTag: (tagKey: string, label?: string, removeIfEmpty?: boolean) => void;
   /** Insert a cross-reference at the current cursor position */
   insertCrossRef: (refType: 'heading' | 'figure', refTarget: string, displayText: string) => void;
   /** Get all headings and captions in the document for cross-reference picking */
@@ -350,36 +364,62 @@ export interface DocxEditorRef {
   lockHeadersFooters: () => void;
   /** Unlock all paragraphs in headers and footers */
   unlockHeadersFooters: () => void;
+  /** Update attributes of a context tag node at a given PM position */
+  updateContextTagAttrs: (pmPos: number, attrs: Record<string, unknown>) => void;
+  /** Get document-level metadata from the Custom XML Part (template provenance, tocStyle, etc.) */
+  getDocumentMeta: () => FPDocumentMeta | undefined;
+  /** Set/update document-level metadata (written to Custom XML Part on next save) */
+  setDocumentMeta: (meta: FPDocumentMeta) => void;
 }
 
-/** Walk a PM doc tree, replacing contextTag atom nodes with plain text. */
+/**
+ * Walk a PM doc tree, replacing contextTag atom nodes with plain text.
+ * Returns null when a paragraph should be removed (removeIfEmpty tag with no value).
+ */
 function replaceContextTagNodes(
   node: PMNode,
   schema: PMSchema,
   tags: Record<string, string>,
   mode: 'omit' | 'keep'
-): PMNode {
+): PMNode | null {
   if (node.isLeaf) return node;
+
+  let shouldRemoveParent = false;
   const children: PMNode[] = [];
+
   node.forEach((child) => {
     if (child.type.name === 'contextTag') {
       const tagKey = child.attrs.tagKey as string;
       const resolved = tags[tagKey];
       if (resolved) {
         children.push(schema.text(resolved, child.marks));
+      } else if (child.attrs.removeIfEmpty && mode === 'omit') {
+        // Tag has no value and removeIfEmpty is set — flag parent for removal
+        // Only in 'omit' mode; 'keep' mode preserves all tags and paragraphs
+        shouldRemoveParent = true;
       } else if (mode === 'keep') {
         children.push(schema.text(`{${tagKey}}`, child.marks));
       }
-      // 'omit' → skip the node entirely
+      // 'omit' without removeIfEmpty → skip just the node
     } else {
-      children.push(replaceContextTagNodes(child, schema, tags, mode));
+      const processed = replaceContextTagNodes(child, schema, tags, mode);
+      if (processed) {
+        children.push(processed);
+      }
     }
   });
+
+  // If this is a paragraph containing a removeIfEmpty tag with no value, remove it
+  if (shouldRemoveParent && node.type.name === 'paragraph') {
+    return null;
+  }
+
   return node.copy(PMFragment.from(children));
 }
 
-/** Regex matching {{ context.tag }} patterns (same as toProseDoc) */
-const HF_CONTEXT_TAG_RE = /\{\{\s*(context\.[\w.]+)\s*\}\}|\{(context\.[\w.]+)\}/g;
+/** Regex matching {{ context.tag }} patterns (same as toProseDoc).
+ *  A trailing `!` before `}}` or `}` signals removeIfEmpty but is ignored for HF. */
+const HF_CONTEXT_TAG_RE = /\{\{\s*(context\.[\w.]+)!?\s*\}\}|\{(context\.[\w.]+)!?\}/g;
 
 /**
  * Replace {{ context.tag }} text patterns in a single HeaderFooter (for visual display).
@@ -542,10 +582,12 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     onRenderedDomContextReady,
     pluginOverlays,
     restrictedMode = false,
+    styleGalleryMode,
     allowedStyleIds: allowedStyleIdsProp,
     contextTags,
     onContextTagsDiscovered,
     lockedEditing = false,
+    onContextTagRightClick,
   },
   ref
 ) {
@@ -1091,6 +1133,7 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
           columnWidths: Array(columns).fill(colWidthTwips),
           width: contentWidthTwips,
           widthType: 'dxa',
+          justification: 'center',
         },
         tableRows
       );
@@ -2012,6 +2055,14 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     if (!agentRef.current) return null;
 
     try {
+      // Collect context tag metadata from the current PM state before saving
+      const view = pagedEditorRef.current?.getView();
+      if (view?.state.schema.nodes.contextTag) {
+        const ctMeta = collectContextTagMetadata(view.state.doc);
+        agentRef.current.getDocument().contextTagMetadata =
+          Object.keys(ctMeta).length > 0 ? ctMeta : undefined;
+      }
+
       const buffer = await agentRef.current.toBuffer();
       onSave?.(buffer);
       return buffer;
@@ -2275,7 +2326,7 @@ body { background: white; }
       },
       openPrintPreview: handleDirectPrint,
       print: handleDirectPrint,
-      insertContextTag: (tagKey: string, label?: string) => {
+      insertContextTag: (tagKey: string, label?: string, removeIfEmpty?: boolean) => {
         const view = pagedEditorRef.current?.getView();
         if (!view) return;
         const schema = view.state.schema;
@@ -2284,6 +2335,8 @@ body { background: white; }
         const node = nodeType.create({
           tagKey,
           label: label || contextTags?.[tagKey] || '',
+          removeIfEmpty: removeIfEmpty ?? false,
+          metaId: generateMetaId(),
         });
         const tr = view.state.tr.replaceSelectionWith(node).scrollIntoView();
         tr.setMeta('allowLockedEdit', true);
@@ -2331,6 +2384,21 @@ body { background: white; }
         const { from } = view.state.selection;
         const tr = view.state.tr.insert(from, imageNode);
         tr.setMeta('allowLockedEdit', true);
+
+        // Centre the paragraph containing the inserted image
+        const $pos = tr.doc.resolve(from);
+        for (let d = $pos.depth; d >= 0; d--) {
+          if ($pos.node(d).type.name === 'paragraph') {
+            const paragraphPos = $pos.before(d);
+            const paragraphNode = $pos.node(d);
+            tr.setNodeMarkup(paragraphPos, undefined, {
+              ...paragraphNode.attrs,
+              justification: 'center',
+            });
+            break;
+          }
+        }
+
         view.dispatch(tr.scrollIntoView());
         pagedEditorRef.current?.focus();
       },
@@ -2439,16 +2507,34 @@ body { background: white; }
         const mode = options?.unknownTagMode ?? 'keep';
         const { schema } = view.state;
 
+        // Collect context tag metadata from current PM state (before any replacement)
+        let ctMeta: Record<string, ContextTagMeta> | undefined;
+        if (schema.nodes.contextTag) {
+          const collected = collectContextTagMetadata(view.state.doc);
+          ctMeta = Object.keys(collected).length > 0 ? collected : undefined;
+        }
+
         // 'raw' mode: save as-is without any tag replacement (keeps {context.xxx} tags)
         if (mode === 'raw' || !schema.nodes.contextTag) {
+          if (agentRef.current && ctMeta) {
+            agentRef.current.getDocument().contextTagMetadata = ctMeta;
+          }
           return agentRef.current?.toBuffer() ?? null;
         }
 
         // Build a new PM doc with contextTag nodes replaced by text (body)
-        const renderedPmDoc = replaceContextTagNodes(view.state.doc, schema, tags, mode);
+        // Top-level doc node never returns null (only paragraphs can be removed)
+        const renderedPmDoc = replaceContextTagNodes(view.state.doc, schema, tags, mode)!;
 
         // Convert to full Document model (preserves styles, headers, footers, media)
         const renderedDocument = fromProseDoc(renderedPmDoc, baseDoc);
+
+        // For 'keep' mode, preserve context tag metadata so the DOCX can be
+        // re-opened with tag properties intact. For 'omit' mode (final render),
+        // don't include metadata — tags have been resolved.
+        if (mode === 'keep' && ctMeta) {
+          renderedDocument.contextTagMetadata = ctMeta;
+        }
 
         // Pass context tag replacements for header/footer XML-level replacement during repack
         // (Document model changes are ignored — repack preserves original XML for fidelity)
@@ -2519,6 +2605,43 @@ body { background: white; }
       },
       unlockHeadersFooters: () => {
         setHfLocked(history, false);
+      },
+      updateContextTagAttrs: (pmPos: number, attrs: Record<string, unknown>) => {
+        const view = pagedEditorRef.current?.getView();
+        if (!view) return;
+        const { state } = view;
+        const $pos = state.doc.resolve(pmPos);
+        const parent = $pos.parent;
+        let tagOffset = -1;
+        let tagNode: import('prosemirror-model').Node | null = null;
+        parent.forEach((node, offset) => {
+          const nodeStart = $pos.start() + offset;
+          if (
+            node.type.name === 'contextTag' &&
+            pmPos >= nodeStart &&
+            pmPos < nodeStart + node.nodeSize
+          ) {
+            tagOffset = nodeStart;
+            tagNode = node;
+          }
+        });
+        if (tagNode && tagOffset >= 0) {
+          const tr = state.tr.setNodeMarkup(tagOffset, undefined, {
+            ...(tagNode as any).attrs,
+            ...attrs,
+          });
+          tr.setMeta('allowLockedEdit', true);
+          view.dispatch(tr);
+        }
+      },
+      getDocumentMeta: () => {
+        return agentRef.current?.getDocument()?.fpDocumentMeta;
+      },
+      setDocumentMeta: (meta: FPDocumentMeta) => {
+        const doc = agentRef.current?.getDocument();
+        if (doc) {
+          doc.fpDocumentMeta = { ...doc.fpDocumentMeta, ...meta };
+        }
       },
     }),
     [
@@ -3004,7 +3127,10 @@ body { background: white; }
                       tableContext={state.pmTableContext}
                       onTableAction={handleTableAction}
                       restrictedMode={restrictedMode}
-                      allowedStyleIds={restrictedMode ? allowedStyleIds : undefined}
+                      styleGalleryMode={styleGalleryMode}
+                      allowedStyleIds={
+                        restrictedMode || styleGalleryMode ? allowedStyleIds : undefined
+                      }
                       numberingMap={numberingMap}
                     >
                       {toolbarExtra}
@@ -3107,6 +3233,7 @@ body { background: white; }
                       }}
                       onRenderedDomContextReady={onRenderedDomContextReady}
                       pluginOverlays={pluginOverlays}
+                      onContextTagRightClick={onContextTagRightClick}
                       onPageCountChange={(pageCount) => {
                         setState((prev) =>
                           prev.totalPages !== pageCount ? { ...prev, totalPages: pageCount } : prev

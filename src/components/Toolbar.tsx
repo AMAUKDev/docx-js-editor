@@ -171,8 +171,10 @@ export interface ToolbarProps {
   onInsertPageBreak?: () => void;
   /** Callback when user wants to insert a table of contents */
   onInsertTOC?: () => void;
-  /** When true, hides font/size/color pickers and shows style gallery instead */
+  /** When true, hides font/size/color/bold/italic/underline/strike buttons */
   restrictedMode?: boolean;
+  /** When true, shows the style picker in gallery mode with formatted previews (independent of restrictedMode) */
+  styleGalleryMode?: boolean;
   /** Style IDs to show in the gallery (forwarded to StylePicker) */
   allowedStyleIds?: string[];
   /** Numbering map for computing heading prefixes in the style picker */
@@ -359,6 +361,7 @@ export function Toolbar({
   editorRef,
   children,
   restrictedMode = false,
+  styleGalleryMode,
   allowedStyleIds,
   numberingMap,
   showFontPicker: showFontPickerProp = true,
@@ -609,14 +612,26 @@ export function Toolbar({
       if (isCtrl && !event.altKey) {
         switch (event.key.toLowerCase()) {
           case 'b':
+            if (restrictedMode) {
+              event.preventDefault();
+              break;
+            }
             event.preventDefault();
             handleFormat('bold');
             break;
           case 'i':
+            if (restrictedMode) {
+              event.preventDefault();
+              break;
+            }
             event.preventDefault();
             handleFormat('italic');
             break;
           case 'u':
+            if (restrictedMode) {
+              event.preventDefault();
+              break;
+            }
             event.preventDefault();
             handleFormat('underline');
             break;
@@ -662,7 +677,7 @@ export function Toolbar({
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [enableShortcuts, handleFormat, editorRef]);
+  }, [enableShortcuts, handleFormat, editorRef, restrictedMode]);
 
   // Alt+digit shortcuts for heading styles (no container guard — these are
   // unambiguous shortcuts that should work whenever the editor is mounted)
@@ -834,8 +849,8 @@ export function Toolbar({
             styles={documentStyles}
             theme={theme}
             disabled={disabled}
-            width={restrictedMode ? undefined : 150}
-            galleryMode={restrictedMode}
+            width={(styleGalleryMode ?? restrictedMode) ? undefined : 150}
+            galleryMode={styleGalleryMode ?? restrictedMode}
             allowedStyleIds={allowedStyleIds}
             numberingMap={numberingMap}
           />
@@ -872,42 +887,46 @@ export function Toolbar({
 
       {/* Text Formatting Group */}
       <ToolbarGroup label="Text formatting">
-        <ToolbarButton
-          onClick={() => handleFormat('bold')}
-          active={currentFormatting.bold}
-          disabled={disabled}
-          title="Bold (Ctrl+B)"
-          ariaLabel="Bold"
-        >
-          <MaterialSymbol name="format_bold" size={ICON_SIZE} />
-        </ToolbarButton>
-        <ToolbarButton
-          onClick={() => handleFormat('italic')}
-          active={currentFormatting.italic}
-          disabled={disabled}
-          title="Italic (Ctrl+I)"
-          ariaLabel="Italic"
-        >
-          <MaterialSymbol name="format_italic" size={ICON_SIZE} />
-        </ToolbarButton>
-        <ToolbarButton
-          onClick={() => handleFormat('underline')}
-          active={currentFormatting.underline}
-          disabled={disabled}
-          title="Underline (Ctrl+U)"
-          ariaLabel="Underline"
-        >
-          <MaterialSymbol name="format_underlined" size={ICON_SIZE} />
-        </ToolbarButton>
-        <ToolbarButton
-          onClick={() => handleFormat('strikethrough')}
-          active={currentFormatting.strike}
-          disabled={disabled}
-          title="Strikethrough"
-          ariaLabel="Strikethrough"
-        >
-          <MaterialSymbol name="strikethrough_s" size={ICON_SIZE} />
-        </ToolbarButton>
+        {!restrictedMode && (
+          <>
+            <ToolbarButton
+              onClick={() => handleFormat('bold')}
+              active={currentFormatting.bold}
+              disabled={disabled}
+              title="Bold (Ctrl+B)"
+              ariaLabel="Bold"
+            >
+              <MaterialSymbol name="format_bold" size={ICON_SIZE} />
+            </ToolbarButton>
+            <ToolbarButton
+              onClick={() => handleFormat('italic')}
+              active={currentFormatting.italic}
+              disabled={disabled}
+              title="Italic (Ctrl+I)"
+              ariaLabel="Italic"
+            >
+              <MaterialSymbol name="format_italic" size={ICON_SIZE} />
+            </ToolbarButton>
+            <ToolbarButton
+              onClick={() => handleFormat('underline')}
+              active={currentFormatting.underline}
+              disabled={disabled}
+              title="Underline (Ctrl+U)"
+              ariaLabel="Underline"
+            >
+              <MaterialSymbol name="format_underlined" size={ICON_SIZE} />
+            </ToolbarButton>
+            <ToolbarButton
+              onClick={() => handleFormat('strikethrough')}
+              active={currentFormatting.strike}
+              disabled={disabled}
+              title="Strikethrough"
+              ariaLabel="Strikethrough"
+            >
+              <MaterialSymbol name="strikethrough_s" size={ICON_SIZE} />
+            </ToolbarButton>
+          </>
+        )}
         {showTextColorPicker && (
           <TextColorPicker
             value={currentFormatting.color?.replace(/^#/, '')}
@@ -1057,14 +1076,16 @@ export function Toolbar({
       )}
 
       {/* Clear Formatting */}
-      <ToolbarButton
-        onClick={() => handleFormat('clearFormatting')}
-        disabled={disabled}
-        title="Clear formatting"
-        ariaLabel="Clear formatting"
-      >
-        <MaterialSymbol name="format_clear" size={ICON_SIZE} />
-      </ToolbarButton>
+      {!restrictedMode && (
+        <ToolbarButton
+          onClick={() => handleFormat('clearFormatting')}
+          disabled={disabled}
+          title="Clear formatting"
+          ariaLabel="Clear formatting"
+        >
+          <MaterialSymbol name="format_clear" size={ICON_SIZE} />
+        </ToolbarButton>
+      )}
 
       {/* Custom toolbar items */}
       {children}

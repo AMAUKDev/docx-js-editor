@@ -36,6 +36,7 @@ import { serializeDocument, documentHasLockedParagraphs } from './serializer/doc
 import { serializeHeaderFooter } from './serializer/headerFooterSerializer';
 import { RELATIONSHIP_TYPES } from './relsParser';
 import { type RawDocxContent } from './unzip';
+import { CUSTOM_XML_PATH, CUSTOM_XML_CONTENT_TYPE, serializeManifest } from './contextTagMetadata';
 
 // ============================================================================
 // NEW IMAGE HANDLING
@@ -329,6 +330,43 @@ export async function repackDocx(doc: Document, options: RepackOptions = {}): Pr
     }
   }
 
+  // Write FP metadata manifest (document meta + context tag metadata) as Custom XML Part
+  const hasTagMeta = doc.contextTagMetadata && Object.keys(doc.contextTagMetadata).length > 0;
+  const hasDocMeta = doc.fpDocumentMeta && Object.keys(doc.fpDocumentMeta).length > 0;
+  if (hasTagMeta || hasDocMeta) {
+    const metaXml = serializeManifest(doc.fpDocumentMeta, doc.contextTagMetadata);
+    newZip.file(CUSTOM_XML_PATH, metaXml, {
+      compression: 'DEFLATE',
+      compressionOptions: { level: compressionLevel },
+    });
+
+    // Remove legacy file if present
+    if (newZip.file('customXml/contextTagMeta.xml')) {
+      newZip.remove('customXml/contextTagMeta.xml');
+    }
+
+    // Ensure [Content_Types].xml has an override for our custom XML part
+    const ctFile = newZip.file('[Content_Types].xml');
+    if (ctFile) {
+      let ctXml = await ctFile.async('text');
+      // Remove legacy content type if present
+      ctXml = ctXml.replace(
+        /<Override[^>]*PartName="\/customXml\/contextTagMeta\.xml"[^>]*\/>/g,
+        ''
+      );
+      if (!ctXml.includes(CUSTOM_XML_PATH)) {
+        ctXml = ctXml.replace(
+          '</Types>',
+          `<Override PartName="/${CUSTOM_XML_PATH}" ContentType="${CUSTOM_XML_CONTENT_TYPE}"/></Types>`
+        );
+      }
+      newZip.file('[Content_Types].xml', ctXml, {
+        compression: 'DEFLATE',
+        compressionOptions: { level: compressionLevel },
+      });
+    }
+  }
+
   // If document has locked paragraphs, inject w:documentProtection into settings.xml
   // so Word enforces editing restrictions (only unlocked regions marked with permStart/permEnd are editable)
   if (doc.contentDirty && documentHasLockedParagraphs(doc)) {
@@ -463,6 +501,40 @@ export async function repackDocxFromRaw(
           compressionOptions: { level: compressionLevel },
         });
       }
+    }
+  }
+
+  // Write FP metadata manifest as Custom XML Part
+  const hasTagMetaRaw = doc.contextTagMetadata && Object.keys(doc.contextTagMetadata).length > 0;
+  const hasDocMetaRaw = doc.fpDocumentMeta && Object.keys(doc.fpDocumentMeta).length > 0;
+  if (hasTagMetaRaw || hasDocMetaRaw) {
+    const metaXml = serializeManifest(doc.fpDocumentMeta, doc.contextTagMetadata);
+    newZip.file(CUSTOM_XML_PATH, metaXml, {
+      compression: 'DEFLATE',
+      compressionOptions: { level: compressionLevel },
+    });
+
+    if (newZip.file('customXml/contextTagMeta.xml')) {
+      newZip.remove('customXml/contextTagMeta.xml');
+    }
+
+    const ctFile = newZip.file('[Content_Types].xml');
+    if (ctFile) {
+      let ctXml = await ctFile.async('text');
+      ctXml = ctXml.replace(
+        /<Override[^>]*PartName="\/customXml\/contextTagMeta\.xml"[^>]*\/>/g,
+        ''
+      );
+      if (!ctXml.includes(CUSTOM_XML_PATH)) {
+        ctXml = ctXml.replace(
+          '</Types>',
+          `<Override PartName="/${CUSTOM_XML_PATH}" ContentType="${CUSTOM_XML_CONTENT_TYPE}"/></Types>`
+        );
+      }
+      newZip.file('[Content_Types].xml', ctXml, {
+        compression: 'DEFLATE',
+        compressionOptions: { level: compressionLevel },
+      });
     }
   }
 

@@ -159,6 +159,15 @@ export interface PagedEditorProps {
   onBodyClick?: () => void;
   /** Called after layout when the page count changes. */
   onPageCountChange?: (pageCount: number) => void;
+  /** Called when user right-clicks on a context tag node. */
+  onContextTagRightClick?: (info: {
+    tagKey: string;
+    label: string;
+    removeIfEmpty: boolean;
+    pmPos: number;
+    clientX: number;
+    clientY: number;
+  }) => void;
   /** Numbering map for resolving list markers with correct numFmt/lvlText. */
   numberingMap?: import('../docx/numberingParser').NumberingMap | null;
   /** Custom class name. */
@@ -1311,6 +1320,7 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
       hfEditMode,
       onBodyClick,
       onPageCountChange,
+      onContextTagRightClick,
       className,
       style,
     } = props;
@@ -2241,6 +2251,47 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
         targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }
     }, []);
+
+    /**
+     * Handle right-click (contextmenu) on pages — detect context tag nodes.
+     */
+    const handlePagesContextMenu = useCallback(
+      (e: React.MouseEvent) => {
+        if (!onContextTagRightClick || !hiddenPMRef.current) return;
+
+        const view = hiddenPMRef.current.getView?.() ?? (hiddenPMRef.current as any)?.view;
+        if (!view) return;
+
+        const pmPos = getPositionFromMouse(e.clientX, e.clientY);
+        if (pmPos == null) return;
+
+        const $pos = view.state.doc.resolve(pmPos);
+        const parent = $pos.parent;
+        let found = false;
+
+        parent.forEach((node: import('prosemirror-model').Node, offset: number) => {
+          if (found) return;
+          const nodeStart = $pos.start() + offset;
+          if (
+            node.type.name === 'contextTag' &&
+            pmPos >= nodeStart &&
+            pmPos < nodeStart + node.nodeSize
+          ) {
+            found = true;
+            e.preventDefault();
+            onContextTagRightClick({
+              tagKey: node.attrs.tagKey as string,
+              label: node.attrs.label as string,
+              removeIfEmpty: !!node.attrs.removeIfEmpty,
+              pmPos: nodeStart,
+              clientX: e.clientX,
+              clientY: e.clientY,
+            });
+          }
+        });
+      },
+      [getPositionFromMouse, onContextTagRightClick]
+    );
 
     /**
      * Handle mousedown on pages - start selection or drag.
@@ -3469,6 +3520,7 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
             className={`paged-editor__pages${hfEditMode ? ` paged-editor--hf-editing paged-editor--editing-${hfEditMode}` : ''}`}
             style={pagesContainerStyles}
             onMouseDown={handlePagesMouseDown}
+            onContextMenu={handlePagesContextMenu}
             onClick={handlePagesClick}
             aria-hidden="true" // Visual only, PM provides semantic content
           />

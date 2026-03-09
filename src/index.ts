@@ -452,6 +452,8 @@ export type {
   ListLevel,
   NumberingDefinitions,
   Relationship,
+  ContextTagMeta,
+  FPDocumentMeta,
 } from './types/document';
 
 // Agent API types

@@ -74,6 +74,9 @@ export interface RawDocxContent {
   // All XML files (for any we might have missed)
   allXml: Map<string, string>;
 
+  // Custom XML part — FP metadata manifest (document meta + context tag properties)
+  fpMetaXml: string | null;
+
   // Original ZIP for round-trip preservation
   originalZip: JSZip;
 
@@ -110,6 +113,7 @@ export async function unzipDocx(buffer: ArrayBuffer): Promise<RawDocxContent> {
     corePropsXml: null,
     appPropsXml: null,
     customPropsXml: null,
+    fpMetaXml: null,
     media: new Map(),
     fonts: new Map(),
     allXml: new Map(),
@@ -170,6 +174,14 @@ export async function unzipDocx(buffer: ArrayBuffer): Promise<RawDocxContent> {
         content.appPropsXml = xmlContent;
       } else if (lowerPath === 'docprops/custom.xml') {
         content.customPropsXml = xmlContent;
+      } else if (
+        lowerPath === 'customxml/fpmeta.xml' ||
+        lowerPath === 'customxml/contexttagmeta.xml'
+      ) {
+        // Accept both new path and legacy path (prefer new if both exist)
+        if (!content.fpMetaXml || lowerPath === 'customxml/fpmeta.xml') {
+          content.fpMetaXml = xmlContent;
+        }
       } else if (lowerPath.match(/^word\/header\d+\.xml$/)) {
         const filename = path.split('/').pop() || path;
         content.headers.set(filename, xmlContent);

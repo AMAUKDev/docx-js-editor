@@ -12,7 +12,8 @@
  * - Inline properties (highest priority)
  */
 
-import type { Node as PMNode, Schema } from 'prosemirror-model';
+import { Fragment, type Node as PMNode, type Schema } from 'prosemirror-model';
+import { generateMetaId } from '../extensions/nodes/ContextTagExtension';
 import { schema as defaultSchema } from '../schema';
 
 // Module-level active schema — temporarily overridden during toProseDoc when
@@ -102,10 +103,98 @@ export function toProseDoc(document: Document, options?: ToProseDocOptions): PMN
       nodes.push(schema.node('paragraph', {}, []));
     }
 
-    return schema.node('doc', null, nodes);
+    let doc = schema.node('doc', null, nodes);
+
+    // Reconcile context tag metadata from Custom XML Part.
+    // The Custom XML Part is the source of truth for properties like removeIfEmpty.
+    // On load, we apply stored metadata to matching contextTag nodes.
+    // Tags found in XML but not in the document are dropped (stale entries).
+    // Tags in the document but not in XML keep defaults (or ! suffix from backward compat).
+    const ctMeta = document.contextTagMetadata;
+    if (ctMeta && Object.keys(ctMeta).length > 0 && schema.nodes.contextTag) {
+      doc = applyContextTagMetadata(doc, ctMeta);
+    }
+
+    return doc;
   } finally {
     schema = savedSchema;
   }
+}
+
+/**
+ * Apply context tag metadata from Custom XML Part to contextTag nodes.
+ *
+ * The manifest is keyed by metaId (UUID) and each entry stores `tagKey`.
+ * After parsing DOCX text, tags get fresh metaIds. We reconcile by matching
+ * stored entries to document tags in order, grouped by tagKey:
+ *
+ *   Stored: { "uuid-A": { tagKey: "context.x", removeIfEmpty: true },
+ *             "uuid-B": { tagKey: "context.x", removeIfEmpty: false } }
+ *   Doc:    [contextTag(x, metaId=fresh-1), contextTag(x, metaId=fresh-2)]
+ *
+ *   Result: fresh-1 gets uuid-A's props, fresh-2 gets uuid-B's props
+ *           (matched by tagKey, in document order ↔ manifest insertion order)
+ *
+ * After reconciliation, each tag gets the stored metaId back so it persists
+ * across subsequent saves.
+ */
+type ContextTagMetaEntry = { tagKey?: string; removeIfEmpty?: boolean; [key: string]: unknown };
+
+function applyContextTagMetadata(
+  doc: PMNode,
+  metadata: Record<string, ContextTagMetaEntry>
+): PMNode {
+  // Group stored entries by tagKey, preserving insertion order (= document order from last save)
+  const byTagKey = new Map<string, Array<{ metaId: string; meta: ContextTagMetaEntry }>>();
+  for (const [metaId, meta] of Object.entries(metadata)) {
+    const tk = (meta.tagKey as string) || '';
+    if (!tk) continue;
+    let arr = byTagKey.get(tk);
+    if (!arr) {
+      arr = [];
+      byTagKey.set(tk, arr);
+    }
+    arr.push({ metaId, meta });
+  }
+
+  // Track which stored entry to consume next for each tagKey
+  const cursors = new Map<string, number>();
+
+  function mapNode(node: PMNode): PMNode {
+    if (node.type.name === 'contextTag') {
+      const tagKey = node.attrs.tagKey as string;
+      const entries = byTagKey.get(tagKey);
+      if (entries) {
+        const cursor = cursors.get(tagKey) ?? 0;
+        if (cursor < entries.length) {
+          const { metaId, meta } = entries[cursor];
+          cursors.set(tagKey, cursor + 1);
+          const newAttrs: Record<string, unknown> = { ...node.attrs, metaId };
+          if (meta.removeIfEmpty !== undefined) {
+            newAttrs.removeIfEmpty = meta.removeIfEmpty;
+          }
+          return node.type.create(newAttrs, node.content, node.marks);
+        }
+      }
+      // No stored metadata for this tag — keep as-is (fresh metaId, default props)
+      return node;
+    }
+
+    if (node.childCount === 0) return node;
+
+    const children: PMNode[] = [];
+    let changed = false;
+    node.forEach((child) => {
+      const mapped = mapNode(child);
+      if (mapped !== child) changed = true;
+      children.push(mapped);
+    });
+
+    if (!changed) return node;
+    return node.copy(Fragment.from(children));
+  }
+
+  return mapNode(doc);
 }
 
 /**
@@ -1127,8 +1216,9 @@ function mergeTextFormatting(
   return result;
 }
 
-/** Regex to detect {{ context.tag }} or {context.tag} patterns in text */
-const CONTEXT_TAG_RE = /\{\{\s*(context\.[\w.]+)\s*\}\}|\{(context\.[\w.]+)\}/g;
+/** Regex to detect {{ context.tag }} or {context.tag} patterns in text.
+ *  A trailing `!` before `}}` or `}` signals removeIfEmpty (e.g., {{ key! }}). */
+const CONTEXT_TAG_RE = /\{\{\s*(context\.[\w.]+)(!)?\s*\}\}|\{(context\.[\w.]+)(!)?\}/g;
 
 /**
  * Split text containing {{ tag }} patterns into text and contextTag nodes.
@@ -1144,8 +1234,11 @@ function splitContextTags(text: string, marks: ReturnType<typeof schema.mark>[])
   for (const match of text.matchAll(CONTEXT_TAG_RE)) {
     const before = text.slice(lastIndex, match.index);
     if (before) nodes.push(schema.text(before, marks));
-    const tagKey = match[1] || match[2]; // group 1 = {{ }}, group 2 = { }
-    nodes.push(ctType.create({ tagKey, label: '' }, null, marks));
+    const tagKey = match[1] || match[3]; // group 1 = {{ }}, group 3 = { }
+    const removeIfEmpty = !!(match[2] || match[4]); // trailing `!` flag
+    nodes.push(
+      ctType.create({ tagKey, label: '', removeIfEmpty, metaId: generateMetaId() }, null, marks)
+    );
     lastIndex = match.index! + match[0].length;
   }
 

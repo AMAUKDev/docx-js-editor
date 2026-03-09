@@ -12,6 +12,7 @@
 
 import type { Node as PMNode, Mark } from 'prosemirror-model';
 import { pixelsToEmu } from '../../docx/imageParser';
+import { collectContextTagMetadata } from '../../docx/contextTagMetadata';
 import type {
   Document,
   DocumentBody,
@@ -59,6 +60,10 @@ import type { TextColorAttrs, UnderlineAttrs, FontFamilyAttrs } from '../schema/
 export function fromProseDoc(pmDoc: PMNode, baseDocument?: Document): Document {
   const blocks = extractBlocks(pmDoc);
 
+  // Collect context tag metadata from the ProseMirror document
+  const ctMeta = pmDoc.type.schema.nodes.contextTag ? collectContextTagMetadata(pmDoc) : undefined;
+  const contextTagMetadata = ctMeta && Object.keys(ctMeta).length > 0 ? ctMeta : undefined;
+
   // Preserve section properties (margins, headers, footers) from base document
   const documentBody: DocumentBody = {
     content: blocks,
@@ -72,6 +77,7 @@ export function fromProseDoc(pmDoc: PMNode, baseDocument?: Document): Document {
     return {
       ...baseDocument,
       contentDirty: true, // Mark as modified — serializer must re-generate document.xml
+      contextTagMetadata,
       package: {
         ...baseDocument.package,
         document: documentBody,
@@ -82,6 +88,7 @@ export function fromProseDoc(pmDoc: PMNode, baseDocument?: Document): Document {
   // Create a minimal document structure
   return {
     contentDirty: true,
+    contextTagMetadata,
     package: {
       document: documentBody,
     },
@@ -530,8 +537,10 @@ function extractParagraphContent(paragraph: PMNode): ParagraphContent[] {
       // Context tag — serialize as {{ tag_key }} (Jinja2/docxtpl syntax).
       // Context tags carry the same marks as surrounding text, so we
       // coalesce them into the current run when marks match.
+      // A trailing `!` before `}}` signals removeIfEmpty (e.g., {{ key! }}).
       const tagKey = node.attrs.tagKey as string;
-      const tagText = `{{ ${tagKey} }}`;
+      const rieFlag = node.attrs.removeIfEmpty ? '!' : '';
+      const tagText = `{{ ${tagKey}${rieFlag} }}`;
       const marksKey = getMarksKey(node.marks);
 
       if (currentRun && currentMarksKey === marksKey) {

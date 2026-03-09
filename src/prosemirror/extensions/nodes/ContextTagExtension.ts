@@ -4,9 +4,27 @@
  * Renders as a highlighted badge in the editor (e.g., "{case_no}").
  * When context data is available, shows the resolved value.
  * Stored in the DOCX as {tag_key} text (compatible with docxtemplater).
+ *
+ * Each instance carries a unique `metaId` (UUID) so that per-instance
+ * properties (like removeIfEmpty) survive DOCX round-trips even when
+ * the same tagKey appears multiple times in the document.
  */
 
 import { createNodeExtension } from '../create';
+
+/** Generate a compact UUID v4 (crypto.randomUUID with fallback). */
+function generateMetaId(): string {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  // Fallback for older environments
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+}
+
+export { generateMetaId };
 
 export const ContextTagExtension = createNodeExtension({
   name: 'contextTag',
@@ -31,6 +49,10 @@ export const ContextTagExtension = createNodeExtension({
       tagKey: { default: '' },
       /** Display label — resolved value or the tag key itself */
       label: { default: '' },
+      /** If true, the entire parent paragraph is removed when this tag has no value */
+      removeIfEmpty: { default: false },
+      /** Unique identifier for this tag instance — links to Custom XML Part metadata */
+      metaId: { default: '' },
     },
     parseDOM: [
       {
@@ -40,27 +62,37 @@ export const ContextTagExtension = createNodeExtension({
           return {
             tagKey: el.dataset.tagKey || '',
             label: el.textContent || '',
+            removeIfEmpty: el.dataset.removeIfEmpty === 'true',
+            metaId: el.dataset.metaId || generateMetaId(),
           };
         },
       },
     ],
     toDOM(node) {
-      const { tagKey, label } = node.attrs as { tagKey: string; label: string };
+      const { tagKey, label, removeIfEmpty, metaId } = node.attrs as {
+        tagKey: string;
+        label: string;
+        removeIfEmpty: boolean;
+        metaId: string;
+      };
       const displayText = String(label || `{${tagKey}}`);
-      return [
-        'span',
-        {
-          class: 'docx-context-tag',
-          'data-tag-key': tagKey,
-          // No background/border styling here — this DOM is the hidden
-          // ProseMirror (off-screen). Any background-color leaks to adjacent
-          // text during contenteditable mutations, which HighlightExtension's
-          // parseDOM then picks up as a highlight mark, causing the "blue
-          // background" bug. Visible rendering is handled by layout-painter.
-          style: 'white-space: nowrap; cursor: default;',
-        },
-        displayText,
-      ];
+      const attrs: Record<string, string> = {
+        class: 'docx-context-tag',
+        'data-tag-key': tagKey,
+        // No background/border styling here — this DOM is the hidden
+        // ProseMirror (off-screen). Any background-color leaks to adjacent
+        // text during contenteditable mutations, which HighlightExtension's
+        // parseDOM then picks up as a highlight mark, causing the "blue
+        // background" bug. Visible rendering is handled by layout-painter.
+        style: 'white-space: nowrap; cursor: default;',
+      };
+      if (removeIfEmpty) {
+        attrs['data-remove-if-empty'] = 'true';
+      }
+      if (metaId) {
+        attrs['data-meta-id'] = metaId;
+      }
+      return ['span', attrs, displayText];
     },
   },
 });

@@ -210,4 +210,39 @@ export interface Document {
     tags: Record<string, string>;
     mode: 'omit' | 'keep';
   };
+  /**
+   * Context tag metadata loaded from the Custom XML Part (customXml/fpMeta.xml).
+   * Keyed by metaId (UUID). Each entry stores the tagKey and properties like removeIfEmpty.
+   * Written on save, read on load, reconciled against visible tags in the document.
+   */
+  contextTagMetadata?: Record<string, ContextTagMeta>;
+  /**
+   * Document-level metadata from the Custom XML Part.
+   * Stores template provenance, editor settings, etc.
+   */
+  fpDocumentMeta?: FPDocumentMeta;
+}
+
+/**
+ * Metadata for a single context tag instance, persisted in the Custom XML Part.
+ * Keyed by the tag's unique metaId (UUID) in the manifest.
+ */
+export interface ContextTagMeta {
+  /** The context variable key (e.g., "context.case_no") — used for reconciliation on load */
+  tagKey?: string;
+  removeIfEmpty?: boolean;
+  [key: string]: unknown;
+}
+
+/**
+ * Document-level metadata persisted in the Custom XML Part.
+ * Survives DOCX round-trips (download → edit externally → re-upload).
+ */
+export interface FPDocumentMeta {
+  /** ID of the template this document was created from (DynamicReportTemplate PK) */
+  templateId?: number;
+  /** Human-readable name of the source template */
+  templateName?: string;
+  /** Selected TOC/numbering style ID (e.g., "Heading1") */
+  tocStyle?: string;
 }

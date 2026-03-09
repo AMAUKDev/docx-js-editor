@@ -3,7 +3,8 @@
  *
  * Restricts paragraph formatting to a set of allowed style IDs.
  * - On every transaction, remaps disallowed styleId attrs to "Normal"
- * - On paste, strips fontFamily and fontSize marks from incoming content
+ * - On every transaction, strips disallowed inline marks (bold, italic, etc.)
+ * - On paste, strips all disallowed marks from incoming content
  */
 
 import { Plugin, PluginKey } from 'prosemirror-state';
@@ -39,22 +40,35 @@ export const DEFAULT_ALLOWED_STYLE_IDS = [
   'TOC9',
 ];
 
+/** Mark names that are stripped by the style enforcer (manual formatting marks). */
+const DISALLOWED_MARK_NAMES = [
+  'fontFamily',
+  'fontSize',
+  'textColor',
+  'highlight',
+  'bold',
+  'italic',
+  'underline',
+  'strike',
+] as const;
+
 /**
- * Strip fontFamily and fontSize marks from a slice (used for paste filtering).
+ * Strip all disallowed manual-formatting marks from a slice (used for paste filtering).
  */
 function stripFontMarksFromSlice(slice: Slice, schema: Schema): Slice {
-  const fontFamily = schema.marks['fontFamily'];
-  const fontSize = schema.marks['fontSize'];
-  if (!fontFamily && !fontSize) return slice;
+  const disallowedMarkTypes = DISALLOWED_MARK_NAMES.map((name) => schema.marks[name]).filter(
+    Boolean
+  );
+
+  if (disallowedMarkTypes.length === 0) return slice;
 
   const mapped = mapFragment(slice.content, (node) => {
     if (node.isText) {
       let newNode = node;
-      if (fontFamily && fontFamily.isInSet(node.marks)) {
-        newNode = newNode.mark(fontFamily.removeFromSet(newNode.marks));
-      }
-      if (fontSize && fontSize.isInSet(newNode.marks)) {
-        newNode = newNode.mark(fontSize.removeFromSet(newNode.marks));
+      for (const markType of disallowedMarkTypes) {
+        if (markType.isInSet(newNode.marks)) {
+          newNode = newNode.mark(markType.removeFromSet(newNode.marks));
+        }
       }
       return newNode;
     }
@@ -96,7 +110,7 @@ export function createStyleEnforcerPlugin(options: StyleEnforcerOptions = {}): P
   return new Plugin({
     key: styleEnforcerPluginKey,
 
-    // appendTransaction: remap disallowed styleId to Normal
+    // appendTransaction: remap disallowed styleId to Normal + strip disallowed marks
     appendTransaction(transactions, _oldState, newState) {
       // Only process if something actually changed
       if (!transactions.some((tr) => tr.docChanged)) return null;
@@ -105,7 +119,13 @@ export function createStyleEnforcerPlugin(options: StyleEnforcerOptions = {}): P
       const tr = newState.tr;
       let changed = false;
 
+      // Resolve disallowed mark types from the schema
+      const disallowedMarkTypes = DISALLOWED_MARK_NAMES.map(
+        (name) => newState.schema.marks[name]
+      ).filter(Boolean);
+
       newState.doc.descendants((node, pos) => {
+        // Remap disallowed styleId to Normal
         if (node.type.name === 'paragraph' && node.attrs.styleId) {
           if (!allowed.has(node.attrs.styleId)) {
             tr.setNodeMarkup(pos, undefined, {
@@ -115,14 +135,42 @@ export function createStyleEnforcerPlugin(options: StyleEnforcerOptions = {}): P
             changed = true;
           }
         }
+
+        // Strip disallowed marks from text nodes
+        if (node.isText && node.marks.length > 0) {
+          let newMarks = node.marks;
+          for (const markType of disallowedMarkTypes) {
+            if (markType.isInSet(newMarks)) {
+              newMarks = markType.removeFromSet(newMarks);
+            }
+          }
+          if (newMarks.length !== node.marks.length) {
+            // Remove each disallowed mark from this text range
+            const from = pos;
+            const to = pos + node.nodeSize;
+            for (const markType of disallowedMarkTypes) {
+              if (markType.isInSet(node.marks)) {
+                tr.removeMark(from, to, markType);
+              }
+            }
+            changed = true;
+          }
+        }
       });
 
       if (!changed) return null;
 
-      // Preserve storedMarks through this appendTransaction (setNodeMarkup clears them)
-      if (savedStoredMarks) {
-        tr.setStoredMarks(savedStoredMarks);
+      // Also strip disallowed marks from storedMarks (cursor formatting)
+      let marksToRestore = savedStoredMarks;
+      if (marksToRestore) {
+        for (const markType of disallowedMarkTypes) {
+          if (markType.isInSet(marksToRestore)) {
+            marksToRestore = markType.removeFromSet(marksToRestore);
+          }
+        }
+        tr.setStoredMarks(marksToRestore);
       }
+
       return tr;
     },
 
