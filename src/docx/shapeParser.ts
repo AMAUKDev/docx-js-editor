@@ -37,6 +37,7 @@ import type {
   ColorValue,
   Paragraph,
 } from '../types/document';
+import type { RelationshipMap, MediaFile } from '../types/styles';
 import {
   getChildElements,
   getAttribute,
@@ -245,9 +246,44 @@ function applyColorModifiers(color: ColorValue, element: XmlElement): ColorValue
 // ============================================================================
 
 /**
+ * Resolve an image data URL from a relationship ID and media map.
+ */
+function resolveBlipImage(
+  rId: string,
+  rels: RelationshipMap | undefined,
+  media: Map<string, MediaFile> | undefined
+): string | undefined {
+  if (!rId || !rels) return undefined;
+  const rel = rels.get(rId);
+  if (!rel?.target) return undefined;
+  if (!media) return undefined;
+
+  // Normalize path: strip leading slashes, ensure word/ prefix for media
+  const target = rel.target;
+  const normalizedPath = target.replace(/^\/+/, '').replace(/^word\//, '');
+  const withPrefix = `word/${normalizedPath}`;
+
+  // Case-insensitive lookup
+  const lowerNorm = normalizedPath.toLowerCase();
+  const lowerWith = withPrefix.toLowerCase();
+  for (const [key, value] of media.entries()) {
+    const lowerKey = key.toLowerCase();
+    if (lowerKey === lowerNorm || lowerKey === lowerWith || lowerKey === target.toLowerCase()) {
+      return value.dataUrl || value.base64;
+    }
+  }
+  return undefined;
+}
+
+/**
  * Parse shape fill from spPr element
  */
-function parseFill(spPr: XmlElement | null, style: XmlElement | null): ShapeFill | undefined {
+function parseFill(
+  spPr: XmlElement | null,
+  style: XmlElement | null,
+  rels?: RelationshipMap,
+  media?: Map<string, MediaFile>
+): ShapeFill | undefined {
   if (!spPr) {
     return undefined;
   }
@@ -282,10 +318,15 @@ function parseFill(spPr: XmlElement | null, style: XmlElement | null): ShapeFill
     return { type: 'pattern' };
   }
 
-  // Check for blip fill (picture)
+  // Check for blip fill (picture) — extract actual image data if available
   const blipFill = children.find((el) => el.name === 'a:blipFill');
   if (blipFill) {
-    return { type: 'picture' };
+    const blip = findByFullName(blipFill, 'a:blip');
+    const rId = blip
+      ? getAttribute(blip, 'r', 'embed') || getAttribute(blip, null, 'embed') || ''
+      : '';
+    const imageSrc = resolveBlipImage(rId, rels, media);
+    return { type: 'picture', imageSrc };
   }
 
   // Check style reference for fill
@@ -676,6 +717,35 @@ function parseTextBoxContent(txbxContent: XmlElement | null): Paragraph[] {
   return paragraphs;
 }
 
+/**
+ * Extract image from text box content (pic:pic inside wps:txbx).
+ * Recursively searches for a:blip and resolves image data.
+ */
+function extractTextBoxImage(
+  txbxContent: XmlElement | null,
+  rels?: RelationshipMap,
+  media?: Map<string, MediaFile>
+): string | undefined {
+  if (!txbxContent || !rels || !media) return undefined;
+
+  // Recursively find a:blip element
+  function findBlipRecursive(el: XmlElement): XmlElement | null {
+    if (el.name === 'a:blip') return el;
+    const children = getChildElements(el);
+    for (const child of children) {
+      const found = findBlipRecursive(child);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  const blip = findBlipRecursive(txbxContent);
+  if (!blip) return undefined;
+
+  const rId = getAttribute(blip, 'r', 'embed') || getAttribute(blip, null, 'embed') || '';
+  return resolveBlipImage(rId, rels, media);
+}
+
 // ============================================================================
 // MAIN SHAPE PARSING
 // ============================================================================
@@ -686,7 +756,11 @@ function parseTextBoxContent(txbxContent: XmlElement | null): Paragraph[] {
  * @param node - The wps:wsp XML element
  * @returns Parsed Shape object
  */
-export function parseShape(node: XmlElement): Shape {
+export function parseShape(
+  node: XmlElement,
+  rels?: RelationshipMap,
+  media?: Map<string, MediaFile>
+): Shape {
   const children = getChildElements(node);
 
   // Get non-visual properties
@@ -713,7 +787,7 @@ export function parseShape(node: XmlElement): Shape {
   const { size, transform } = parseTransform(xfrm);
 
   // Parse fill
-  const fill = parseFill(spPr ?? null, style ?? null);
+  const fill = parseFill(spPr ?? null, style ?? null, rels, media);
 
   // Parse outline
   const outline = parseOutline(spPr ?? null, style ?? null);
@@ -752,6 +826,12 @@ export function parseShape(node: XmlElement): Shape {
         content,
       };
     }
+
+    // Extract image from text box content (e.g. AMA logo inside a text box shape)
+    const textBoxImage = extractTextBoxImage(txbxContent, rels, media);
+    if (textBoxImage) {
+      shape.textBoxImageSrc = textBoxImage;
+    }
   }
 
   return shape;
@@ -763,7 +843,11 @@ export function parseShape(node: XmlElement): Shape {
  * @param drawingEl - The w:drawing element
  * @returns Parsed Shape object or null if not a shape
  */
-export function parseShapeFromDrawing(drawingEl: XmlElement): Shape | null {
+export function parseShapeFromDrawing(
+  drawingEl: XmlElement,
+  rels?: RelationshipMap,
+  media?: Map<string, MediaFile>
+): Shape | null {
   const children = getChildElements(drawingEl);
 
   // Find wp:inline or wp:anchor
@@ -787,7 +871,7 @@ export function parseShapeFromDrawing(drawingEl: XmlElement): Shape | null {
   if (!wsp) return null;
 
   // Parse the shape
-  const shape = parseShape(wsp);
+  const shape = parseShape(wsp, rels, media);
 
   // Get extent from container (overrides spPr size)
   const extent = findByFullName(container, 'wp:extent');

@@ -52,6 +52,7 @@ import type {
   Run,
   RunFormatting,
   ParagraphAttrs,
+  TabStop,
 } from '../layout-engine/types';
 
 // Layout bridge
@@ -945,6 +946,146 @@ function convertDocumentRunsToFlowRuns(content: unknown[]): Run[] {
                 }
               : undefined,
           } as Run);
+        } else if (rc.type === 'shape') {
+          // Handle shape drawings (connector lines, basic shapes) — render as inline SVG
+          const shape = rc.shape as Record<string, unknown> | undefined;
+          if (shape) {
+            const shapeType = (shape.shapeType as string) || 'rect';
+            const size = shape.size as { width?: number; height?: number } | undefined;
+            const emuToPixels = (emu: number) => Math.round((emu / 914400) * 96);
+            // Floating shapes (with position) can extend beyond content area — don't cap width
+            const isFloating = !!(shape.position as Record<string, unknown> | undefined);
+            const maxW = isFloating ? 2000 : 650;
+            const w = Math.min(size?.width ? emuToPixels(size.width) : 100, maxW);
+            const h = size?.height ? emuToPixels(size.height) : 4;
+
+            const outline = shape.outline as
+              | {
+                  color?: { rgb?: string; themeColor?: string } | string;
+                  width?: number;
+                  style?: string;
+                }
+              | undefined;
+            const fill = shape.fill as
+              | {
+                  type?: string;
+                  color?: string | { rgb?: string; themeColor?: string };
+                  imageSrc?: string;
+                }
+              | undefined;
+
+            // If the shape has an image (text box image or picture fill), use that directly
+            const textBoxImageSrc = shape.textBoxImageSrc as string | undefined;
+            let dataUrl: string;
+            let svgH: number;
+            if (textBoxImageSrc) {
+              dataUrl = textBoxImageSrc;
+              svgH = h;
+            } else if (fill?.type === 'picture' && fill.imageSrc) {
+              dataUrl = fill.imageSrc;
+              svgH = h;
+            } else {
+              let fillColor = 'none';
+              if (fill && fill.type !== 'none') {
+                if (!fill.color) {
+                  fillColor = '#ffffff';
+                } else if (typeof fill.color === 'string') {
+                  fillColor = fill.color;
+                } else {
+                  const fc = fill.color;
+                  if (fc.rgb) {
+                    fillColor = fc.rgb.startsWith('#') ? fc.rgb : `#${fc.rgb}`;
+                  } else if (fc.themeColor) {
+                    const themeMap: Record<string, string> = {
+                      accent1: '#5B9BD5',
+                      accent2: '#ED7D31',
+                      accent3: '#A5A5A5',
+                      accent4: '#FFC000',
+                      accent5: '#4472C4',
+                      accent6: '#70AD47',
+                      dk1: '#000000',
+                      lt1: '#FFFFFF',
+                      dk2: '#1F497D',
+                      lt2: '#EEECE1',
+                    };
+                    fillColor = themeMap[fc.themeColor] || '#ffffff';
+                  } else {
+                    fillColor = '#ffffff';
+                  }
+                }
+              }
+              const strokeWidth = outline?.width ? outline.width / 12700 : 1; // EMU to pt
+              // Resolve ColorValue object to CSS color string
+              let strokeColor = '#000000';
+              if (outline?.color) {
+                if (typeof outline.color === 'string') {
+                  strokeColor = outline.color;
+                } else {
+                  const cv = outline.color;
+                  if (cv.rgb) {
+                    strokeColor = cv.rgb.startsWith('#') ? cv.rgb : `#${cv.rgb}`;
+                  } else if (cv.themeColor) {
+                    const themeMap: Record<string, string> = {
+                      accent1: '#5B9BD5',
+                      accent2: '#ED7D31',
+                      accent3: '#A5A5A5',
+                      accent4: '#FFC000',
+                      accent5: '#4472C4',
+                      accent6: '#70AD47',
+                      dk1: '#000000',
+                      lt1: '#FFFFFF',
+                      dk2: '#1F497D',
+                      lt2: '#EEECE1',
+                    };
+                    strokeColor = themeMap[cv.themeColor] || '#000000';
+                  }
+                }
+              }
+
+              let svgPath: string;
+              switch (shapeType) {
+                case 'line':
+                case 'straightConnector1':
+                  svgPath = `<line x1="0" y1="${Math.max(h, strokeWidth + 2) / 2}" x2="${w}" y2="${Math.max(h, strokeWidth + 2) / 2}" />`;
+                  break;
+                default:
+                  svgPath = `<rect x="0" y="0" width="${w}" height="${Math.max(h, 1)}" />`;
+                  break;
+              }
+
+              svgH = Math.max(h, strokeWidth + 2);
+              const svg =
+                `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${svgH}" viewBox="0 0 ${w} ${svgH}">` +
+                `<g fill="${fillColor}" stroke="${strokeColor}" stroke-width="${strokeWidth}">` +
+                svgPath +
+                `</g></svg>`;
+
+              dataUrl = `data:image/svg+xml,${encodeURIComponent(svg)}`;
+            }
+
+            // Include position for floating shapes (wp:anchor)
+            const shapePosition = shape.position as
+              | {
+                  horizontal?: { relativeTo?: string; posOffset?: number; align?: string };
+                  vertical?: { relativeTo?: string; posOffset?: number; align?: string };
+                }
+              | undefined;
+
+            // Check wrap type to determine z-ordering (behind/inFront)
+            const shapeWrap = shape.wrap as { type?: string } | undefined;
+            const isBehindDoc = shapeWrap?.type === 'behind';
+
+            runs.push({
+              kind: 'image',
+              src: dataUrl,
+              width: w,
+              height: svgH,
+              position: shapePosition
+                ? { horizontal: shapePosition.horizontal, vertical: shapePosition.vertical }
+                : undefined,
+              behindDoc: isBehindDoc || undefined,
+            } as Run);
+          }
         }
       }
     }
@@ -1068,9 +1209,32 @@ function convertDocumentRunsToFlowRuns(content: unknown[]): Run[] {
  * @param headerFooter - The header/footer document content
  * @param contentWidth - Available width for content
  */
+function resolveAlignment(
+  formatting: Record<string, unknown> | undefined,
+  styles: StyleDefinitions | null | undefined
+): 'left' | 'center' | 'right' | 'justify' | undefined {
+  // Direct alignment takes priority
+  let align = formatting?.alignment as string | undefined;
+  // Fall back to style-inherited alignment
+  if (!align && formatting?.styleId && styles) {
+    const styleId = formatting.styleId as string;
+    const style = styles.styles.find((s) => s.styleId === styleId);
+    if (style?.pPr?.alignment) {
+      align = style.pPr.alignment;
+    }
+  }
+  if (!align) return undefined;
+  if (align === 'both') return 'justify';
+  if (['left', 'center', 'right', 'justify'].includes(align)) {
+    return align as 'left' | 'center' | 'right' | 'justify';
+  }
+  return undefined;
+}
+
 function convertHeaderFooterToContent(
   headerFooter: HeaderFooter | null | undefined,
-  contentWidth: number
+  contentWidth: number,
+  styles?: StyleDefinitions | null
 ): HeaderFooterContent | undefined {
   if (!headerFooter || !headerFooter.content || headerFooter.content.length === 0) {
     return undefined;
@@ -1086,12 +1250,73 @@ function convertHeaderFooterToContent(
       const formatting = itemObj.formatting as Record<string, unknown> | undefined;
       const attrs: ParagraphAttrs = {};
 
-      if (formatting) {
-        if (formatting.alignment) {
-          const align = formatting.alignment as string;
-          if (align === 'both') attrs.alignment = 'justify';
-          else if (['left', 'center', 'right', 'justify'].includes(align)) {
-            attrs.alignment = align as 'left' | 'center' | 'right' | 'justify';
+      const resolvedAlign = resolveAlignment(formatting, styles);
+      if (resolvedAlign) attrs.alignment = resolvedAlign;
+
+      // Merge paragraph-level tab stops with style-inherited tab stops (ECMA-376 §17.3.1.38).
+      // Paragraph tabs supplement (not replace) style tabs. "clear" tabs remove inherited positions.
+      {
+        const alignMap: Record<string, string> = {
+          left: 'start',
+          right: 'end',
+          center: 'center',
+          decimal: 'decimal',
+          bar: 'bar',
+          clear: 'clear',
+        };
+        type RawTab = {
+          position?: number;
+          alignment?: string;
+          pos?: number;
+          val?: string;
+          leader?: string;
+        };
+        const toLayoutTab = (t: RawTab) => ({
+          pos: t.position ?? t.pos ?? 0,
+          val: (alignMap[t.alignment ?? ''] ?? t.val ?? 'start') as
+            | 'start'
+            | 'end'
+            | 'center'
+            | 'decimal'
+            | 'bar'
+            | 'clear',
+          leader: t.leader as TabStop['leader'],
+        });
+
+        // Collect style-level tabs
+        const styleId = formatting?.styleId as string | undefined;
+        const styleDef =
+          styleId && styles ? styles.styles.find((s) => s.styleId === styleId) : undefined;
+        const styleTabs = styleDef?.pPr?.tabs as RawTab[] | undefined;
+
+        // Collect paragraph-level tabs
+        const paraTabs =
+          formatting?.tabs && Array.isArray(formatting.tabs)
+            ? (formatting.tabs as RawTab[])
+            : undefined;
+
+        if (styleTabs || paraTabs) {
+          // Start with style tabs indexed by position
+          const merged = new Map<number, ReturnType<typeof toLayoutTab>>();
+          if (styleTabs) {
+            for (const t of styleTabs) {
+              const lt = toLayoutTab(t);
+              merged.set(lt.pos, lt);
+            }
+          }
+          // Paragraph tabs override at same position; "clear" removes inherited stop
+          if (paraTabs) {
+            for (const t of paraTabs) {
+              const lt = toLayoutTab(t);
+              if (lt.val === 'clear') {
+                merged.delete(lt.pos);
+              } else {
+                merged.set(lt.pos, lt);
+              }
+            }
+          }
+          if (merged.size > 0) {
+            attrs.tabs = Array.from(merged.values()).sort((a, b) => a.pos - b.pos);
           }
         }
       }
@@ -1133,13 +1358,8 @@ function convertHeaderFooterToContent(
                 if (cellRuns.length > 0) {
                   const cellFormatting = ci.formatting as Record<string, unknown> | undefined;
                   const cellAttrs: ParagraphAttrs = {};
-                  if (cellFormatting?.alignment) {
-                    const a = cellFormatting.alignment as string;
-                    if (a === 'both') cellAttrs.alignment = 'justify';
-                    else if (['left', 'center', 'right', 'justify'].includes(a)) {
-                      cellAttrs.alignment = a as 'left' | 'center' | 'right' | 'justify';
-                    }
-                  }
+                  const cellAlign = resolveAlignment(cellFormatting, styles);
+                  if (cellAlign) cellAttrs.alignment = cellAlign;
                   cellBlocks.push({
                     kind: 'paragraph',
                     id: String(blocks.length + tableRows.length + tableCells.length),
@@ -1494,15 +1714,25 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
 
           // Step 2.75: Prepare header/footer content for rendering (needed before layout
           // to compute effective margins when header content exceeds available space)
-          const headerContentForRender = convertHeaderFooterToContent(headerContent, contentWidth);
-          const footerContentForRender = convertHeaderFooterToContent(footerContent, contentWidth);
+          const headerContentForRender = convertHeaderFooterToContent(
+            headerContent,
+            contentWidth,
+            styles
+          );
+          const footerContentForRender = convertHeaderFooterToContent(
+            footerContent,
+            contentWidth,
+            styles
+          );
           const firstPageHeaderForRender = convertHeaderFooterToContent(
             firstPageHeaderContent ?? null,
-            contentWidth
+            contentWidth,
+            styles
           );
           const firstPageFooterForRender = convertHeaderFooterToContent(
             firstPageFooterContent ?? null,
-            contentWidth
+            contentWidth,
+            styles
           );
 
           // Adjust margins if header/footer content exceeds available space

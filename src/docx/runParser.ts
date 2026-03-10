@@ -521,7 +521,7 @@ function parseDrawingContent(
   // Fall back to shape parsing (e.g. connector lines, basic shapes).
   // This handles drawings that contain wps:wsp shapes (lines, rects, etc.)
   // rather than actual images (a:blip).
-  const shape = parseShapeFromDrawing(element);
+  const shape = parseShapeFromDrawing(element, rels ?? undefined, media ?? undefined);
   if (shape) {
     return {
       type: 'shape',

@@ -537,10 +537,9 @@ function extractParagraphContent(paragraph: PMNode): ParagraphContent[] {
       // Context tag — serialize as {{ tag_key }} (Jinja2/docxtpl syntax).
       // Context tags carry the same marks as surrounding text, so we
       // coalesce them into the current run when marks match.
-      // A trailing `!` before `}}` signals removeIfEmpty (e.g., {{ key! }}).
+      // removeIfEmpty is now tracked in CustomXML metadata, not in-band.
       const tagKey = node.attrs.tagKey as string;
-      const rieFlag = node.attrs.removeIfEmpty ? '!' : '';
-      const tagText = `{{ ${tagKey}${rieFlag} }}`;
+      const tagText = `{{ ${tagKey} }}`;
       const marksKey = getMarksKey(node.marks);
 
       if (currentRun && currentMarksKey === marksKey) {

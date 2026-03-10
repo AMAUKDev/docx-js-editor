@@ -162,7 +162,6 @@ export function renderParagraphContent(
       const fullMatch = localMatch[0];
       const tagKey = localMatch[1] || localMatch[3];
       const rieFlag = localMatch[2] || localMatch[4];
-      const removeIfEmpty = rieFlag === '!';
       const matchStart = localMatch.index;
 
       // Text before the tag pattern
@@ -178,6 +177,9 @@ export function renderParagraphContent(
       const cursor = cursors.get(tagKey) ?? 0;
       const entry = group?.[cursor];
       const metaId = entry?.metaId;
+
+      // removeIfEmpty: check CustomXML manifest first, fall back to legacy `!` flag
+      const removeIfEmpty = entry?.meta?.removeIfEmpty ?? rieFlag === '!';
       if (group && cursor < group.length) {
         cursors.set(tagKey, cursor + 1);
       }
@@ -357,8 +359,8 @@ export function restoreParagraphContent(
       // End capture — emit the tag pattern
       const meta = manifest[capturedMetaId];
       if (meta?.tagKey) {
-        const rieFlag = meta.removeIfEmpty ? '!' : '';
-        const tagText = `{{ ${meta.tagKey}${rieFlag} }}`;
+        // removeIfEmpty is now tracked in CustomXML metadata, not in-band.
+        const tagText = `{{ ${meta.tagKey} }}`;
         result.push(createRunWithText(tagText, capturedFormatting));
       }
       // If no manifest entry, the bookmarked text is lost (graceful degradation)

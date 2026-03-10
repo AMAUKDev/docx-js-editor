@@ -100,6 +100,8 @@ export interface RenderContext {
   section: 'body' | 'header' | 'footer';
   /** Content width in pixels (page width minus margins) - used for justify */
   contentWidth?: number;
+  /** Left offset of this container from the page edge (px) — used to adjust page-relative floating shapes */
+  containerLeftOffset?: number;
 }
 
 /**
@@ -196,19 +198,62 @@ function applyPageStyles(
     element.style.boxShadow = '0 2px 8px rgba(0, 0, 0, 0.15)';
   }
 
-  // Apply OOXML page borders
+  // Apply OOXML page borders via an overlay div so `space` offsets work.
+  // When offsetFrom="page" (default), the border is inset from the page edge
+  // by the border's `space` value (in points).
   if (options.pageBorders) {
     const pb = options.pageBorders;
+    const offsetFromPage = !pb.offsetFrom || pb.offsetFrom === 'page';
     const sides = ['top', 'bottom', 'left', 'right'] as const;
     const cssSides = ['Top', 'Bottom', 'Left', 'Right'] as const;
+
+    // Collect border styles and space offsets
+    const borderStyles: Record<string, string> = {};
+    const spaceOffsets = { top: 0, bottom: 0, left: 0, right: 0 };
 
     for (let i = 0; i < sides.length; i++) {
       const border = pb[sides[i]];
       if (border && border.style !== 'none' && border.style !== 'nil') {
         const styles = borderToStyle(border, cssSides[i], options.theme);
         for (const [key, value] of Object.entries(styles)) {
-          (element.style as unknown as Record<string, string>)[key] = String(value);
+          borderStyles[key] = String(value);
         }
+        // space is in points — convert to pixels (1pt = 96/72 px)
+        if (border.space != null && offsetFromPage) {
+          spaceOffsets[sides[i]] = border.space * (96 / 72);
+        }
+      }
+    }
+
+    const hasOffset =
+      spaceOffsets.top > 0 ||
+      spaceOffsets.bottom > 0 ||
+      spaceOffsets.left > 0 ||
+      spaceOffsets.right > 0;
+
+    if (hasOffset) {
+      // Remove any previous border overlay (applyPageStyles can be called multiple times)
+      const prev = element.querySelector('[data-page-border-overlay]');
+      if (prev) prev.remove();
+
+      // Render borders on an absolutely positioned overlay inset from page edge
+      const overlay = document.createElement('div');
+      overlay.dataset.pageBorderOverlay = '1';
+      overlay.style.position = 'absolute';
+      overlay.style.top = `${spaceOffsets.top}px`;
+      overlay.style.bottom = `${spaceOffsets.bottom}px`;
+      overlay.style.left = `${spaceOffsets.left}px`;
+      overlay.style.right = `${spaceOffsets.right}px`;
+      overlay.style.pointerEvents = 'none';
+      overlay.style.boxSizing = 'border-box';
+      for (const [key, value] of Object.entries(borderStyles)) {
+        (overlay.style as unknown as Record<string, string>)[key] = value;
+      }
+      element.appendChild(overlay);
+    } else {
+      // No offset — apply borders directly on the page element
+      for (const [key, value] of Object.entries(borderStyles)) {
+        (element.style as unknown as Record<string, string>)[key] = value;
       }
     }
   }
@@ -487,6 +532,7 @@ function renderHeaderFooterContent(
     height: number;
     alt?: string;
     paragraphY: number; // Y position of the containing paragraph
+    behindDoc?: boolean; // Whether shape renders behind text
     position: {
       horizontal?: { relativeTo?: string; posOffset?: number; align?: string };
       vertical?: { relativeTo?: string; posOffset?: number; align?: string };
@@ -527,6 +573,7 @@ function renderHeaderFooterContent(
             height: imgRun.height,
             alt: imgRun.alt,
             paragraphY: paragraphStartY, // Store where this paragraph starts
+            behindDoc: 'behindDoc' in run ? (run as { behindDoc?: boolean }).behindDoc : undefined,
             position: imgRun.position,
           });
         } else {
@@ -562,8 +609,9 @@ function renderHeaderFooterContent(
         { document: doc }
       );
 
-      // Position the fragment
+      // Position the fragment — z-index ensures text renders above floating shapes
       fragEl.style.position = 'relative';
+      fragEl.style.zIndex = '1';
       fragEl.style.marginBottom = '0';
 
       containerEl.appendChild(fragEl);
@@ -592,12 +640,13 @@ function renderHeaderFooterContent(
       });
 
       tableEl.style.position = 'relative';
+      tableEl.style.zIndex = '1';
       containerEl.appendChild(tableEl);
       cursorY += tableHeight;
     }
   }
 
-  // Render floating images with absolute positioning
+  // Render floating images/shapes with absolute positioning
   for (const floatImg of floatingImages) {
     const img = doc.createElement('img');
     img.src = floatImg.src;
@@ -606,9 +655,12 @@ function renderHeaderFooterContent(
     if (floatImg.alt) img.alt = floatImg.alt;
 
     img.style.position = 'absolute';
+    // Shapes render behind text content in header/footer
+    img.style.zIndex = '0';
 
     // Horizontal positioning
     const h = floatImg.position.horizontal;
+    const leftOffset = context.containerLeftOffset ?? 0;
     if (h) {
       if (h.align === 'right') {
         img.style.right = '0';
@@ -617,7 +669,12 @@ function renderHeaderFooterContent(
         img.style.transform = 'translateX(-50%)';
       } else if (h.posOffset !== undefined) {
         // posOffset is in EMUs, convert to pixels
-        img.style.left = `${emuToPixels(h.posOffset)}px`;
+        let leftPx = emuToPixels(h.posOffset);
+        // If positioned relative to page, adjust for the container's offset from the page edge
+        if (h.relativeTo === 'page' && leftOffset) {
+          leftPx -= leftOffset;
+        }
+        img.style.left = `${leftPx}px`;
       } else {
         img.style.left = '0';
       }
@@ -929,7 +986,7 @@ export function renderPage(
     headerEl.style.width = `${headerContentWidth}px`;
     if (!headerOverflows) {
       headerEl.style.maxHeight = `${availableHeaderHeight}px`;
-      headerEl.style.overflow = 'hidden';
+      headerEl.style.overflow = 'visible';
     }
     // Minimum height so empty areas are clickable
     headerEl.style.minHeight = '24px';
@@ -937,7 +994,12 @@ export function renderPage(
     if (options.headerContent && options.headerContent.blocks.length > 0) {
       const headerContentEl = renderHeaderFooterContent(
         options.headerContent,
-        { ...context, section: 'header', contentWidth: headerContentWidth },
+        {
+          ...context,
+          section: 'header',
+          contentWidth: headerContentWidth,
+          containerLeftOffset: page.margins.left,
+        },
         options
       );
       headerEl.appendChild(headerContentEl);
@@ -963,7 +1025,7 @@ export function renderPage(
     footerEl.style.width = `${footerContentWidth}px`;
     if (!footerOverflows) {
       footerEl.style.maxHeight = `${availableFooterHeight}px`;
-      footerEl.style.overflow = 'hidden';
+      footerEl.style.overflow = 'visible';
     }
     footerEl.style.minHeight = '24px';
 

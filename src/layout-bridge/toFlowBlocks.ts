@@ -528,6 +528,20 @@ function paragraphToRuns(node: PMNode, startPos: number, _options: ToFlowBlocksO
             pmEnd: sdtChildPos + sdtChild.nodeSize,
           };
           runs.push(run);
+        } else if (sdtChild.type.name === 'contextTag') {
+          // Context tag inside SDT wrapper — render as plain text
+          const ctTagKey = sdtChild.attrs.tagKey as string;
+          const ctLabel = sdtChild.attrs.label as string;
+          const ctDisplayText = ctLabel || `{${ctTagKey}}`;
+          const ctFormatting = extractRunFormatting(sdtChild.marks, theme);
+          const run: TextRun = {
+            kind: 'text',
+            text: ctDisplayText,
+            ...ctFormatting,
+            pmStart: sdtChildPos,
+            pmEnd: sdtChildPos + sdtChild.nodeSize,
+          };
+          runs.push(run);
         }
       });
     }

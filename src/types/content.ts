@@ -622,6 +622,8 @@ export interface ShapeFill {
   type: 'none' | 'solid' | 'gradient' | 'pattern' | 'picture';
   /** Solid fill color */
   color?: ColorValue;
+  /** Image source (data URL) for picture fill */
+  imageSrc?: string;
   /** Gradient stops for gradient fill */
   gradient?: {
     type: 'linear' | 'radial' | 'rectangular' | 'path';
@@ -724,6 +726,8 @@ export interface Shape {
   textBody?: ShapeTextBody;
   /** Custom geometry points */
   customGeometry?: string;
+  /** Image extracted from text box content (e.g. pic:pic inside wps:txbx) */
+  textBoxImageSrc?: string;
 }
 
 /**
