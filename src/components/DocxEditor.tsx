@@ -307,6 +307,8 @@ export interface DocxEditorProps {
    * where image fields have been resolved from case_file_id to {url, name}.
    */
   loopPreviewData?: Record<string, Array<Record<string, unknown>>> | null;
+  /** Called when the page count changes after layout */
+  onPageCountChange?: (pageCount: number) => void;
 }
 
 /**
@@ -551,6 +553,7 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     lockedEditing = false,
     onContextTagRightClick,
     loopPreviewData,
+    onPageCountChange: onPageCountChangeProp,
   },
   ref
 ) {
@@ -3207,9 +3210,13 @@ body { background: white; }
                       pluginOverlays={pluginOverlays}
                       onContextTagRightClick={onContextTagRightClick}
                       onPageCountChange={(pageCount) => {
-                        setState((prev) =>
-                          prev.totalPages !== pageCount ? { ...prev, totalPages: pageCount } : prev
-                        );
+                        setState((prev) => {
+                          if (prev.totalPages !== pageCount) {
+                            onPageCountChangeProp?.(pageCount);
+                            return { ...prev, totalPages: pageCount };
+                          }
+                          return prev;
+                        });
                       }}
                     />
 
