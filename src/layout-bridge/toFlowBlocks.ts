@@ -669,7 +669,7 @@ function convertParagraphAttrs(pmAttrs: PMParagraphAttrs): ParagraphAttrs {
       const widthPx = border.size ? Math.max(1, Math.round((border.size / 8) * 1.333)) : 1;
       // Convert color
       let color = '#000000';
-      if (border.color?.rgb) {
+      if (border.color?.rgb && border.color.rgb !== 'auto') {
         color = `#${border.color.rgb}`;
       }
       return {
@@ -877,7 +877,7 @@ function extractCellBorders(attrs: Record<string, unknown>): CellBorders | undef
     const spec: CellBorderSpec = {
       style: OOXML_TO_CSS_BORDER[border.style] || 'solid',
     };
-    if (border.color?.rgb) {
+    if (border.color?.rgb && border.color.rgb !== 'auto') {
       spec.color = `#${border.color.rgb}`;
     }
     if (border.size) {
