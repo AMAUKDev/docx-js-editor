@@ -110,7 +110,9 @@ function computeLinePmRange(
 
     if (runIndex < line.fromRun) {
       if (run.kind === 'text') {
-        charOffset += (run.text ?? '').length;
+        // Atomic nodes (e.g. contextTag rendered as multi-char text) contribute
+        // exactly 1 PM unit regardless of their visual character count.
+        charOffset += run.isAtomicNode ? 1 : (run.text ?? '').length;
       } else {
         charOffset += 1;
       }
@@ -136,10 +138,15 @@ function computeLinePmRange(
     if (!run) continue;
 
     if (run.kind === 'text') {
-      const text = run.text ?? '';
-      const start = runIndex === line.fromRun ? line.fromChar : 0;
-      const end = runIndex === line.toRun ? line.toChar : text.length;
-      lineLength += end - start;
+      if (run.isAtomicNode) {
+        // Atomic nodes always contribute exactly 1 PM unit
+        lineLength += 1;
+      } else {
+        const text = run.text ?? '';
+        const start = runIndex === line.fromRun ? line.fromChar : 0;
+        const end = runIndex === line.toRun ? line.toChar : text.length;
+        lineLength += end - start;
+      }
     } else {
       lineLength += 1;
     }
@@ -235,6 +242,20 @@ function charOffsetToX(
     }
 
     if (run.kind === 'text') {
+      if (run.isAtomicNode) {
+        // Atomic nodes (e.g. contextTag) occupy exactly 1 PM unit but display
+        // as multi-char text. Treat the full run width as a single unit.
+        const style = runToFontStyle(run);
+        const atomWidth = measureRun(run.text ?? '', style).width;
+        if (charsProcessed + 1 >= charOffset) {
+          if (charOffset <= charsProcessed) return x;
+          return x + atomWidth;
+        }
+        x += atomWidth;
+        charsProcessed += 1;
+        continue;
+      }
+
       const text = run.text ?? '';
 
       // Get portion of text for this line

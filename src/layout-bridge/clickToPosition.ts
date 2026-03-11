@@ -75,7 +75,13 @@ function sliceRunsForLine(block: ParagraphBlock, line: MeasuredLine): Run[] {
     if (!run) continue;
 
     // Handle non-text runs as atomic units
-    if (run.kind === 'tab' || run.kind === 'image' || run.kind === 'lineBreak') {
+    // Also handle atomic text runs (e.g. contextTag) — never slice them.
+    if (
+      run.kind === 'tab' ||
+      run.kind === 'image' ||
+      run.kind === 'lineBreak' ||
+      (run.kind === 'text' && run.isAtomicNode)
+    ) {
       result.push(run);
       continue;
     }
@@ -130,7 +136,8 @@ function computeLinePmRange(
     if (runIndex < line.fromRun) {
       // Before the line - count all characters
       if (run.kind === 'text') {
-        charOffset += (run.text ?? '').length;
+        // Atomic nodes (e.g. contextTag) contribute exactly 1 PM unit.
+        charOffset += run.isAtomicNode ? 1 : (run.text ?? '').length;
       } else if (run.kind === 'tab' || run.kind === 'lineBreak') {
         charOffset += 1;
       } else if (run.kind === 'image') {
@@ -160,10 +167,15 @@ function computeLinePmRange(
       if (!run) continue;
 
       if (run.kind === 'text') {
-        const text = run.text ?? '';
-        const start = runIndex === line.fromRun ? line.fromChar : 0;
-        const end = runIndex === line.toRun ? line.toChar : text.length;
-        lineLength += end - start;
+        if (run.isAtomicNode) {
+          // Atomic nodes always contribute exactly 1 PM unit
+          lineLength += 1;
+        } else {
+          const text = run.text ?? '';
+          const start = runIndex === line.fromRun ? line.fromChar : 0;
+          const end = runIndex === line.toRun ? line.toChar : text.length;
+          lineLength += end - start;
+        }
       } else if (run.kind === 'tab' || run.kind === 'lineBreak') {
         lineLength += 1;
       } else if (run.kind === 'image') {
@@ -328,6 +340,25 @@ function findCharacterInLine(
       const style = runToFontStyle(run);
       const measurement = measureRun(text, style);
       const runEndX = currentX + measurement.width;
+
+      if (run.isAtomicNode) {
+        // Atomic nodes (e.g. contextTag) occupy 1 PM unit regardless of visual width.
+        // Clicking on the left half snaps to before the node; right half snaps to after.
+        if (adjustedX <= runEndX) {
+          const midpoint = currentX + measurement.width / 2;
+          if (adjustedX < midpoint) {
+            return { charOffset: currentCharOffset, pmPosition: pmStart + currentCharOffset };
+          } else {
+            return {
+              charOffset: currentCharOffset + 1,
+              pmPosition: pmStart + currentCharOffset + 1,
+            };
+          }
+        }
+        currentX = runEndX;
+        currentCharOffset += 1;
+        continue;
+      }
 
       if (adjustedX <= runEndX) {
         // Click is within this run - find exact character
@@ -549,16 +580,29 @@ export function positionToX(
           charsProcessed += 1;
         } else if (run.kind === 'text') {
           const text = run.text ?? '';
-          if (offsetInLine <= charsProcessed + text.length) {
-            const charInRun = offsetInLine - charsProcessed;
+          if (run.isAtomicNode) {
+            // Atomic node: 1 PM unit, full visual width
+            if (offsetInLine <= charsProcessed + 1) {
+              const style = runToFontStyle(run);
+              const atomWidth = measureRun(text, style).width;
+              if (offsetInLine <= charsProcessed) return { x, lineIndex };
+              return { x: x + atomWidth, lineIndex };
+            }
             const style = runToFontStyle(run);
-            const measurement = measureRun(text.slice(0, charInRun), style);
-            return { x: x + measurement.width, lineIndex };
+            x += measureRun(text, style).width;
+            charsProcessed += 1;
+          } else {
+            if (offsetInLine <= charsProcessed + text.length) {
+              const charInRun = offsetInLine - charsProcessed;
+              const style = runToFontStyle(run);
+              const measurement = measureRun(text.slice(0, charInRun), style);
+              return { x: x + measurement.width, lineIndex };
+            }
+            const style = runToFontStyle(run);
+            const measurement = measureRun(text, style);
+            x += measurement.width;
+            charsProcessed += text.length;
           }
-          const style = runToFontStyle(run);
-          const measurement = measureRun(text, style);
-          x += measurement.width;
-          charsProcessed += text.length;
         }
       }
 

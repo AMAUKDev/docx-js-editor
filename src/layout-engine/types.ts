@@ -58,6 +58,12 @@ export type TextRun = RunFormatting & {
   pmStart?: number;
   /** Absolute ProseMirror position (exclusive) after last character. */
   pmEnd?: number;
+  /**
+   * True when this run represents an atomic PM node (nodeSize=1) displayed as
+   * multi-character text (e.g. a contextTag). Position mapping must treat the
+   * entire run as contributing exactly 1 PM unit, not text.length PM units.
+   */
+  isAtomicNode?: boolean;
 };
 
 /**
@@ -230,6 +236,12 @@ export type ParagraphAttrs = {
   defaultFontFamily?: string;
   /** Whether this paragraph is locked (non-editable in locked-editing mode) */
   locked?: boolean;
+  /** True when this paragraph represents a loop block delimiter ({% for %} / {% endfor %}). */
+  isLoopBlock?: boolean;
+  /** 'for' | 'endfor' when isLoopBlock is true. */
+  loopKind?: 'for' | 'endfor';
+  /** The loop expression (e.g. "photo in photos") when loopKind is 'for'. */
+  loopExpr?: string;
 };
 
 /**

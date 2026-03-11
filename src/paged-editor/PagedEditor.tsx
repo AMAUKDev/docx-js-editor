@@ -171,6 +171,18 @@ export interface PagedEditorProps {
   }) => void;
   /** Numbering map for resolving list markers with correct numFmt/lvlText. */
   numberingMap?: import('../docx/numberingParser').NumberingMap | null;
+  /**
+   * Render mode for template elements.
+   * - 'rendered' (default): context tags show label/resolved value, loops show visual blocks
+   * - 'raw': context tags show raw {context.key}, loops show {% for %} / {% endfor %}
+   */
+  renderMode?: 'rendered' | 'raw';
+  /**
+   * Resolved loop preview data for rendered mode expansion.
+   * Keys are loop array names (e.g. "photos"), values are arrays of items
+   * where image fields have been resolved from case_file_id to {url, name}.
+   */
+  loopPreviewData?: Record<string, Array<Record<string, unknown>>> | null;
   /** Custom class name. */
   className?: string;
   /** Custom styles. */
@@ -1536,6 +1548,8 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
       onRenderedDomContextReady,
       pluginOverlays,
       numberingMap,
+      renderMode,
+      loopPreviewData,
       onHeaderFooterDoubleClick,
       hfEditMode,
       onBodyClick,
@@ -1683,6 +1697,8 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
             pageContentHeight,
             pageContentWidth,
             numberingMap,
+            renderMode,
+            loopPreviewData: loopPreviewData ?? undefined,
           });
           let stepTime = performance.now() - stepStart;
           if (stepTime > 500) {
@@ -1916,6 +1932,8 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
         sectionProperties,
         onRenderedDomContextReady,
         document,
+        renderMode,
+        loopPreviewData,
       ]
     );
 

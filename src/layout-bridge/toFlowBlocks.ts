@@ -52,6 +52,18 @@ export type ToFlowBlocksOptions = {
   pageContentWidth?: number;
   /** Numbering map for resolving list markers with correct numFmt and lvlText. */
   numberingMap?: NumberingMap | null;
+  /**
+   * Display mode for template elements.
+   * - 'rendered' (default): context tags show label or {tagKey}, loop blocks show styled markers
+   * - 'raw': context tags show raw {context.key} text, loop blocks show {% for %} / {% endfor %}
+   */
+  renderMode?: 'rendered' | 'raw';
+  /**
+   * Resolved loop preview data for rendered mode expansion.
+   * Keys are array names (e.g. "photos"), values are arrays of items with resolved fields.
+   * Image fields are objects with {url, name}; other fields are primitive values.
+   */
+  loopPreviewData?: Record<string, Array<Record<string, unknown>>>;
 };
 
 const DEFAULT_FONT = 'Calibri';
@@ -408,12 +420,16 @@ function paragraphToRuns(node: PMNode, startPos: number, _options: ToFlowBlocksO
       // Context tags carry the same marks as surrounding text.
       const tagKey = child.attrs.tagKey as string;
       const label = child.attrs.label as string;
-      const displayText = label || `{${tagKey}}`;
+      const renderMode = _options.renderMode;
+      const displayText = renderMode === 'raw' ? `{${tagKey}}` : label || `{${tagKey}}`;
       const formatting = extractRunFormatting(child.marks, theme);
       const run: TextRun = {
         kind: 'text',
         text: displayText,
         ...formatting,
+        // Mark as atomic: this run occupies exactly 1 PM unit (nodeSize=1)
+        // even though it may display as multiple characters.
+        isAtomicNode: true,
         pmStart: childPos,
         pmEnd: childPos + child.nodeSize,
       };
@@ -1083,6 +1099,149 @@ function convertImage(node: PMNode, startPos: number, pageContentHeight?: number
 }
 
 /**
+ * Parse a loop expression like "photo in photos" into {itemVar, arrayName}.
+ * Returns null if the expression doesn't match the expected pattern.
+ */
+function parseLoopExpr(loopExpr: string): { itemVar: string; arrayName: string } | null {
+  const match = loopExpr.trim().match(/^(\w+)\s+in\s+(\w+)$/);
+  if (!match) return null;
+  return { itemVar: match[1], arrayName: match[2] };
+}
+
+/**
+ * Substitute {{ itemVar.field }} patterns in a text string with values from a data item.
+ * Returns the substituted string, or null if the text contains an image-field reference.
+ */
+function substituteText(text: string, itemVar: string, dataItem: Record<string, unknown>): string {
+  return text.replace(/\{\{\s*(\w+)\.(\w+)\s*\}\}/g, (_match, varPart, field) => {
+    if (varPart !== itemVar) return _match;
+    const val = dataItem[field];
+    if (val == null) return '';
+    if (typeof val === 'object') return ''; // image field — handled separately
+    return String(val);
+  });
+}
+
+/**
+ * Check if a text contains an image-field reference for itemVar.
+ * e.g. "{{ photo.image }}" where dataItem.image is {url, name}
+ */
+function getImageFieldFromText(
+  text: string,
+  itemVar: string,
+  dataItem: Record<string, unknown>
+): { url: string; name: string } | null {
+  const re = /\{\{\s*(\w+)\.(\w+)\s*\}\}/g;
+  let match;
+  while ((match = re.exec(text)) !== null) {
+    const [, varPart, field] = match;
+    if (varPart !== itemVar) continue;
+    const val = dataItem[field];
+    if (val && typeof val === 'object' && 'url' in (val as object)) {
+      return val as { url: string; name: string };
+    }
+  }
+  return null;
+}
+
+/**
+ * Clone a FlowBlock tree with template substitutions applied for a specific loop data item.
+ * Image references are replaced with actual ImageBlock / ImageRun blocks.
+ */
+function substituteBlocksForItem(
+  templateBlocks: FlowBlock[],
+  itemVar: string,
+  dataItem: Record<string, unknown>,
+  pageContentWidth?: number
+): FlowBlock[] {
+  const result: FlowBlock[] = [];
+
+  for (const block of templateBlocks) {
+    if (block.kind === 'paragraph') {
+      const para = block as ParagraphBlock;
+      // Check if any run contains an image field reference
+      const newRuns: Run[] = [];
+      let hasImageReplacement = false;
+
+      for (const run of para.runs) {
+        if (run.kind === 'text') {
+          const imgField = getImageFieldFromText(run.text, itemVar, dataItem);
+          if (imgField) {
+            // Replace this run with an image run
+            const maxW = pageContentWidth ?? 500;
+            const imgRun: ImageRun = {
+              kind: 'image',
+              src: imgField.url,
+              width: Math.min(maxW, 400),
+              height: 300,
+              alt: imgField.name,
+              displayMode: 'inline',
+              pmStart: run.pmStart,
+              pmEnd: run.pmEnd,
+            };
+            newRuns.push(imgRun);
+            hasImageReplacement = true;
+          } else {
+            // Regular text substitution
+            const substituted = substituteText(run.text, itemVar, dataItem);
+            if (substituted !== run.text) {
+              newRuns.push({ ...run, text: substituted });
+            } else {
+              newRuns.push(run);
+            }
+          }
+        } else {
+          newRuns.push(run);
+        }
+      }
+
+      void hasImageReplacement; // unused — kept for future styling
+      result.push({
+        ...para,
+        id: nextBlockId(),
+        runs: newRuns,
+        attrs: {
+          ...para.attrs,
+        },
+      });
+    } else if (block.kind === 'table') {
+      const tableBlock = block as TableBlock;
+      // Recursively substitute within table cells
+      const newRows = tableBlock.rows.map((row) => ({
+        ...row,
+        id: nextBlockId(),
+        cells: row.cells.map((cell) => ({
+          ...cell,
+          id: nextBlockId(),
+          blocks: substituteBlocksForItem(cell.blocks, itemVar, dataItem, pageContentWidth),
+        })),
+      }));
+      result.push({ ...tableBlock, id: nextBlockId(), rows: newRows });
+    } else {
+      result.push({ ...block, id: nextBlockId() });
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Create a subtle divider paragraph block between loop iterations.
+ */
+function makeLoopDivider(_iterationIndex: number): ParagraphBlock {
+  return {
+    kind: 'paragraph',
+    id: nextBlockId(),
+    runs: [],
+    attrs: {
+      spacing: { before: 4, after: 4 },
+    },
+    pmStart: -1,
+    pmEnd: -1,
+  };
+}
+
+/**
  * Convert a ProseMirror document to FlowBlock array.
  *
  * Walks the document tree, converting each node to the appropriate block type.
@@ -1096,11 +1255,17 @@ export function toFlowBlocks(doc: PMNode, options: ToFlowBlocksOptions = {}): Fl
   };
 
   const blocks: FlowBlock[] = [];
-  const offset = 0; // Start at document beginning
   const listCounters = new Map<number, number[]>();
 
+  // Build an array of [node, offset] pairs so we can skip ahead for loop expansion
+  const children: Array<{ node: PMNode; pos: number }> = [];
   doc.forEach((node, nodeOffset) => {
-    const pos = offset + nodeOffset;
+    children.push({ node, pos: nodeOffset });
+  });
+
+  let i = 0;
+  while (i < children.length) {
+    const { node, pos } = children[i];
 
     switch (node.type.name) {
       case 'paragraph':
@@ -1116,8 +1281,8 @@ export function toFlowBlocks(doc: PMNode, options: ToFlowBlocksOptions = {}): Fl
               const counters = listCounters.get(numId) ?? new Array(9).fill(0);
 
               counters[level] = (counters[level] ?? 0) + 1;
-              for (let i = level + 1; i < counters.length; i += 1) {
-                counters[i] = 0;
+              for (let lvl = level + 1; lvl < counters.length; lvl += 1) {
+                counters[lvl] = 0;
               }
 
               listCounters.set(numId, counters);
@@ -1137,15 +1302,18 @@ export function toFlowBlocks(doc: PMNode, options: ToFlowBlocksOptions = {}): Fl
 
           blocks.push(block);
         }
+        i++;
         break;
 
       case 'table':
         blocks.push(convertTable(node, pos, opts));
+        i++;
         break;
 
       case 'image':
         // Standalone image block (if not inline)
         blocks.push(convertImage(node, pos, opts.pageContentHeight));
+        i++;
         break;
 
       case 'horizontalRule':
@@ -1157,10 +1325,114 @@ export function toFlowBlocks(doc: PMNode, options: ToFlowBlocksOptions = {}): Fl
           pmEnd: pos + node.nodeSize,
         };
         blocks.push(pb);
+        i++;
         break;
       }
+
+      case 'loopBlock': {
+        const loopKind = (node.attrs.kind as 'for' | 'endfor') || 'for';
+        const loopExpr = (node.attrs.loopExpr as string) || '';
+        const renderMode = opts.renderMode;
+
+        // Attempt loop expansion in rendered mode when data is available
+        if (loopKind === 'for' && renderMode !== 'raw' && opts.loopPreviewData) {
+          const parsed = parseLoopExpr(loopExpr);
+          const dataArray = parsed ? opts.loopPreviewData[parsed.arrayName] : undefined;
+
+          if (parsed && Array.isArray(dataArray) && dataArray.length > 0) {
+            // Collect template body nodes up to matching endfor
+            const templateChildren: Array<{ node: PMNode; pos: number }> = [];
+            let endforIndex = -1;
+            for (let j = i + 1; j < children.length; j++) {
+              const child = children[j];
+              if (
+                child.node.type.name === 'loopBlock' &&
+                (child.node.attrs.kind as string) === 'endfor'
+              ) {
+                endforIndex = j;
+                break;
+              }
+              templateChildren.push(child);
+            }
+
+            if (endforIndex !== -1 && templateChildren.length > 0) {
+              // Convert template nodes to FlowBlocks (without loop expansion recursion)
+              const templateOpts = { ...opts, loopPreviewData: undefined };
+              const templateBlocks: FlowBlock[] = [];
+              for (const { node: tNode, pos: tPos } of templateChildren) {
+                if (tNode.type.name === 'paragraph') {
+                  templateBlocks.push(convertParagraph(tNode, tPos, templateOpts));
+                } else if (tNode.type.name === 'table') {
+                  templateBlocks.push(convertTable(tNode, tPos, templateOpts));
+                } else if (tNode.type.name === 'image') {
+                  templateBlocks.push(convertImage(tNode, tPos, templateOpts.pageContentHeight));
+                }
+              }
+
+              // Expand one copy per data item
+              for (let itemIdx = 0; itemIdx < dataArray.length; itemIdx++) {
+                if (itemIdx > 0) {
+                  blocks.push(makeLoopDivider(itemIdx));
+                }
+                const dataItem = dataArray[itemIdx] as Record<string, unknown>;
+                const expanded = substituteBlocksForItem(
+                  templateBlocks,
+                  parsed.itemVar,
+                  dataItem,
+                  opts.pageContentWidth
+                );
+                for (const b of expanded) {
+                  blocks.push(b);
+                }
+              }
+
+              // Skip past: for-block + template nodes + endfor-block
+              i = endforIndex + 1;
+              break;
+            }
+          }
+        }
+
+        // Fall-through: render as loop block pill (raw mode or no data)
+        const displayText =
+          renderMode === 'raw'
+            ? loopKind === 'for'
+              ? `{% for ${loopExpr} %}`
+              : '{% endfor %}'
+            : loopKind === 'for'
+              ? `for ${loopExpr}`
+              : 'end for';
+
+        const loopRun: TextRun = {
+          kind: 'text',
+          text: displayText,
+          isAtomicNode: true,
+          pmStart: pos,
+          pmEnd: pos + node.nodeSize,
+        };
+
+        const loopPillBlock: ParagraphBlock = {
+          kind: 'paragraph',
+          id: nextBlockId(),
+          runs: [loopRun],
+          attrs: {
+            isLoopBlock: true,
+            loopKind,
+            loopExpr,
+          },
+          pmStart: pos,
+          pmEnd: pos + node.nodeSize,
+        };
+        blocks.push(loopPillBlock);
+        i++;
+        break;
+      }
+
+      default:
+        i++;
+        break;
     }
-  });
+  }
 
   return blocks;
 }

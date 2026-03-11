@@ -211,6 +211,10 @@ export interface ToolbarProps {
   } | null;
   /** Callback when a table action is triggered */
   onTableAction?: (action: TableAction) => void;
+  /** Current render mode for template elements ('rendered' | 'raw') */
+  renderMode?: 'rendered' | 'raw';
+  /** Callback to toggle render mode between rendered and raw */
+  onToggleRenderMode?: () => void;
 }
 
 /**
@@ -391,6 +395,8 @@ export function Toolbar({
   onOpenImageProperties,
   tableContext,
   onTableAction,
+  renderMode = 'rendered',
+  onToggleRenderMode,
 }: ToolbarProps) {
   const toolbarRef = useRef<HTMLDivElement>(null);
 
@@ -837,6 +843,27 @@ export function Toolbar({
             compact
             showButtons={false}
           />
+        </ToolbarGroup>
+      )}
+
+      {/* Render Mode Toggle */}
+      {onToggleRenderMode && (
+        <ToolbarGroup label="View">
+          <Tooltip
+            content={
+              renderMode === 'rendered' ? 'Switch to raw tag mode' : 'Switch to rendered mode'
+            }
+          >
+            <ToolbarButton
+              active={renderMode === 'raw'}
+              onClick={onToggleRenderMode}
+              title={renderMode === 'rendered' ? 'Raw tags' : 'Rendered tags'}
+              ariaLabel="Toggle render mode"
+              disabled={disabled}
+            >
+              <MaterialSymbol name="data_object" size={ICON_SIZE} />
+            </ToolbarButton>
+          </Tooltip>
         </ToolbarGroup>
       )}
 

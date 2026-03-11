@@ -852,6 +852,25 @@ export function renderParagraphFragment(
     fragmentEl.dataset.styleId = block.attrs.styleId;
   }
 
+  // Loop block visual styling — coloured pill-shaped marker
+  if (block.attrs?.isLoopBlock) {
+    const loopKind = block.attrs.loopKind ?? 'for';
+    // Blue for opening loops, green for endfor
+    const bgColor = loopKind === 'for' ? '#dbeafe' : '#dcfce7';
+    const borderColor = loopKind === 'for' ? '#93c5fd' : '#86efac';
+    const textColor = loopKind === 'for' ? '#1d4ed8' : '#15803d';
+    fragmentEl.style.backgroundColor = bgColor;
+    fragmentEl.style.border = `1px solid ${borderColor}`;
+    fragmentEl.style.borderRadius = '4px';
+    fragmentEl.style.color = textColor;
+    fragmentEl.style.fontFamily = 'monospace';
+    fragmentEl.style.fontSize = '11px';
+    fragmentEl.style.padding = '2px 8px';
+    fragmentEl.style.margin = '2px 0';
+    fragmentEl.style.userSelect = 'none';
+    fragmentEl.dataset.loopBlock = loopKind;
+  }
+
   // Apply text alignment at paragraph level
   // For justify: use text-align: left and apply word-spacing per line
   if (alignment) {

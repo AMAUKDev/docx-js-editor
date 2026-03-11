@@ -56,6 +56,7 @@ import { SdtExtension } from './nodes/SdtExtension';
 import { MathExtension } from './nodes/MathExtension';
 import { ContextTagExtension } from './nodes/ContextTagExtension';
 import { CrossRefExtension } from './nodes/CrossRefExtension';
+import { LoopBlockExtension } from './nodes/LoopBlockExtension';
 import { createTableExtensions } from './nodes/TableExtension';
 
 // Features
@@ -142,6 +143,7 @@ export function createStarterKit(options: StarterKitOptions = {}): AnyExtension[
   add('math', MathExtension());
   add('contextTag', ContextTagExtension());
   add('crossRef', CrossRefExtension());
+  add('loopBlock', LoopBlockExtension());
 
   // Table (5 extensions grouped)
   if (!disabled.has('table')) {

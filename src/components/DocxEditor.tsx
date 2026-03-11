@@ -301,6 +301,12 @@ export interface DocxEditorProps {
     clientX: number;
     clientY: number;
   }) => void;
+  /**
+   * Resolved loop preview data for rendered mode expansion.
+   * Keys are loop array names (e.g. "photos"), values are arrays of items
+   * where image fields have been resolved from case_file_id to {url, name}.
+   */
+  loopPreviewData?: Record<string, Array<Record<string, unknown>>> | null;
 }
 
 /**
@@ -319,6 +325,10 @@ export interface DocxEditorRef {
   setZoom: (zoom: number) => void;
   /** Get current zoom level */
   getZoom: () => number;
+  /** Set render mode for template elements ('rendered' or 'raw') */
+  setRenderMode: (mode: 'rendered' | 'raw') => void;
+  /** Get current render mode */
+  getRenderMode: () => 'rendered' | 'raw';
   /** Focus the editor */
   focus: () => void;
   /** Get current page number */
@@ -484,6 +494,8 @@ interface EditorState {
     borderColor: string | null;
     borderStyle: string | null;
   } | null;
+  /** Whether to display template tags/loops in rendered or raw mode */
+  renderMode: 'rendered' | 'raw';
 }
 
 // ============================================================================
@@ -538,6 +550,7 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     onContextTagsDiscovered,
     lockedEditing = false,
     onContextTagRightClick,
+    loopPreviewData,
   },
   ref
 ) {
@@ -556,6 +569,7 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     paragraphTabs: null,
     pmTableContext: null,
     pmImageContext: null,
+    renderMode: 'rendered',
   });
 
   // Table properties dialog state
@@ -2266,6 +2280,9 @@ body { background: white; }
       save: handleSave,
       setZoom: (zoom: number) => setState((prev) => ({ ...prev, zoom })),
       getZoom: () => state.zoom,
+      setRenderMode: (mode: 'rendered' | 'raw') =>
+        setState((prev) => ({ ...prev, renderMode: mode })),
+      getRenderMode: () => state.renderMode,
       focus: () => {
         pagedEditorRef.current?.focus();
       },
@@ -2592,6 +2609,7 @@ body { background: white; }
     [
       history.state,
       state.zoom,
+      state.renderMode,
       state.currentPage,
       state.totalPages,
       handleSave,
@@ -3077,6 +3095,13 @@ body { background: white; }
                         restrictedMode || styleGalleryMode ? allowedStyleIds : undefined
                       }
                       numberingMap={numberingMap}
+                      renderMode={state.renderMode}
+                      onToggleRenderMode={() =>
+                        setState((prev) => ({
+                          ...prev,
+                          renderMode: prev.renderMode === 'rendered' ? 'raw' : 'rendered',
+                        }))
+                      }
                     >
                       {toolbarExtra}
                     </Toolbar>
@@ -3155,6 +3180,8 @@ body { background: white; }
                       firstPageHeaderContent={firstPageHeaderContent}
                       firstPageFooterContent={firstPageFooterContent}
                       numberingMap={numberingMap}
+                      renderMode={state.renderMode}
+                      loopPreviewData={loopPreviewData}
                       onHeaderFooterDoubleClick={handleHeaderFooterDoubleClick}
                       hfEditMode={hfEditPosition}
                       onBodyClick={handleBodyClick}

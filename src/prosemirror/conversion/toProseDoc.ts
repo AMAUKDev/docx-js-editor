@@ -80,6 +80,13 @@ export function toProseDoc(document: Document, options?: ToProseDocOptions): PMN
 
     for (const block of paragraphs) {
       if (block.type === 'paragraph') {
+        // Check for loop block delimiters ({% for x in y %} / {% endfor %})
+        // before full paragraph conversion.
+        const loopNode = tryConvertLoopBlock(block);
+        if (loopNode) {
+          nodes.push(loopNode);
+          continue;
+        }
         // Extract text boxes from paragraph runs before converting
         const textBoxes = extractTextBoxesFromParagraph(block);
         const pmParagraph = convertParagraph(block, styleResolver);
@@ -1014,7 +1021,14 @@ function convertTableCell(
   const contentNodes: PMNode[] = [];
   for (const content of cell.content) {
     if (content.type === 'paragraph') {
-      contentNodes.push(convertParagraph(content, styleResolver, undefined, conditionalStyle?.rPr));
+      const loopNode = tryConvertLoopBlock(content);
+      if (loopNode) {
+        contentNodes.push(loopNode);
+      } else {
+        contentNodes.push(
+          convertParagraph(content, styleResolver, undefined, conditionalStyle?.rPr)
+        );
+      }
     } else if (content.type === 'table') {
       // Nested tables - recursively convert
       contentNodes.push(convertTable(content, styleResolver));
@@ -1219,6 +1233,52 @@ function mergeTextFormatting(
 /** Regex to detect {{ context.tag }} or {context.tag} patterns in text.
  *  A trailing `!` before `}}` or `}` signals removeIfEmpty (e.g., {{ key! }}). */
 const CONTEXT_TAG_RE = /\{\{\s*(context\.[\w.]+)(!)?\s*\}\}|\{(context\.[\w.]+)(!)?\}/g;
+
+/**
+ * Regex to detect loop delimiter paragraphs: {% for x in y %} or {% endfor %}.
+ * Matches optional whitespace/dash trims around the expression.
+ * Captured group 1 = full expression, group 2 = "endfor" if endfor.
+ */
+const LOOP_BLOCK_RE = /^\s*\{%-?\s*((?:for\s+\S+\s+in\s+\S+)|endfor)\s*-?%\}\s*$/;
+
+/**
+ * Extract all text content from a paragraph's runs (ignoring non-text run content).
+ * Used to detect loop block patterns before full conversion.
+ */
+function extractParagraphText(paragraph: Paragraph): string {
+  let text = '';
+  for (const content of paragraph.content) {
+    if (content.type === 'run') {
+      for (const rc of content.content ?? []) {
+        if (rc.type === 'text' && rc.text) {
+          text += rc.text;
+        }
+      }
+    }
+  }
+  return text;
+}
+
+/**
+ * If the paragraph is purely a loop block delimiter, return a loopBlock PM node.
+ * Returns null if the paragraph is not a loop block.
+ */
+function tryConvertLoopBlock(paragraph: Paragraph): PMNode | null {
+  const loopBlockType = schema.nodes.loopBlock;
+  if (!loopBlockType) return null;
+
+  const text = extractParagraphText(paragraph);
+  const match = LOOP_BLOCK_RE.exec(text);
+  if (!match) return null;
+
+  const expr = match[1]!.trim();
+  if (expr === 'endfor') {
+    return loopBlockType.create({ kind: 'endfor', loopExpr: '' });
+  }
+  // Parse "for x in y" -> loopExpr = "x in y"
+  const loopExpr = expr.replace(/^for\s+/, '');
+  return loopBlockType.create({ kind: 'for', loopExpr });
+}
 
 /**
  * Split text containing {{ tag }} patterns into text and contextTag nodes.

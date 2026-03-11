@@ -112,6 +112,9 @@ function extractBlocks(pmDoc: PMNode): (Paragraph | Table)[] {
     } else if (node.type.name === 'pageBreak') {
       // Convert page break node to a paragraph with a page break run
       blocks.push(createPageBreakParagraph());
+    } else if (node.type.name === 'loopBlock') {
+      // Convert loop block delimiter back to a plain text paragraph
+      blocks.push(createLoopBlockParagraph(node));
     }
   });
 
@@ -124,6 +127,22 @@ function extractBlocks(pmDoc: PMNode): (Paragraph | Table)[] {
 function createPageBreakParagraph(): Paragraph {
   const breakContent: BreakContent = { type: 'break', breakType: 'page' };
   const run: Run = { type: 'run', content: [breakContent] };
+  return {
+    type: 'paragraph',
+    content: [run],
+  };
+}
+
+/**
+ * Create a paragraph from a loopBlock PM node (for DOCX round-trip).
+ * Exports as a plain text paragraph containing the original {% for %} / {% endfor %} syntax.
+ */
+function createLoopBlockParagraph(node: PMNode): Paragraph {
+  const kind = (node.attrs.kind as string) || 'for';
+  const loopExpr = (node.attrs.loopExpr as string) || '';
+  const text = kind === 'endfor' ? '{% endfor %}' : `{% for ${loopExpr} %}`;
+  const textContent: TextContent = { type: 'text', text };
+  const run: Run = { type: 'run', content: [textContent] };
   return {
     type: 'paragraph',
     content: [run],

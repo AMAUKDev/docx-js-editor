@@ -687,6 +687,24 @@ export function IconArrowBack(props: IconProps) {
   );
 }
 
+export function IconDataObject(props: IconProps) {
+  // Material Symbol: data_object (curly braces / code)
+  return (
+    <SvgIcon {...props}>
+      <path d="M480-80 240-320l240-240 56 56-144 144h488v80H392l144 144-56 56Zm-360-440v-80h880v80H120Z" />
+    </SvgIcon>
+  );
+}
+
+export function IconCodeBraces(props: IconProps) {
+  // Simple curly braces icon for toggle raw/rendered
+  return (
+    <SvgIcon {...props}>
+      <path d="M360-120q-33 0-56.5-23.5T280-200v-160q0-17-11.5-28.5T240-400v-80q17 0 28.5-11.5T280-520v-200q0-33 23.5-56.5T360-800h40v80h-40v200q0 33-23.5 56.5T280-440q33 0 56.5 23.5T360-360v200h40v80h-40Zm240 0h-40v-80h40v-200q0-33 23.5-56.5T680-480q-33 0-56.5-23.5T600-560v-160h-40v-80h40q33 0 56.5 23.5T680-720v160q0 17 11.5 28.5T720-520v80q-17 0-28.5 11.5T680-400v200q0 33-23.5 56.5T600-120Z" />
+    </SvgIcon>
+  );
+}
+
 export function IconClosedCaption(props: IconProps) {
   return (
     <SvgIcon {...props}>
@@ -787,6 +805,8 @@ const iconMap: Record<string, React.ComponentType<IconProps>> = {
   arrow_back: IconArrowBack,
   // Caption
   closed_caption: IconClosedCaption,
+  // Toggle render mode
+  data_object: IconCodeBraces,
 };
 
 /**
