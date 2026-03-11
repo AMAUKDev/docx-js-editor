@@ -1152,7 +1152,8 @@ function substituteBlocksForItem(
   templateBlocks: FlowBlock[],
   itemVar: string,
   dataItem: Record<string, unknown>,
-  pageContentWidth?: number
+  pageContentWidth?: number,
+  iterationIndex?: number
 ): FlowBlock[] {
   const result: FlowBlock[] = [];
 
@@ -1167,13 +1168,14 @@ function substituteBlocksForItem(
         if (run.kind === 'text') {
           const imgField = getImageFieldFromText(run.text, itemVar, dataItem);
           if (imgField) {
-            // Replace this run with an image run
+            // Replace this run with an image run — fill available width
             const maxW = pageContentWidth ?? 500;
+            const imgW = Math.max(100, maxW - 14); // subtract cell padding
             const imgRun: ImageRun = {
               kind: 'image',
               src: imgField.url,
-              width: Math.min(maxW, 400),
-              height: 300,
+              width: imgW,
+              height: Math.round(imgW * 0.75),
               alt: imgField.name,
               displayMode: 'inline',
               pmStart: run.pmStart,
@@ -1196,26 +1198,47 @@ function substituteBlocksForItem(
       }
 
       void hasImageReplacement; // unused — kept for future styling
+      const newAttrs = { ...para.attrs };
+      // Update list markers with iteration number (e.g. "%1." → "1.", "2.")
+      if (newAttrs.listMarker && iterationIndex != null) {
+        newAttrs.listMarker = newAttrs.listMarker.replace(/%\d+/g, String(iterationIndex + 1));
+      }
       result.push({
         ...para,
         id: nextBlockId(),
         runs: newRuns,
-        attrs: {
-          ...para.attrs,
-        },
+        attrs: newAttrs,
       });
     } else if (block.kind === 'table') {
       const tableBlock = block as TableBlock;
-      // Recursively substitute within table cells
-      const newRows = tableBlock.rows.map((row) => ({
-        ...row,
-        id: nextBlockId(),
-        cells: row.cells.map((cell) => ({
-          ...cell,
+      const colWidths = tableBlock.columnWidths ?? [];
+      // Recursively substitute within table cells, passing cell width for image sizing
+      const newRows = tableBlock.rows.map((row) => {
+        let colIdx = 0;
+        return {
+          ...row,
           id: nextBlockId(),
-          blocks: substituteBlocksForItem(cell.blocks, itemVar, dataItem, pageContentWidth),
-        })),
-      }));
+          cells: row.cells.map((cell) => {
+            const colSpan = cell.colSpan ?? 1;
+            let cellW = 0;
+            for (let c = 0; c < colSpan && colIdx + c < colWidths.length; c++) {
+              cellW += colWidths[colIdx + c] ?? 0;
+            }
+            colIdx += colSpan;
+            return {
+              ...cell,
+              id: nextBlockId(),
+              blocks: substituteBlocksForItem(
+                cell.blocks,
+                itemVar,
+                dataItem,
+                cellW > 0 ? cellW : pageContentWidth,
+                iterationIndex
+              ),
+            };
+          }),
+        };
+      });
       result.push({ ...tableBlock, id: nextBlockId(), rows: newRows });
     } else {
       result.push({ ...block, id: nextBlockId() });
@@ -1379,7 +1402,8 @@ export function toFlowBlocks(doc: PMNode, options: ToFlowBlocksOptions = {}): Fl
                   templateBlocks,
                   parsed.itemVar,
                   dataItem,
-                  opts.pageContentWidth
+                  opts.pageContentWidth,
+                  itemIdx
                 );
                 for (const b of expanded) {
                   blocks.push(b);

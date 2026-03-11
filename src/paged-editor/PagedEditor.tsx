@@ -423,7 +423,8 @@ function measureTableBlock(tableBlock: TableBlock, contentWidth: number): TableM
 
   // Calculate cell widths based on colSpan and columnWidths,
   // skipping columns occupied by spanning cells from previous rows.
-  const tableWidthPx = explicitWidthPx ?? contentWidth;
+  const colWidthsSum = columnWidths.reduce((sum, w) => sum + w, 0);
+  const tableWidthPx = explicitWidthPx ?? (colWidthsSum > 0 ? colWidthsSum : contentWidth);
   const rows = tableBlock.rows.map((row, rowIdx) => {
     let columnIndex = 0;
     const occupied = occupiedColumnsPerRow.get(rowIdx) ?? new Set<number>();
