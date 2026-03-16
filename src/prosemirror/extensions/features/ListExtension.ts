@@ -225,7 +225,11 @@ function exitListOnEmptyEnter(): Command {
     const numPr = paragraph.attrs.numPr;
     if (!numPr) return false;
 
-    if (paragraph.textContent.length > 0) return false;
+    // Use content.size instead of textContent.length — atomic inline nodes
+    // (e.g. context tags) don't contribute to textContent but are real content.
+    // Without this, Enter on a list item containing only a context tag would
+    // strip the numbering instead of splitting the paragraph.
+    if (paragraph.content.size > 0) return false;
 
     if (dispatch) {
       const tr = state.tr.setNodeMarkup($from.before(), undefined, {
@@ -259,7 +263,16 @@ function splitListItem(): Command {
       // Capture marks BEFORE split so we can preserve formatting on the new paragraph
       const preMarks: readonly Mark[] = state.storedMarks || $from.marks();
 
-      tr.split(pos, 1, [{ type: state.schema.nodes.paragraph, attrs: { ...paragraph.attrs } }]);
+      // Clear identity attrs that must NOT be duplicated across paragraphs
+      // (paraId, textId, bookmarks, _originalFormatting cause DOCX corruption if copied)
+      const newAttrs = { ...paragraph.attrs };
+      for (const key of ['paraId', 'textId', 'bookmarks', '_originalFormatting'] as const) {
+        if ((newAttrs as Record<string, unknown>)[key] != null) {
+          (newAttrs as Record<string, unknown>)[key] = null;
+        }
+      }
+
+      tr.split(pos, 1, [{ type: state.schema.nodes.paragraph, attrs: newAttrs }]);
 
       // If new paragraph is empty (Enter at end of line), set storedMarks so typed
       // text inherits formatting (bold, font, size, etc.) from the source paragraph.
@@ -310,6 +323,61 @@ function backspaceExitList(): Command {
       });
       dispatch(tr);
     }
+    return true;
+  };
+}
+
+/**
+ * If the paragraph is a Heading in a numbered list, promote it to the next
+ * heading level (Heading1 → Heading2) on Tab, or demote (Heading2 → Heading1)
+ * on Shift-Tab. Dispatches a custom DOM event so DocxEditor can apply the
+ * style through its full resolution pipeline (same as Alt+digit shortcuts).
+ * Returns false if not a heading in a list.
+ */
+function promoteHeadingLevel(): Command {
+  return (state, _dispatch) => {
+    const { $from } = state.selection;
+    const paragraph = $from.parent;
+    if (paragraph.type.name !== 'paragraph') return false;
+
+    const styleId = paragraph.attrs.styleId as string | null;
+    const numPr = paragraph.attrs.numPr;
+    if (!styleId || !numPr) return false;
+
+    const headingMatch = styleId.match(/^Heading(\d)$/);
+    if (!headingMatch) return false;
+
+    const level = parseInt(headingMatch[1]);
+    if (level >= 9) return false;
+
+    // Dispatch a DOM event for DocxEditor to pick up and apply through
+    // its full style resolution pipeline (same as Alt+digit or StylePicker).
+    document.dispatchEvent(
+      new CustomEvent('docx-apply-style', { detail: { styleId: `Heading${level + 1}` } })
+    );
+    return true;
+  };
+}
+
+function demoteHeadingLevel(): Command {
+  return (state, _dispatch) => {
+    const { $from } = state.selection;
+    const paragraph = $from.parent;
+    if (paragraph.type.name !== 'paragraph') return false;
+
+    const styleId = paragraph.attrs.styleId as string | null;
+    const numPr = paragraph.attrs.numPr;
+    if (!styleId || !numPr) return false;
+
+    const headingMatch = styleId.match(/^Heading(\d)$/);
+    if (!headingMatch) return false;
+
+    const level = parseInt(headingMatch[1]);
+    if (level <= 1) return true; // Already at Heading1 — consume the keystroke, don't remove list
+
+    document.dispatchEvent(
+      new CustomEvent('docx-apply-style', { detail: { styleId: `Heading${level - 1}` } })
+    );
     return true;
   };
 }
@@ -423,8 +491,13 @@ export const ListExtension = createExtension({
         removeList: () => removeList,
       },
       keyboardShortcuts: {
-        Tab: chainCommands(goToNextCell(), increaseListIndent(), insertTab()),
-        'Shift-Tab': chainCommands(goToPrevCell(), decreaseListIndent()),
+        Tab: chainCommands(
+          goToNextCell(),
+          promoteHeadingLevel(),
+          increaseListIndent(),
+          insertTab()
+        ),
+        'Shift-Tab': chainCommands(goToPrevCell(), demoteHeadingLevel(), decreaseListIndent()),
         'Shift-Enter': () => false, // Let base keymap handle this
         Enter: chainCommands(exitListOnEmptyEnter(), splitListItem()),
         Backspace: backspaceExitList(),

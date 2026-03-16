@@ -30,6 +30,8 @@ export type RunFormatting = {
   letterSpacing?: number;
   superscript?: boolean;
   subscript?: boolean;
+  allCaps?: boolean;
+  smallCaps?: boolean;
   /** Hyperlink info if this run is a link */
   hyperlink?: { href: string; tooltip?: string };
   /** Footnote reference ID (if this run contains a footnote reference) */

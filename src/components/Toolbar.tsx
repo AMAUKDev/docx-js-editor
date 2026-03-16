@@ -57,6 +57,10 @@ export interface SelectionFormatting {
   superscript?: boolean;
   /** Whether selected text is subscript */
   subscript?: boolean;
+  /** Whether selected text has all caps (w:caps) */
+  allCaps?: boolean;
+  /** Whether selected text has small caps (w:smallCaps) */
+  smallCaps?: boolean;
   /** Font family of selected text */
   fontFamily?: string;
   /** Font size of selected text (in half-points) */
@@ -87,6 +91,8 @@ export type FormattingAction =
   | 'strikethrough'
   | 'superscript'
   | 'subscript'
+  | 'allCaps'
+  | 'smallCaps'
   | 'clearFormatting'
   | 'bulletList'
   | 'numberedList'
@@ -143,6 +149,8 @@ export interface ToolbarProps {
   showListButtons?: boolean;
   /** Whether to show line spacing picker (default: true) */
   showLineSpacingPicker?: boolean;
+  /** Whether to show clear formatting button (default: true) */
+  showClearFormatting?: boolean;
   /** Whether to show style picker (default: true) */
   showStylePicker?: boolean;
   /** Document styles for the style picker */
@@ -375,6 +383,7 @@ export function Toolbar({
   showAlignmentButtons = true,
   showListButtons = true,
   showLineSpacingPicker = true,
+  showClearFormatting = true,
   showStylePicker = true,
   documentStyles,
   theme,
@@ -707,6 +716,20 @@ export function Toolbar({
     return () => document.removeEventListener('keydown', handleAltDigit);
   }, [enableShortcuts, handleFormat]);
 
+  // Listen for custom 'docx-apply-style' events dispatched by ProseMirror
+  // commands (e.g. Tab on heading in numbered list) that need full style
+  // resolution through handleFormat — same pipeline as Alt+digit shortcuts.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const styleId = (e as CustomEvent).detail?.styleId;
+      if (styleId) {
+        handleFormat({ type: 'applyStyle', value: styleId });
+      }
+    };
+    document.addEventListener('docx-apply-style', handler);
+    return () => document.removeEventListener('docx-apply-style', handler);
+  }, [handleFormat]);
+
   // Prevent toolbar clicks from stealing focus and refocus editor
   const handleToolbarMouseDown = useCallback((e: React.MouseEvent) => {
     // Allow clicks on input/select elements to work normally
@@ -952,6 +975,24 @@ export function Toolbar({
             >
               <MaterialSymbol name="strikethrough_s" size={ICON_SIZE} />
             </ToolbarButton>
+            <ToolbarButton
+              onClick={() => handleFormat('allCaps')}
+              active={currentFormatting.allCaps}
+              disabled={disabled}
+              title="All Caps"
+              ariaLabel="All Caps"
+            >
+              <span style={{ fontSize: ICON_SIZE * 0.6, fontWeight: 700, lineHeight: 1 }}>AA</span>
+            </ToolbarButton>
+            <ToolbarButton
+              onClick={() => handleFormat('smallCaps')}
+              active={currentFormatting.smallCaps}
+              disabled={disabled}
+              title="Small Caps"
+              ariaLabel="Small Caps"
+            >
+              <span style={{ fontSize: ICON_SIZE * 0.6, fontWeight: 700, lineHeight: 1 }}>Aa</span>
+            </ToolbarButton>
           </>
         )}
         {showTextColorPicker && (
@@ -1103,7 +1144,7 @@ export function Toolbar({
       )}
 
       {/* Clear Formatting */}
-      {!restrictedMode && (
+      {showClearFormatting && !restrictedMode && (
         <ToolbarButton
           onClick={() => handleFormat('clearFormatting')}
           disabled={disabled}

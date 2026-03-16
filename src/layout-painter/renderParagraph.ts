@@ -185,6 +185,11 @@ function applyRunStyles(element: HTMLElement, run: TextRun | TabRun): void {
     element.style.verticalAlign = 'sub';
     element.style.fontSize = '0.75em';
   }
+  if (run.allCaps) {
+    element.style.textTransform = 'uppercase';
+  } else if (run.smallCaps) {
+    element.style.fontVariant = 'small-caps';
+  }
 }
 
 /**

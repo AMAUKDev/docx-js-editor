@@ -124,7 +124,7 @@ function hasTocHyperlink(node: PMNode): boolean {
  */
 function findTocBlock(
   doc: PMNode
-): { startPos: number; endPos: number; maxTocLevel: number } | null {
+): { startPos: number; endPos: number; maxTocLevel: number; existingLeader: string } | null {
   let startPos: number | null = null;
   let endPos: number | null = null;
   let maxTocLevel = 0;
@@ -133,6 +133,8 @@ function findTocBlock(
   let prevPos: number | null = null;
   // Track how many TOC entries we found via hyperlink fallback (no explicit TOC style)
   let fallbackEntryCount = 0;
+  // Capture the leader style from the first TOC entry's right-aligned tab
+  let existingLeader = 'none';
 
   doc.forEach((node, offset) => {
     if (node.type.name === 'paragraph') {
@@ -156,6 +158,14 @@ function findTocBlock(
             startPos = prevPos ?? offset;
           }
           inTocBlock = true;
+          // Capture leader from the first TOC entry's tabs
+          const tabs = node.attrs.tabs as Array<{ alignment?: string; leader?: string }> | null;
+          if (tabs) {
+            const rightTab = tabs.find((t) => t.alignment === 'right');
+            if (rightTab?.leader) {
+              existingLeader = rightTab.leader;
+            }
+          }
         }
         endPos = offset + node.nodeSize;
         prevPos = offset;
@@ -197,7 +207,7 @@ function findTocBlock(
   }
 
   if (startPos !== null && endPos !== null && endPos > startPos && maxTocLevel > 0) {
-    return { startPos, endPos, maxTocLevel };
+    return { startPos, endPos, maxTocLevel, existingLeader };
   }
   return null;
 }
@@ -253,9 +263,14 @@ function buildReferenceMap(
       const level = parseInt(headingMatch[1]) - 1;
 
       // Collect text content (excluding numbering marker)
+      // Apply allCaps transformation so TOC shows displayed text (matching Word behavior)
       let text = '';
       node.forEach((child) => {
-        if (child.isText) text += child.text || '';
+        if (child.isText) {
+          const raw = child.text || '';
+          const hasAllCaps = child.marks.some((m) => m.type.name === 'allCaps');
+          text += hasAllCaps ? raw.toUpperCase() : raw;
+        }
       });
       const trimmedText = text.trim();
 
@@ -572,8 +587,18 @@ export function refreshAllReferences(
               tabs: [
                 // Left tab for heading-number → title spacing (720 twips ≈ 0.5 inch)
                 { position: 720, alignment: 'left' as const, leader: 'none' as const },
-                // Right tab with dot leader for page numbers
-                { position: tabPositionTwips, alignment: 'right' as const, leader: 'dot' as const },
+                // Right tab for page numbers — preserve existing leader style
+                {
+                  position: tabPositionTwips,
+                  alignment: 'right' as const,
+                  leader: tocBlock.existingLeader as
+                    | 'none'
+                    | 'dot'
+                    | 'hyphen'
+                    | 'underscore'
+                    | 'heavy'
+                    | 'middleDot',
+                },
               ],
             },
             entryContent

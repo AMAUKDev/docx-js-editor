@@ -276,6 +276,14 @@ function extractRunFormatting(marks: readonly Mark[], theme?: Theme | null): Run
         formatting.subscript = true;
         break;
 
+      case 'allCaps':
+        formatting.allCaps = true;
+        break;
+
+      case 'smallCaps':
+        formatting.smallCaps = true;
+        break;
+
       case 'hyperlink': {
         const attrs = mark.attrs as { href: string; tooltip?: string };
         formatting.hyperlink = {
@@ -423,17 +431,31 @@ function paragraphToRuns(node: PMNode, startPos: number, _options: ToFlowBlocksO
       const renderMode = _options.renderMode;
       const displayText = renderMode === 'raw' ? `{${tagKey}}` : label || `{${tagKey}}`;
       const formatting = extractRunFormatting(child.marks, theme);
-      const run: TextRun = {
-        kind: 'text',
-        text: displayText,
-        ...formatting,
-        // Mark as atomic: this run occupies exactly 1 PM unit (nodeSize=1)
-        // even though it may display as multiple characters.
-        isAtomicNode: true,
-        pmStart: childPos,
-        pmEnd: childPos + child.nodeSize,
-      };
-      runs.push(run);
+
+      // Split multi-line values into separate text runs with line breaks between them
+      // so the layout engine correctly measures the height of each line.
+      const lines = displayText.split('\n');
+      for (let li = 0; li < lines.length; li++) {
+        if (li > 0) {
+          const br: LineBreakRun = {
+            kind: 'lineBreak',
+            pmStart: childPos,
+            pmEnd: childPos + child.nodeSize,
+          };
+          runs.push(br);
+        }
+        const run: TextRun = {
+          kind: 'text',
+          text: lines[li],
+          ...formatting,
+          // Mark as atomic: this run occupies exactly 1 PM unit (nodeSize=1)
+          // even though it may display as multiple characters.
+          isAtomicNode: true,
+          pmStart: childPos,
+          pmEnd: childPos + child.nodeSize,
+        };
+        runs.push(run);
+      }
     } else if (child.type.name === 'shape') {
       // Shape node — render as an inline SVG image
       const attrs = child.attrs;

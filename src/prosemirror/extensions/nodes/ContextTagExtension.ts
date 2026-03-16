@@ -51,6 +51,8 @@ export const ContextTagExtension = createNodeExtension({
       label: { default: '' },
       /** If true, the entire parent paragraph is removed when this tag has no value */
       removeIfEmpty: { default: false },
+      /** If true, the entire table row containing this tag is removed when it has no value */
+      removeTableRow: { default: false },
       /** Unique identifier for this tag instance — links to Custom XML Part metadata */
       metaId: { default: '' },
     },
@@ -63,16 +65,18 @@ export const ContextTagExtension = createNodeExtension({
             tagKey: el.dataset.tagKey || '',
             label: el.textContent || '',
             removeIfEmpty: el.dataset.removeIfEmpty === 'true',
+            removeTableRow: el.dataset.removeTableRow === 'true',
             metaId: el.dataset.metaId || generateMetaId(),
           };
         },
       },
     ],
     toDOM(node) {
-      const { tagKey, label, removeIfEmpty, metaId } = node.attrs as {
+      const { tagKey, label, removeIfEmpty, removeTableRow, metaId } = node.attrs as {
         tagKey: string;
         label: string;
         removeIfEmpty: boolean;
+        removeTableRow: boolean;
         metaId: string;
       };
       const displayText = String(label || `{${tagKey}}`);
@@ -88,6 +92,9 @@ export const ContextTagExtension = createNodeExtension({
       };
       if (removeIfEmpty) {
         attrs['data-remove-if-empty'] = 'true';
+      }
+      if (removeTableRow) {
+        attrs['data-remove-table-row'] = 'true';
       }
       if (metaId) {
         attrs['data-meta-id'] = metaId;

@@ -200,6 +200,7 @@ export function collectContextTagMetadata(doc: {
         result[metaId] = {
           tagKey,
           removeIfEmpty: !!node.attrs.removeIfEmpty,
+          removeTableRow: !!node.attrs.removeTableRow,
         };
       }
     }

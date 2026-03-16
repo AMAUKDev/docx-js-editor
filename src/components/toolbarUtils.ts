@@ -63,6 +63,8 @@ export function getSelectionFormatting(
     result.strike = formatting.strike;
     result.superscript = formatting.vertAlign === 'superscript';
     result.subscript = formatting.vertAlign === 'subscript';
+    result.allCaps = formatting.allCaps;
+    result.smallCaps = formatting.smallCaps;
     result.fontFamily = formatting.fontFamily?.ascii || formatting.fontFamily?.hAnsi;
     result.fontSize = formatting.fontSize;
     result.color = formatting.color?.rgb ? `#${formatting.color.rgb}` : undefined;
@@ -163,6 +165,14 @@ export function applyFormattingAction(
       newFormatting.vertAlign =
         currentFormatting.vertAlign === 'subscript' ? 'baseline' : 'subscript';
       break;
+    case 'allCaps':
+      newFormatting.allCaps = !currentFormatting.allCaps;
+      if (newFormatting.allCaps) newFormatting.smallCaps = false;
+      break;
+    case 'smallCaps':
+      newFormatting.smallCaps = !currentFormatting.smallCaps;
+      if (newFormatting.smallCaps) newFormatting.allCaps = false;
+      break;
     case 'clearFormatting':
       return {};
   }
@@ -181,6 +191,8 @@ export function hasActiveFormatting(formatting?: SelectionFormatting): boolean {
     formatting.underline ||
     formatting.strike ||
     formatting.superscript ||
-    formatting.subscript
+    formatting.subscript ||
+    formatting.allCaps ||
+    formatting.smallCaps
   );
 }

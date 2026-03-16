@@ -145,7 +145,12 @@ export function toProseDoc(document: Document, options?: ToProseDocOptions): PMN
  * After reconciliation, each tag gets the stored metaId back so it persists
  * across subsequent saves.
  */
-type ContextTagMetaEntry = { tagKey?: string; removeIfEmpty?: boolean; [key: string]: unknown };
+type ContextTagMetaEntry = {
+  tagKey?: string;
+  removeIfEmpty?: boolean;
+  removeTableRow?: boolean;
+  [key: string]: unknown;
+};
 
 function applyContextTagMetadata(
   doc: PMNode,
@@ -179,6 +184,9 @@ function applyContextTagMetadata(
           const newAttrs: Record<string, unknown> = { ...node.attrs, metaId };
           if (meta.removeIfEmpty !== undefined) {
             newAttrs.removeIfEmpty = meta.removeIfEmpty;
+          }
+          if (meta.removeTableRow !== undefined) {
+            newAttrs.removeTableRow = meta.removeTableRow;
           }
           return node.type.create(newAttrs, node.content, node.marks);
         }

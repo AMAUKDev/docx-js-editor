@@ -168,6 +168,51 @@ const splitBlockClearBorders: Command = (state, dispatch, view) => {
         tr.setNodeMarkup($from.before(), undefined, newAttrs);
       }
 
+      // When Enter is pressed at the START of a paragraph, splitBlock creates
+      // an empty paragraph ABOVE the cursor. That empty paragraph is the "new"
+      // node and may have lost the source paragraph's styleId. Fix it, and
+      // ensure defaultTextFormatting is set so typing in it later inherits
+      // the correct font/size/bold/etc from the style.
+      const cursorParaStart = $from.before();
+      if (cursorParaStart > 0 && sourcePara) {
+        const prevPos = tr.doc.resolve(cursorParaStart - 1);
+        const prevPara = prevPos.parent.type.name === 'paragraph' ? prevPos.parent : null;
+        // Check if the previous paragraph is empty (split at pos 0) and missing style
+        if (prevPara && prevPara.content.size === 0) {
+          const prevParaPos = prevPos.before();
+          const prevAttrs = { ...prevPara.attrs };
+          let prevChanged = false;
+          for (const key of INHERITED_PARA_ATTRS) {
+            const srcVal = sourcePara.attrs[key];
+            if (srcVal != null && prevAttrs[key] == null) {
+              prevAttrs[key] = srcVal;
+              prevChanged = true;
+            }
+          }
+          // Ensure defaultTextFormatting is carried over so that when the
+          // user navigates to this empty paragraph and types, ProseMirror's
+          // mark resolution picks up the style's font/size/bold/etc.
+          if (sourcePara.attrs.defaultTextFormatting && !prevAttrs.defaultTextFormatting) {
+            prevAttrs.defaultTextFormatting = sourcePara.attrs.defaultTextFormatting;
+            prevChanged = true;
+          }
+          // Clear identity attrs on the empty paragraph too
+          for (const key of ['paraId', 'textId', 'bookmarks', '_originalFormatting'] as const) {
+            if (prevAttrs[key] != null) {
+              prevAttrs[key] = null;
+              prevChanged = true;
+            }
+          }
+          if (prevAttrs.borders) {
+            prevAttrs.borders = null;
+            prevChanged = true;
+          }
+          if (prevChanged) {
+            tr.setNodeMarkup(prevParaPos, undefined, prevAttrs);
+          }
+        }
+      }
+
       // For empty paragraphs (Enter at end of line), set stored marks so typed text
       // inherits formatting from the source paragraph (font, size, color, bold, etc.).
       if (newPara.textContent.length === 0) {

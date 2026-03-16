@@ -165,6 +165,7 @@ export interface PagedEditorProps {
     tagKey: string;
     label: string;
     removeIfEmpty: boolean;
+    removeTableRow: boolean;
     pmPos: number;
     clientX: number;
     clientY: number;
@@ -914,11 +915,19 @@ function convertDocumentRunsToFlowRuns(content: unknown[]): Run[] {
         const rc = runContent as Record<string, unknown>;
 
         if (rc.type === 'text' && typeof rc.text === 'string') {
-          runs.push({
-            kind: 'text',
-            text: rc.text,
-            ...runFormatting,
-          });
+          // Split multi-line text (e.g. resolved context tag values containing \n)
+          // into separate TextRuns with LineBreakRuns so layout measures each line.
+          const lines = rc.text.split('\n');
+          for (let li = 0; li < lines.length; li++) {
+            if (li > 0) {
+              runs.push({ kind: 'lineBreak' });
+            }
+            runs.push({
+              kind: 'text',
+              text: lines[li],
+              ...runFormatting,
+            });
+          }
         } else if (rc.type === 'tab') {
           runs.push({
             kind: 'tab',
@@ -2532,6 +2541,7 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
               tagKey: node.attrs.tagKey as string,
               label: node.attrs.label as string,
               removeIfEmpty: !!node.attrs.removeIfEmpty,
+              removeTableRow: !!node.attrs.removeTableRow,
               pmPos: nodeStart,
               clientX: e.clientX,
               clientY: e.clientY,

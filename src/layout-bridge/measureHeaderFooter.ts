@@ -101,18 +101,26 @@ function mapAlignment(
  * Convert a Run's content to flow block runs.
  */
 function processRun(run: Run, output: ParagraphBlock['runs']): void {
+  const baseFmt = {
+    fontFamily: run.formatting?.fontFamily?.ascii ?? run.formatting?.fontFamily?.hAnsi ?? 'Arial',
+    fontSize: run.formatting?.fontSize ? run.formatting.fontSize / 2 : 12,
+    bold: run.formatting?.bold,
+    italic: run.formatting?.italic,
+    underline: run.formatting?.underline ? true : undefined,
+  };
+
   for (const content of run.content) {
     if (content.type === 'text') {
-      output.push({
-        kind: 'text',
-        text: content.text,
-        fontFamily:
-          run.formatting?.fontFamily?.ascii ?? run.formatting?.fontFamily?.hAnsi ?? 'Arial',
-        fontSize: run.formatting?.fontSize ? run.formatting.fontSize / 2 : 12,
-        bold: run.formatting?.bold,
-        italic: run.formatting?.italic,
-        underline: run.formatting?.underline ? true : undefined,
-      });
+      // Split multi-line text (e.g. from resolved context tags) into separate
+      // TextRuns with LineBreakRuns between them so the layout engine measures
+      // each line's height correctly and avoids overlap.
+      const lines = content.text.split('\n');
+      for (let i = 0; i < lines.length; i++) {
+        if (i > 0) {
+          output.push({ kind: 'lineBreak' });
+        }
+        output.push({ kind: 'text', text: lines[i], ...baseFmt });
+      }
     } else if (content.type === 'tab') {
       output.push({ kind: 'tab' });
     } else if (content.type === 'break' && content.breakType === 'textWrapping') {

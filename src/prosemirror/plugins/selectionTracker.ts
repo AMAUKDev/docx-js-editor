@@ -11,6 +11,7 @@
 import { Plugin, PluginKey, type EditorState } from 'prosemirror-state';
 import type { EditorView } from 'prosemirror-view';
 import type { TextFormatting, ParagraphFormatting } from '../../types/document';
+import { textFormattingToMarks } from '../extensions/marks/markUtils';
 
 /**
  * Selection context for toolbar state
@@ -192,6 +193,29 @@ function extractTextFormatting(state: EditorState): TextFormatting {
 export function createSelectionTrackerPlugin(onSelectionChange?: SelectionChangeCallback): Plugin {
   return new Plugin({
     key: selectionTrackerKey,
+
+    // When the cursor enters an empty paragraph that has defaultTextFormatting
+    // but no stored marks, set stored marks from the style so typed text
+    // inherits the correct font/size/bold/etc.
+    appendTransaction(transactions, _oldState, newState) {
+      // Only act on selection changes (cursor movement, not doc edits)
+      if (!transactions.some((tr) => tr.selectionSet) || newState.storedMarks) return null;
+
+      const { $from, empty } = newState.selection;
+      if (!empty) return null;
+
+      const para = $from.parent;
+      if (para.type.name !== 'paragraph' || para.content.size > 0) return null;
+
+      // Empty paragraph — check if it has defaultTextFormatting
+      const dtf = para.attrs.defaultTextFormatting as TextFormatting | undefined;
+      if (!dtf) return null;
+
+      const marks = textFormattingToMarks(dtf, newState.schema);
+      if (marks.length === 0) return null;
+
+      return newState.tr.setStoredMarks(marks);
+    },
 
     state: {
       init(_, state) {

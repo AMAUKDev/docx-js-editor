@@ -54,6 +54,8 @@ export const toggleUnderline: Command = cmds.toggleUnderline();
 export const toggleStrike: Command = cmds.toggleStrike();
 export const toggleSuperscript: Command = cmds.toggleSuperscript();
 export const toggleSubscript: Command = cmds.toggleSubscript();
+export const toggleAllCaps: Command = cmds.toggleAllCaps();
+export const toggleSmallCaps: Command = cmds.toggleSmallCaps();
 
 // Set marks (with attributes)
 export function setTextColor(attrs: TextColorAttrs): Command {

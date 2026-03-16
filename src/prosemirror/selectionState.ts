@@ -125,6 +125,12 @@ export function extractSelectionState(state: EditorState): SelectionState | null
       case 'subscript':
         textFormatting.vertAlign = 'subscript';
         break;
+      case 'allCaps':
+        textFormatting.allCaps = true;
+        break;
+      case 'smallCaps':
+        textFormatting.smallCaps = true;
+        break;
     }
   }
 

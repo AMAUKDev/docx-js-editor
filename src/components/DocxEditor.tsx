@@ -111,6 +111,8 @@ import {
   toggleStrike,
   toggleSuperscript,
   toggleSubscript,
+  toggleAllCaps,
+  toggleSmallCaps,
   setTextColor,
   setHighlight,
   setFontSize,
@@ -260,6 +262,12 @@ export interface DocxEditorProps {
   showOutline?: boolean;
   /** Whether to show print button in toolbar (default: true) */
   showPrintButton?: boolean;
+  /** Whether to show line spacing picker in toolbar (default: true) */
+  showLineSpacingPicker?: boolean;
+  /** Whether to show clear formatting button in toolbar (default: true) */
+  showClearFormatting?: boolean;
+  /** Whether to show insert TOC button in toolbar (default: true) */
+  showInsertTOC?: boolean;
   /** Print options for print preview */
   printOptions?: PrintOptions;
   /** Callback when print is triggered */
@@ -297,6 +305,7 @@ export interface DocxEditorProps {
     tagKey: string;
     label: string;
     removeIfEmpty: boolean;
+    removeTableRow: boolean;
     pmPos: number;
     clientX: number;
     clientY: number;
@@ -536,6 +545,9 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     loadingIndicator,
     showOutline: showOutlineProp = false,
     showPrintButton = true,
+    showLineSpacingPicker: showLineSpacingPickerProp = true,
+    showClearFormatting: showClearFormattingProp = true,
+    showInsertTOC: showInsertTOCProp = true,
     printOptions: _printOptions,
     onPrint,
     onCopy: _onCopy,
@@ -907,6 +919,8 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
         strike: textFormatting.strike,
         superscript: textFormatting.vertAlign === 'superscript',
         subscript: textFormatting.vertAlign === 'subscript',
+        allCaps: textFormatting.allCaps,
+        smallCaps: textFormatting.smallCaps,
         fontFamily,
         fontSize: textFormatting.fontSize,
         color: textColor,
@@ -1747,6 +1761,14 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
       }
       if (action === 'subscript') {
         toggleSubscript(view.state, view.dispatch);
+        return;
+      }
+      if (action === 'allCaps') {
+        toggleAllCaps(view.state, view.dispatch);
+        return;
+      }
+      if (action === 'smallCaps') {
+        toggleSmallCaps(view.state, view.dispatch);
         return;
       }
       if (action === 'bulletList') {
@@ -3076,6 +3098,8 @@ body { background: white; }
                       documentStyles={history.state?.package.styles?.styles}
                       theme={history.state?.package.theme || theme}
                       showPrintButton={showPrintButton}
+                      showLineSpacingPicker={showLineSpacingPickerProp}
+                      showClearFormatting={showClearFormattingProp}
                       onPrint={handleDirectPrint}
                       showZoomControl={showZoomControl}
                       zoom={state.zoom}
@@ -3085,7 +3109,7 @@ body { background: white; }
                       showTableInsert={true}
                       onInsertImage={handleInsertImageClick}
                       onInsertPageBreak={handleInsertPageBreak}
-                      onInsertTOC={handleInsertTOC}
+                      onInsertTOC={showInsertTOCProp ? handleInsertTOC : undefined}
                       imageContext={state.pmImageContext}
                       onImageWrapType={handleImageWrapType}
                       onImageTransform={handleImageTransform}

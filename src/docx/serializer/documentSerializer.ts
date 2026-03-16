@@ -696,6 +696,7 @@ export function serializeDocument(doc: Document): string {
   // Document body
   parts.push('<w:body>');
   let bodyXml = serializeDocumentBody(doc.package.document);
+  bodyXml = wrapTocWithFieldCodes(bodyXml);
   bodyXml = ensureFieldBalance(bodyXml);
   bodyXml = ensureBookmarkBalance(bodyXml);
   bodyXml = deduplicateParaIds(bodyXml);
@@ -706,6 +707,153 @@ export function serializeDocument(doc: Document): string {
   parts.push('</w:document>');
 
   return parts.join('');
+}
+
+/**
+ * Wrap consecutive TOC-styled paragraphs with TOC field codes so Word
+ * recognizes the section as an updatable Table of Contents.
+ *
+ * Matches the structure Word produces natively:
+ *   <w:p pStyle="TOC1">                    ← first TOC entry
+ *     <w:pPr>...</w:pPr>
+ *     <w:r> fldChar begin </w:r>           ← TOC field begin
+ *     <w:r> instrText TOC \o "1-N" ... </w:r>
+ *     <w:r> fldChar separate </w:r>
+ *     <w:hyperlink anchor="_TocNNN">       ← entry content with PAGEREF on page num
+ *       ...text...
+ *       <w:r> fldChar begin </w:r>         ← PAGEREF field
+ *       <w:r> instrText PAGEREF _TocNNN \h </w:r>
+ *       <w:r> fldChar separate </w:r>
+ *       <w:r> <w:t>3</w:t> </w:r>
+ *       <w:r> fldChar end </w:r>
+ *     </w:hyperlink>
+ *   </w:p>
+ *   ... more TOC entries with PAGEREF fields ...
+ *   <w:p pStyle="TOC1">                    ← last TOC entry
+ *     ...content...
+ *     <w:r> fldChar end </w:r>             ← TOC field end
+ *   </w:p>
+ */
+function wrapTocWithFieldCodes(bodyXml: string): string {
+  // Find ALL TOC1-9 paragraphs anywhere in the document
+  const tocParagraphPattern = /<w:p\b[^>]*>([\s\S]*?)<\/w:p>/g;
+  const allTocEntries: { xml: string; start: number; end: number; anchor: string | null }[] = [];
+  let m;
+
+  while ((m = tocParagraphPattern.exec(bodyXml)) !== null) {
+    // Check if this paragraph has a TOC1-9 style
+    if (!/w:val="TOC\d"/.test(m[0])) continue;
+    // Skip if it already has fldChar (already wrapped — e.g. from original DOCX)
+    if (/fldCharType/.test(m[0])) continue;
+
+    // Extract the _Toc anchor from hyperlinks in this paragraph
+    const anchorMatch = m[0].match(/w:anchor="(_Toc\d+)"/);
+
+    allTocEntries.push({
+      xml: m[0],
+      start: m.index,
+      end: m.index + m[0].length,
+      anchor: anchorMatch ? anchorMatch[1] : null,
+    });
+  }
+
+  if (allTocEntries.length === 0) return bodyXml;
+
+  // Find consecutive runs of TOC paragraphs (there should be one block)
+  // For now, take the first consecutive run
+  const tocBlock: typeof allTocEntries = [allTocEntries[0]];
+  for (let i = 1; i < allTocEntries.length; i++) {
+    const gap = bodyXml.slice(tocBlock[tocBlock.length - 1].end, allTocEntries[i].start).trim();
+    if (gap.length === 0) {
+      tocBlock.push(allTocEntries[i]);
+    } else {
+      break;
+    }
+  }
+
+  // Detect max TOC level from entries
+  const allXml = tocBlock.map((e) => e.xml).join('');
+  const levelMatches = allXml.match(/w:val="TOC(\d)"/g) || [];
+  const maxLevel =
+    levelMatches.length > 0
+      ? Math.max(...levelMatches.map((m2) => parseInt(m2.match(/\d/)![0])))
+      : 3; // fallback only if no TOC levels detected
+
+  // TOC field begin runs (injected into first entry after </w:pPr>)
+  const fieldBeginRuns =
+    `<w:r><w:rPr><w:noProof/></w:rPr>` +
+    `<w:fldChar w:fldCharType="begin"/></w:r>` +
+    `<w:r><w:rPr><w:noProof/></w:rPr>` +
+    `<w:instrText xml:space="preserve"> TOC \\o "1-${maxLevel}" \\h \\z \\u </w:instrText></w:r>` +
+    `<w:r><w:rPr><w:noProof/></w:rPr>` +
+    `<w:fldChar w:fldCharType="separate"/></w:r>`;
+
+  // TOC field end run (appended to last entry before </w:p>)
+  const fieldEndRun = `<w:r><w:rPr><w:noProof/></w:rPr>` + `<w:fldChar w:fldCharType="end"/></w:r>`;
+
+  // Process entries in reverse order so string positions remain valid
+  let result = bodyXml;
+
+  for (let i = tocBlock.length - 1; i >= 0; i--) {
+    const entry = tocBlock[i];
+    let entryXml = entry.xml;
+
+    // For each hyperlink with a _Toc anchor, wrap the last <w:t>NUMBER</w:t> in PAGEREF
+    if (entry.anchor) {
+      // The entry may have multiple hyperlinks (number, title, page number as separate hyperlinks)
+      // or one hyperlink wrapping everything. Find the LAST hyperlink with this anchor —
+      // its text content is the page number.
+      const anchor = entry.anchor;
+      const hyperlinkPattern = new RegExp(
+        `<w:hyperlink\\s+w:anchor="${anchor}"[^>]*>[\\s\\S]*?</w:hyperlink>`,
+        'g'
+      );
+      const hyperlinks: { match: string; index: number }[] = [];
+      let hm;
+      while ((hm = hyperlinkPattern.exec(entryXml)) !== null) {
+        hyperlinks.push({ match: hm[0], index: hm.index });
+      }
+
+      if (hyperlinks.length > 0) {
+        // The last hyperlink contains the page number
+        const lastHL = hyperlinks[hyperlinks.length - 1];
+        const pageRefWrapped =
+          `<w:hyperlink w:anchor="${anchor}" w:history="1">` +
+          `<w:r><w:rPr><w:webHidden/></w:rPr><w:fldChar w:fldCharType="begin"/></w:r>` +
+          `<w:r><w:rPr><w:webHidden/></w:rPr>` +
+          `<w:instrText xml:space="preserve"> PAGEREF ${anchor} \\h </w:instrText></w:r>` +
+          `<w:r><w:rPr><w:webHidden/></w:rPr><w:fldChar w:fldCharType="separate"/></w:r>` +
+          // Extract just the text runs from the original hyperlink
+          lastHL.match.replace(/<w:hyperlink[^>]*>/, '').replace(/<\/w:hyperlink>/, '') +
+          `<w:r><w:rPr><w:webHidden/></w:rPr><w:fldChar w:fldCharType="end"/></w:r>` +
+          `</w:hyperlink>`;
+        entryXml =
+          entryXml.slice(0, lastHL.index) +
+          pageRefWrapped +
+          entryXml.slice(lastHL.index + lastHL.match.length);
+      }
+    }
+
+    // Inject TOC field begin after </w:pPr> in the first entry
+    if (i === 0) {
+      const pprEnd = entryXml.indexOf('</w:pPr>');
+      if (pprEnd >= 0) {
+        const insertPos = pprEnd + '</w:pPr>'.length;
+        entryXml = entryXml.slice(0, insertPos) + fieldBeginRuns + entryXml.slice(insertPos);
+      }
+    }
+
+    // Inject TOC field end before </w:p> in the last entry
+    if (i === tocBlock.length - 1) {
+      const closeP = entryXml.lastIndexOf('</w:p>');
+      entryXml = entryXml.slice(0, closeP) + fieldEndRun + entryXml.slice(closeP);
+    }
+
+    // Replace in the result string
+    result = result.slice(0, entry.start) + entryXml + result.slice(entry.end);
+  }
+
+  return result;
 }
 
 /**

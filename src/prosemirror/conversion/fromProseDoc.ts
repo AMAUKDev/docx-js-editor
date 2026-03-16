@@ -280,7 +280,14 @@ function paragraphAttrsToFormatting(attrs: ParagraphAttrs): ParagraphFormatting 
     if (attrs.numPr !== orig.numPr) {
       // Use JSON comparison since these are objects
       if (JSON.stringify(attrs.numPr) !== JSON.stringify(orig.numPr)) {
-        result.numPr = attrs.numPr || undefined;
+        // When user explicitly removed numbering (attrs.numPr is null/undefined)
+        // but the original had numbering, emit numId=0 to override style-inherited numbering.
+        // Without this, omitting numPr lets the paragraph style's numbering bleed through.
+        if (!attrs.numPr && orig.numPr) {
+          result.numPr = { numId: 0, ilvl: 0 };
+        } else {
+          result.numPr = attrs.numPr || undefined;
+        }
       }
     }
     if (attrs.styleId !== (orig.styleId || undefined)) {

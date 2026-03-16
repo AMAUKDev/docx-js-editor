@@ -12,6 +12,8 @@ export {
   toggleStrike,
   toggleSuperscript,
   toggleSubscript,
+  toggleAllCaps,
+  toggleSmallCaps,
   setTextColor,
   clearTextColor,
   setHighlight,

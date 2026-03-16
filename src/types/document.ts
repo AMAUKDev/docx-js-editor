@@ -231,6 +231,7 @@ export interface ContextTagMeta {
   /** The context variable key (e.g., "context.case_no") — used for reconciliation on load */
   tagKey?: string;
   removeIfEmpty?: boolean;
+  removeTableRow?: boolean;
   [key: string]: unknown;
 }
 
