@@ -2324,12 +2324,24 @@ body { background: white; }
         const schema = view.state.schema;
         const nodeType = schema.nodes.contextTag;
         if (!nodeType) return;
-        const node = nodeType.create({
-          tagKey,
-          label: label || contextTags?.[tagKey] || '',
-          removeIfEmpty: removeIfEmpty ?? false,
-          metaId: generateMetaId(),
-        });
+        // Inherit formatting marks from the cursor position so the tag
+        // matches the surrounding text style (font, size, bold, etc.)
+        const { $from, empty } = view.state.selection;
+        const cursorMarks = view.state.storedMarks || (empty ? $from.marks() : []);
+        // Filter to only marks the contextTag node accepts
+        const allowedMarks = cursorMarks.filter((m: import('prosemirror-model').Mark) =>
+          nodeType.allowsMarkType(m.type)
+        );
+        const node = nodeType.create(
+          {
+            tagKey,
+            label: label || contextTags?.[tagKey] || '',
+            removeIfEmpty: removeIfEmpty ?? false,
+            metaId: generateMetaId(),
+          },
+          null,
+          allowedMarks
+        );
         const tr = view.state.tr.replaceSelectionWith(node).scrollIntoView();
         tr.setMeta('allowLockedEdit', true);
         view.dispatch(tr);
