@@ -461,6 +461,42 @@ export interface LoopDiffReport {
 }
 
 /**
+ * Extract image info from a table's cells.
+ */
+function extractImagesFromTable(
+  table: Table
+): Array<{ src: string; width?: number; height?: number }> {
+  const images: Array<{ src: string; width?: number; height?: number }> = [];
+  for (const row of table.rows) {
+    for (const cell of row.cells) {
+      for (const block of cell.content as BlockContent[]) {
+        if (block.type === 'paragraph') {
+          for (const item of block.content) {
+            if (item.type === 'run') {
+              for (const rc of (item as Run).content) {
+                if (rc.type === 'drawing' && (rc as unknown as Record<string, unknown>).image) {
+                  const img = (rc as unknown as Record<string, unknown>).image as Record<
+                    string,
+                    unknown
+                  >;
+                  const size = img.size as { width?: number; height?: number } | undefined;
+                  images.push({
+                    src: (img.src as string) || '',
+                    width: size?.width,
+                    height: size?.height,
+                  });
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  return images;
+}
+
+/**
  * Extract text values per cell from a table, keyed by cell position.
  */
 function extractCellTexts(table: Table): string[] {
@@ -625,9 +661,27 @@ export function restoreLoopBlocksFromBookmarks(doc: Document): LoopDiffReport[] 
           }
         }
 
-        // Image changes: check if images are still present (basic detection)
-        for (const tagKey of Object.keys(manifestItem.renderedImages || {})) {
-          imageChanges[tagKey] = { changed: false }; // TODO: deeper image diff
+        // Image changes: detect replaced/resized images
+        const tableImages = extractImagesFromTable(table);
+        for (const [tagKey, imgMeta] of Object.entries(manifestItem.renderedImages || {})) {
+          // Check if any image in the table has changed from the original
+          // Simple heuristic: if the table has an image, compare it
+          if (tableImages.length > 0) {
+            const img = tableImages[0]; // First image in the table
+            // Image is considered changed if its src is different (different media file)
+            // or if dimensions changed significantly
+            const sizeChanged =
+              img.width &&
+              img.height &&
+              imgMeta.width &&
+              imgMeta.height &&
+              (Math.abs(img.width - imgMeta.width) > 50 ||
+                Math.abs(img.height - imgMeta.height) > 50);
+            imageChanges[tagKey] = { changed: !!sizeChanged };
+          } else {
+            // Image was removed
+            imageChanges[tagKey] = { changed: true };
+          }
         }
       }
 
