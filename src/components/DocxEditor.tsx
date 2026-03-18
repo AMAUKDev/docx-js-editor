@@ -298,6 +298,8 @@ export interface DocxEditorProps {
   contextTags?: Record<string, string>;
   /** Called when document is loaded/parsed with the set of tagKeys found in the doc */
   onContextTagsDiscovered?: (tagKeys: string[]) => void;
+  /** Called when re-uploaded document has loop diffs (expanded loops with edits) */
+  onLoopDiffsDetected?: (diffs: import('../docx/renderWithBookmarks').LoopDiffReport[]) => void;
   /** When true, the SelectiveEditablePlugin blocks edits to locked paragraphs */
   lockedEditing?: boolean;
   /** Called when user right-clicks a context tag in the editor */
@@ -562,6 +564,7 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     allowedStyleIds: allowedStyleIdsProp,
     contextTags,
     onContextTagsDiscovered,
+    onLoopDiffsDetected,
     lockedEditing = false,
     onContextTagRightClick,
     loopPreviewData,
@@ -770,6 +773,12 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     const parseDocument = async () => {
       try {
         const doc = await parseDocx(documentBuffer);
+
+        // Report loop diffs if present (from re-uploaded expanded loops)
+        if (doc.loopDiffReports && doc.loopDiffReports.length > 0) {
+          onLoopDiffsDetected?.(doc.loopDiffReports);
+        }
+
         // Reset history with parsed document (clears undo/redo stacks)
         history.reset(doc);
         setState((prev) => ({

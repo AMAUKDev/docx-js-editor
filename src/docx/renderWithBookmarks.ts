@@ -15,8 +15,10 @@ import type {
   Table,
   TableRow,
   TableCell,
+  Paragraph,
 } from '../types/content';
 import type { Document, ContextTagMeta } from '../types/document';
+import type { FPLoopItemMeta } from './contextTagMetadata';
 
 /** Prefix for context-tag bookmarks */
 export const FP_BOOKMARK_PREFIX = '_FP_ctx_';
@@ -432,4 +434,272 @@ export function restoreContextTagsFromBookmarks(doc: Document): void {
   processHfMap(
     doc.package.footers as unknown as Map<string, { content: BlockContent[] }> | undefined
   );
+}
+
+// ============================================================================
+// LOOP ROUND-TRIP: Detect expanded loop bookmarks and collapse back to template
+// ============================================================================
+
+/** Prefix for loop bookmarks */
+export const FP_LOOP_BOOKMARK_PREFIX = '_FP_loop_';
+
+/** Diff report for a single loop item */
+export interface LoopItemDiff {
+  index: number;
+  tagChanges: Record<string, { old: string; current: string }>;
+  imageChanges: Record<string, { changed: boolean }>;
+}
+
+/** Diff report for an entire loop */
+export interface LoopDiffReport {
+  collection: string;
+  loopExpr: string;
+  expectedCount: number;
+  foundCount: number;
+  structural: boolean; // true if rows added/deleted
+  items: LoopItemDiff[];
+}
+
+/**
+ * Extract text values per cell from a table, keyed by cell position.
+ */
+function extractCellTexts(table: Table): string[] {
+  const cellTexts: string[] = [];
+  for (const row of table.rows) {
+    for (const cell of row.cells) {
+      const texts: string[] = [];
+      for (const block of cell.content as BlockContent[]) {
+        if (block.type === 'paragraph') {
+          for (const item of block.content) {
+            if (item.type === 'run') {
+              for (const rc of item.content) {
+                if (rc.type === 'text' && rc.text) {
+                  texts.push(rc.text);
+                }
+              }
+            }
+          }
+        }
+      }
+      cellTexts.push(texts.join('').trim());
+    }
+  }
+  return cellTexts;
+}
+
+/**
+ * Check if a table contains a _FP_loop_ bookmark.
+ * Returns the bookmark name (e.g. "_FP_loop_photos_0") or null.
+ */
+function findLoopBookmarkInTable(table: Table): string | null {
+  for (const row of table.rows) {
+    for (const cell of row.cells) {
+      for (const block of cell.content as BlockContent[]) {
+        if (block.type === 'paragraph') {
+          for (const item of block.content) {
+            if (
+              item.type === 'bookmarkStart' &&
+              (item as BookmarkStart).name?.startsWith(FP_LOOP_BOOKMARK_PREFIX)
+            ) {
+              return (item as BookmarkStart).name;
+            }
+          }
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Parse a loop bookmark name into collection key and index.
+ * "_FP_loop_photos_2" → { collection: "photos", index: 2 }
+ */
+function parseLoopBookmarkName(name: string): { collection: string; index: number } | null {
+  const suffix = name.slice(FP_LOOP_BOOKMARK_PREFIX.length);
+  const lastUnderscore = suffix.lastIndexOf('_');
+  if (lastUnderscore === -1) return null;
+  const collection = suffix.slice(0, lastUnderscore);
+  const index = parseInt(suffix.slice(lastUnderscore + 1), 10);
+  if (isNaN(index)) return null;
+  return { collection, index };
+}
+
+/**
+ * Build a Paragraph block containing a loop marker text.
+ */
+function makeLoopMarkerParagraph(text: string): Paragraph {
+  return {
+    type: 'paragraph',
+    content: [
+      {
+        type: 'run',
+        content: [{ type: 'text', text }],
+      } as Run,
+    ],
+  };
+}
+
+/**
+ * Detect expanded loop bookmarks, diff against manifest, and collapse.
+ *
+ * Call this AFTER restoreContextTagsFromBookmarks() but BEFORE toProseDoc().
+ *
+ * Modifies doc.package.document.content in-place:
+ * - Replaces groups of bookmarked tables with {% for %} + template + {% endfor %}
+ * - Stores diff reports on doc.loopDiffReports for the host page
+ */
+export function restoreLoopBlocksFromBookmarks(doc: Document): LoopDiffReport[] {
+  const loopMeta = doc.loopMetadata;
+  if (!loopMeta || Object.keys(loopMeta).length === 0) return [];
+
+  const body = doc.package.document;
+  if (!body) return [];
+
+  const content = body.content;
+  const diffReports: LoopDiffReport[] = [];
+
+  // Pass 1: Find all tables with loop bookmarks and group by collection
+  const loopGroups = new Map<
+    string,
+    { tables: Table[]; indices: number[]; bodyPositions: number[] }
+  >();
+
+  for (let i = 0; i < content.length; i++) {
+    const block = content[i];
+    if (block.type !== 'table') continue;
+    const bmName = findLoopBookmarkInTable(block as Table);
+    if (!bmName) continue;
+    const parsed = parseLoopBookmarkName(bmName);
+    if (!parsed) continue;
+
+    if (!loopGroups.has(parsed.collection)) {
+      loopGroups.set(parsed.collection, { tables: [], indices: [], bodyPositions: [] });
+    }
+    const group = loopGroups.get(parsed.collection)!;
+    group.tables.push(block as Table);
+    group.indices.push(parsed.index);
+    group.bodyPositions.push(i);
+  }
+
+  // Pass 2: For each loop group, diff and collapse
+  // Process in reverse order so splice positions stay valid
+  const collectionKeys = [...loopGroups.keys()];
+  for (const collectionKey of collectionKeys) {
+    const meta = loopMeta[collectionKey];
+    if (!meta) continue;
+
+    const group = loopGroups.get(collectionKey)!;
+    const { tables, indices, bodyPositions } = group;
+
+    // Build diff report
+    const expectedCount = meta.items?.length ?? 0;
+    const foundCount = tables.length;
+    const structural = foundCount !== expectedCount;
+
+    const itemDiffs: LoopItemDiff[] = [];
+    for (let i = 0; i < tables.length; i++) {
+      const table = tables[i];
+      const itemIndex = indices[i];
+      const manifestItem: FPLoopItemMeta | undefined = meta.items?.[itemIndex];
+
+      const tagChanges: Record<string, { old: string; current: string }> = {};
+      const imageChanges: Record<string, { changed: boolean }> = {};
+
+      if (manifestItem) {
+        // Compare cell texts against rendered values
+        const cellTexts = extractCellTexts(table);
+        const allText = cellTexts.join(' ');
+
+        for (const [tagKey, renderedValue] of Object.entries(manifestItem.renderedTags || {})) {
+          // Check if the rendered value still appears in the table
+          if (!allText.includes(renderedValue) && renderedValue.trim() !== '') {
+            // Text changed — find what it changed to
+            // For simple cases (caption in its own cell), the cell text IS the new value
+            // Try to find the cell that had this value
+            const currentValue = cellTexts.find((t) => t !== '' && t !== renderedValue);
+            tagChanges[tagKey] = {
+              old: renderedValue,
+              current: currentValue ?? '',
+            };
+          }
+        }
+
+        // Image changes: check if images are still present (basic detection)
+        for (const tagKey of Object.keys(manifestItem.renderedImages || {})) {
+          imageChanges[tagKey] = { changed: false }; // TODO: deeper image diff
+        }
+      }
+
+      itemDiffs.push({ index: itemIndex, tagChanges, imageChanges });
+    }
+
+    diffReports.push({
+      collection: collectionKey,
+      loopExpr: meta.loopExpr,
+      expectedCount,
+      foundCount,
+      structural,
+      items: itemDiffs,
+    });
+
+    // Collapse: replace expanded tables with loop blocks + template
+    if (!structural && bodyPositions.length > 0) {
+      const firstPos = bodyPositions[0];
+      const lastPos = bodyPositions[bodyPositions.length - 1];
+
+      // Build replacement content:
+      // 1. {% for photo in photos %} paragraph
+      // 2. Template table (with {{ tags }} restored)
+      // 3. {% endfor %} paragraph
+      const forParagraph = makeLoopMarkerParagraph(`{% for ${meta.loopExpr} %}`);
+      const endforParagraph = makeLoopMarkerParagraph('{% endfor %}');
+
+      // For the template table, we use the FIRST expanded table but strip bookmarks
+      // and restore context tags within it (the context tag bookmarks should already
+      // have been restored by restoreContextTagsFromBookmarks).
+      // The template variables ({{ photo.caption }}) should already be there from
+      // the context tag restoration pass.
+      const templateTable = tables[0];
+      // Remove loop bookmarks from the template table
+      stripLoopBookmarks(templateTable);
+
+      // Replace the range of expanded tables with the loop block
+      const removeCount = lastPos - firstPos + 1;
+      content.splice(firstPos, removeCount, forParagraph, templateTable, endforParagraph);
+    }
+  }
+
+  return diffReports;
+}
+
+/**
+ * Remove _FP_loop_ bookmarkStart/End elements from a table's content.
+ */
+function stripLoopBookmarks(table: Table): void {
+  for (const row of table.rows) {
+    for (const cell of row.cells) {
+      for (const block of cell.content as BlockContent[]) {
+        if (block.type === 'paragraph') {
+          block.content = block.content.filter(
+            (item: ParagraphContent) =>
+              !(
+                item.type === 'bookmarkStart' &&
+                (item as BookmarkStart).name?.startsWith(FP_LOOP_BOOKMARK_PREFIX)
+              ) &&
+              !(
+                item.type === 'bookmarkEnd' &&
+                // Check if this end matches a loop bookmark start
+                block.content.some(
+                  (other: ParagraphContent) =>
+                    other.type === 'bookmarkStart' &&
+                    (other as BookmarkStart).id === (item as BookmarkEnd).id &&
+                    (other as BookmarkStart).name?.startsWith(FP_LOOP_BOOKMARK_PREFIX)
+                )
+              )
+          );
+        }
+      }
+    }
+  }
 }

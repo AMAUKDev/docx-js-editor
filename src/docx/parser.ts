@@ -42,7 +42,10 @@ import { parseComments } from './commentParser';
 import { loadFontsWithMapping } from '../utils/fontLoader';
 import { type DocxInput, toArrayBuffer } from '../utils/docxInput';
 import { parseManifest } from './contextTagMetadata';
-import { restoreContextTagsFromBookmarks } from './renderWithBookmarks';
+import {
+  restoreContextTagsFromBookmarks,
+  restoreLoopBlocksFromBookmarks,
+} from './renderWithBookmarks';
 
 // ============================================================================
 // PROGRESS CALLBACK
@@ -300,6 +303,14 @@ export async function parseDocx(input: DocxInput, options: ParseOptions = {}): P
     // Converts _FP_ctx_ bookmarked text back to {{ tagKey }} patterns so
     // toProseDoc's splitContextTags can create contextTag atoms.
     restoreContextTagsFromBookmarks(document);
+
+    // Restore loop blocks from FP bookmarks (expanded loop round-trip).
+    // Detects _FP_loop_ bookmarked tables, diffs against manifest, and
+    // collapses back to {% for %} / {% endfor %} loop block paragraphs.
+    const loopDiffReports = restoreLoopBlocksFromBookmarks(document);
+    if (loopDiffReports.length > 0) {
+      (document as unknown as Record<string, unknown>).loopDiffReports = loopDiffReports;
+    }
 
     const totalTime = performance.now() - parseStart;
     if (totalTime > 2000) {

@@ -227,6 +227,11 @@ export interface Document {
    * Keyed by collection name (e.g. "photos").
    */
   loopMetadata?: Record<string, import('../docx/contextTagMetadata').FPLoopMeta>;
+  /**
+   * Diff reports from loop restoration on re-upload.
+   * Present only when a re-uploaded document had expanded loop bookmarks.
+   */
+  loopDiffReports?: import('../docx/renderWithBookmarks').LoopDiffReport[];
 }
 
 /**
