@@ -1304,7 +1304,9 @@ function splitContextTags(text: string, marks: ReturnType<typeof schema.mark>[])
   for (const match of text.matchAll(CONTEXT_TAG_RE)) {
     const before = text.slice(lastIndex, match.index);
     if (before) nodes.push(schema.text(before, marks));
-    const tagKey = match[1] || match[3]; // group 1 = {{ }}, group 3 = { }
+    const rawTagKey = match[1] || match[3]; // group 1 = {{ }}, group 3 = { }
+    // Auto-strip legacy "context." prefix so tags resolve correctly
+    const tagKey = rawTagKey.startsWith('context.') ? rawTagKey.slice(8) : rawTagKey;
     const removeIfEmpty = !!(match[2] || match[4]); // trailing `!` flag
     nodes.push(
       ctType.create({ tagKey, label: '', removeIfEmpty, metaId: generateMetaId() }, null, marks)
