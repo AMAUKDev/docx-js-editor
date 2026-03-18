@@ -709,14 +709,17 @@ export function restoreLoopBlocksFromBookmarks(doc: Document): LoopDiffReport[] 
       const forParagraph = makeLoopMarkerParagraph(`{% for ${meta.loopExpr} %}`);
       const endforParagraph = makeLoopMarkerParagraph('{% endfor %}');
 
-      // For the template table, we use the FIRST expanded table but strip bookmarks
-      // and restore context tags within it (the context tag bookmarks should already
-      // have been restored by restoreContextTagsFromBookmarks).
-      // The template variables ({{ photo.caption }}) should already be there from
-      // the context tag restoration pass.
+      // For the template table, we use the FIRST expanded table, strip bookmarks,
+      // and replace rendered values with {{ tagKey }} Jinja2 patterns so the loop
+      // template is restored to its original form.
       const templateTable = tables[0];
-      // Remove loop bookmarks from the template table
       stripLoopBookmarks(templateTable);
+
+      // Replace rendered text values with {{ tagKey }} template patterns
+      const firstItem = meta.items?.[0];
+      if (firstItem?.renderedTags) {
+        restoreLoopTagPatterns(templateTable, firstItem.renderedTags, meta.itemVar);
+      }
 
       // Replace the range of expanded tables with the loop block
       const removeCount = lastPos - firstPos + 1;
@@ -725,6 +728,37 @@ export function restoreLoopBlocksFromBookmarks(doc: Document): LoopDiffReport[] 
   }
 
   return diffReports;
+}
+
+/**
+ * Replace rendered text values in a table with {{ tagKey }} template patterns.
+ * Used to restore the loop template from the first expanded table.
+ */
+function restoreLoopTagPatterns(
+  table: Table,
+  renderedTags: Record<string, string>,
+  _itemVar: string
+): void {
+  for (const row of table.rows) {
+    for (const cell of row.cells) {
+      for (const block of cell.content as BlockContent[]) {
+        if (block.type !== 'paragraph') continue;
+        for (const item of block.content) {
+          if (item.type !== 'run') continue;
+          const run = item as Run;
+          for (const rc of run.content) {
+            if (rc.type !== 'text' || !rc.text) continue;
+            // Check each rendered tag value — if the cell text matches, replace it
+            for (const [tagKey, renderedValue] of Object.entries(renderedTags)) {
+              if (renderedValue && rc.text.includes(renderedValue)) {
+                rc.text = rc.text.replace(renderedValue, `{{ ${tagKey} }}`);
+              }
+            }
+          }
+        }
+      }
+    }
+  }
 }
 
 /**
