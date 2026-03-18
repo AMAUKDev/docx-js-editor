@@ -316,9 +316,10 @@ export async function repackDocx(doc: Document, options: RepackOptions = {}): Pr
     }
 
     // Regex matching a <w:r> containing a context tag in its <w:t>
+    // Matches {{ tag.path }} (double brace, 0+ dots) and {tag.path} (single brace, 0+ dots)
     const runWithTagRe =
-      /(<w:r\b[^>]*>(?:<w:rPr>[\s\S]*?<\/w:rPr>)?<w:t[^>]*>)([^<]*?)(\{\{\s*(context\.[\w.]+)!?\s*\}\}|\{(context\.[\w.]+)!?\})([^<]*?<\/w:t><\/w:r>)/g;
-    const tagRe = /\{\{\s*(context\.[\w.]+)\s*\}\}|\{(context\.[\w.]+)\}/g;
+      /(<w:r\b[^>]*>(?:<w:rPr>[\s\S]*?<\/w:rPr>)?<w:t[^>]*>)([^<]*?)(\{\{\s*([\w]+(?:\.[\w]+)*)!?\s*\}\}|\{([\w]+(?:\.[\w]+)*)\})([^<]*?<\/w:t><\/w:r>)/g;
+    const tagRe = /\{\{\s*([\w]+(?:\.[\w]+)*)\s*\}\}|\{([\w]+(?:\.[\w]+)+)\}/g;
     let hfBookmarkId = 10000;
 
     for (const [path, file] of Object.entries(newZip.files)) {
@@ -331,7 +332,9 @@ export async function repackDocx(doc: Document, options: RepackOptions = {}): Pr
       xml = xml.replace(
         runWithTagRe,
         (fullMatch, beforeTag, preText, _tagMatch, g4, g5, afterTag) => {
-          const tagKey = g4 || g5;
+          const rawKey = g4 || g5;
+          // Strip legacy "context." prefix so lookup matches the new flat tag map
+          const tagKey = rawKey.startsWith('context.') ? rawKey.slice(8) : rawKey;
           const resolved = tags[tagKey];
           const metaId = tagKeyToMetaId.get(tagKey);
           if (resolved) {
@@ -355,7 +358,8 @@ export async function repackDocx(doc: Document, options: RepackOptions = {}): Pr
 
       // Second pass: catch remaining tags not in own run (fallback)
       xml = xml.replace(tagRe, (_match, g1, g2) => {
-        const tagKey = g1 || g2;
+        const rawKey = g1 || g2;
+        const tagKey = rawKey.startsWith('context.') ? rawKey.slice(8) : rawKey;
         const resolved = tags[tagKey];
         if (resolved) {
           changed = true;
@@ -536,9 +540,10 @@ export async function repackDocxFromRaw(
     }
 
     // Regex matching a <w:r> containing a context tag in its <w:t>
+    // Matches {{ tag.path }} (double brace, 0+ dots) and {tag.path} (single brace, 0+ dots)
     const runWithTagRe =
-      /(<w:r\b[^>]*>(?:<w:rPr>[\s\S]*?<\/w:rPr>)?<w:t[^>]*>)([^<]*?)(\{\{\s*(context\.[\w.]+)!?\s*\}\}|\{(context\.[\w.]+)!?\})([^<]*?<\/w:t><\/w:r>)/g;
-    const tagRe = /\{\{\s*(context\.[\w.]+)\s*\}\}|\{(context\.[\w.]+)\}/g;
+      /(<w:r\b[^>]*>(?:<w:rPr>[\s\S]*?<\/w:rPr>)?<w:t[^>]*>)([^<]*?)(\{\{\s*([\w]+(?:\.[\w]+)*)!?\s*\}\}|\{([\w]+(?:\.[\w]+)*)\})([^<]*?<\/w:t><\/w:r>)/g;
+    const tagRe = /\{\{\s*([\w]+(?:\.[\w]+)*)\s*\}\}|\{([\w]+(?:\.[\w]+)+)\}/g;
     let hfBookmarkId = 10000;
 
     for (const [path, file] of Object.entries(newZip.files)) {
@@ -551,7 +556,9 @@ export async function repackDocxFromRaw(
       xml = xml.replace(
         runWithTagRe,
         (fullMatch, beforeTag, preText, _tagMatch, g4, g5, afterTag) => {
-          const tagKey = g4 || g5;
+          const rawKey = g4 || g5;
+          // Strip legacy "context." prefix so lookup matches the new flat tag map
+          const tagKey = rawKey.startsWith('context.') ? rawKey.slice(8) : rawKey;
           const resolved = tags[tagKey];
           const metaId = tagKeyToMetaId.get(tagKey);
           if (resolved) {
@@ -575,7 +582,8 @@ export async function repackDocxFromRaw(
 
       // Second pass: catch remaining tags not in own run (fallback)
       xml = xml.replace(tagRe, (_match, g1, g2) => {
-        const tagKey = g1 || g2;
+        const rawKey = g1 || g2;
+        const tagKey = rawKey.startsWith('context.') ? rawKey.slice(8) : rawKey;
         const resolved = tags[tagKey];
         if (resolved) {
           changed = true;

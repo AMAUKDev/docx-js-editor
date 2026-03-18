@@ -418,4 +418,18 @@ export function restoreContextTagsFromBookmarks(doc: Document): void {
   }
 
   processBlocks(body.content);
+
+  // Also restore context tags in headers and footers
+  const processHfMap = (map: Map<string, { content: BlockContent[] }> | undefined) => {
+    if (!map) return;
+    for (const [, hf] of map) {
+      if (hf.content) processBlocks(hf.content as BlockContent[]);
+    }
+  };
+  processHfMap(
+    doc.package.headers as unknown as Map<string, { content: BlockContent[] }> | undefined
+  );
+  processHfMap(
+    doc.package.footers as unknown as Map<string, { content: BlockContent[] }> | undefined
+  );
 }

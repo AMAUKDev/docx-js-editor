@@ -3219,6 +3219,7 @@ body { background: white; }
                       firstPageHeaderContent={firstPageHeaderContent}
                       firstPageFooterContent={firstPageFooterContent}
                       numberingMap={numberingMap}
+                      contextTags={contextTags}
                       renderMode={state.renderMode}
                       loopPreviewData={loopPreviewData}
                       onHeaderFooterDoubleClick={handleHeaderFooterDoubleClick}

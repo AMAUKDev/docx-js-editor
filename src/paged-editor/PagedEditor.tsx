@@ -173,6 +173,11 @@ export interface PagedEditorProps {
   /** Numbering map for resolving list markers with correct numFmt/lvlText. */
   numberingMap?: import('../docx/numberingParser').NumberingMap | null;
   /**
+   * Resolved context tag values (flat key→value map).
+   * Used to substitute {tag.path} and {{ tag.path }} patterns in header/footer text.
+   */
+  contextTags?: Record<string, string>;
+  /**
    * Render mode for template elements.
    * - 'rendered' (default): context tags show label/resolved value, loops show visual blocks
    * - 'raw': context tags show raw {context.key}, loops show {% for %} / {% endfor %}
@@ -1253,10 +1258,32 @@ function resolveAlignment(
   return undefined;
 }
 
+/**
+ * Substitute context tag patterns in header/footer text with resolved values.
+ *
+ * Handles both single-brace `{dotted.path}` and double-brace `{{ dotted.path }}` patterns.
+ * Falls back to original text if tag key is not found in the map.
+ */
+function substituteHfContextTags(text: string, tags: Record<string, string>): string {
+  if (!text) return text;
+  // Double braces first: {{ tag_key }} — allows zero dots (e.g. {{ date_now }})
+  let result = text.replace(/\{\{\s*([\w]+(?:\.[\w]+)*)\s*\}\}/g, (match, key: string) => {
+    return key in tags ? tags[key] : match;
+  });
+  // Single braces: {tag_key} — matches any word/dotted path.
+  // Only replaces if the key exists in the tags map (avoids false positives).
+  result = result.replace(/\{([\w]+(?:\.[\w]+)*)\}/g, (match, key: string) => {
+    return key in tags ? tags[key] : match;
+  });
+  return result;
+}
+
 function convertHeaderFooterToContent(
   headerFooter: HeaderFooter | null | undefined,
   contentWidth: number,
-  styles?: StyleDefinitions | null
+  styles?: StyleDefinitions | null,
+  contextTags?: Record<string, string>,
+  renderMode?: 'rendered' | 'raw'
 ): HeaderFooterContent | undefined {
   if (!headerFooter || !headerFooter.content || headerFooter.content.length === 0) {
     return undefined;
@@ -1462,6 +1489,46 @@ function convertHeaderFooterToContent(
     return { ...pb, runs: inlineRuns };
   });
 
+  // Substitute context tag patterns in text runs with resolved values (only in rendered mode)
+  if (renderMode !== 'raw' && contextTags && Object.keys(contextTags).length > 0) {
+    const substituteBlockRuns = (blockList: FlowBlock[]) => {
+      for (const block of blockList) {
+        if (block.kind === 'paragraph') {
+          const pb = block as ParagraphBlock;
+          const newRuns: Run[] = [];
+          for (const run of pb.runs) {
+            if (run.kind === 'text' && 'text' in run) {
+              const textRun = run as { kind: 'text'; text: string; [k: string]: unknown };
+              const substituted = substituteHfContextTags(textRun.text, contextTags);
+              if (substituted !== textRun.text) {
+                // Substituted text may contain newlines (e.g. address_report)
+                const lines = substituted.split('\n');
+                for (let li = 0; li < lines.length; li++) {
+                  if (li > 0) newRuns.push({ kind: 'lineBreak' });
+                  newRuns.push({ ...run, text: lines[li] } as Run);
+                }
+              } else {
+                newRuns.push(run);
+              }
+            } else {
+              newRuns.push(run);
+            }
+          }
+          pb.runs = newRuns;
+        } else if (block.kind === 'table') {
+          const tb = block as TableBlock;
+          for (const row of tb.rows) {
+            for (const cell of row.cells) {
+              substituteBlockRuns(cell.blocks);
+            }
+          }
+        }
+      }
+    };
+    substituteBlockRuns(blocks);
+    substituteBlockRuns(blocksForMeasure);
+  }
+
   const measures = measureBlocks(blocksForMeasure, contentWidth);
   const totalHeight = measures.reduce((h, m) => {
     if (m.kind === 'paragraph') {
@@ -1558,6 +1625,7 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
       onRenderedDomContextReady,
       pluginOverlays,
       numberingMap,
+      contextTags,
       renderMode,
       loopPreviewData,
       onHeaderFooterDoubleClick,
@@ -1743,22 +1811,30 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
           const headerContentForRender = convertHeaderFooterToContent(
             headerContent,
             contentWidth,
-            styles
+            styles,
+            contextTags,
+            renderMode
           );
           const footerContentForRender = convertHeaderFooterToContent(
             footerContent,
             contentWidth,
-            styles
+            styles,
+            contextTags,
+            renderMode
           );
           const firstPageHeaderForRender = convertHeaderFooterToContent(
             firstPageHeaderContent ?? null,
             contentWidth,
-            styles
+            styles,
+            contextTags,
+            renderMode
           );
           const firstPageFooterForRender = convertHeaderFooterToContent(
             firstPageFooterContent ?? null,
             contentWidth,
-            styles
+            styles,
+            contextTags,
+            renderMode
           );
 
           // Adjust margins if header/footer content exceeds available space
@@ -1944,6 +2020,7 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
         document,
         renderMode,
         loopPreviewData,
+        contextTags,
       ]
     );
 
@@ -3589,9 +3666,9 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    // Re-layout when header/footer content changes (e.g., after HF editor save).
-    // runLayoutPipeline includes headerContent/footerContent in its deps, but it
-    // only runs when explicitly called — this effect triggers it.
+    // Re-layout when header/footer content or context tag values change.
+    // Also re-triggers when renderMode flips (raw ↔ rendered) so H/F tags
+    // show/hide resolved values in sync with the body.
     const headerFooterEpochRef = useRef(0);
     useEffect(() => {
       // Skip the initial render — handleEditorViewReady already does the first layout
@@ -3608,6 +3685,8 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
       footerContent,
       firstPageHeaderContent,
       firstPageFooterContent,
+      contextTags,
+      renderMode,
       runLayoutPipeline,
     ]);
 

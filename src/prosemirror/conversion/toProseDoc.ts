@@ -1097,6 +1097,15 @@ function convertField(
     return schema.node('crossRef', { refType, refTarget, displayText }, undefined, marks);
   }
 
+  // Convert NUMPAGES field back to {{ total_pages }} contextTag on re-import
+  if (field.fieldType === 'NUMPAGES' && schema.nodes.contextTag) {
+    return schema.nodes.contextTag.create(
+      { tagKey: 'total_pages', label: '', removeIfEmpty: false, metaId: generateMetaId() },
+      null,
+      marks
+    );
+  }
+
   return schema.node(
     'field',
     {
@@ -1241,9 +1250,9 @@ function mergeTextFormatting(
 /** Regex to detect context tag patterns in text.
  *  Matches:
  *  - {{ any_tag }} or {{ dotted.path }} (double braces — explicit template syntax, allows single words)
- *  - {dotted.path} (single brace — requires at least one dot to avoid matching normal text like {word})
+ *  - {tag_key} (single brace — zero or more dots, matches known tag patterns like {total_pages})
  *  A trailing `!` before `}}` or `}` signals removeIfEmpty (e.g., {{ key! }}). */
-const CONTEXT_TAG_RE = /\{\{\s*([\w]+(?:\.[\w]+)*)(!)?\s*\}\}|\{([\w]+(?:\.[\w]+)+)(!)?\}/g;
+const CONTEXT_TAG_RE = /\{\{\s*([\w]+(?:\.[\w]+)*)(!)?\s*\}\}|\{([\w]+(?:\.[\w]+)*)(!)?\}/g;
 
 /**
  * Regex to detect loop delimiter paragraphs: {% for x in y %} or {% endfor %}.
