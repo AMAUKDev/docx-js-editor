@@ -1238,11 +1238,12 @@ function mergeTextFormatting(
   return result;
 }
 
-/** Regex to detect {{ tag.key }} or {tag.key} patterns in text.
- *  Matches any dotted identifier path (e.g., case.case_no, lead_client.account.name).
- *  Also matches legacy context.* prefix for backward compatibility.
+/** Regex to detect context tag patterns in text.
+ *  Matches:
+ *  - {{ any_tag }} or {{ dotted.path }} (double braces — explicit template syntax, allows single words)
+ *  - {dotted.path} (single brace — requires at least one dot to avoid matching normal text like {word})
  *  A trailing `!` before `}}` or `}` signals removeIfEmpty (e.g., {{ key! }}). */
-const CONTEXT_TAG_RE = /\{\{\s*([\w]+(?:\.[\w]+)+)(!)?\s*\}\}|\{([\w]+(?:\.[\w]+)+)(!)?\}/g;
+const CONTEXT_TAG_RE = /\{\{\s*([\w]+(?:\.[\w]+)*)(!)?\s*\}\}|\{([\w]+(?:\.[\w]+)+)(!)?\}/g;
 
 /**
  * Regex to detect loop delimiter paragraphs: {% for x in y %} or {% endfor %}.
