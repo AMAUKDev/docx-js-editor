@@ -1135,7 +1135,8 @@ function parseLoopExpr(loopExpr: string): { itemVar: string; arrayName: string }
  * Returns the substituted string, or null if the text contains an image-field reference.
  */
 function substituteText(text: string, itemVar: string, dataItem: Record<string, unknown>): string {
-  return text.replace(/\{\{\s*(\w+)\.(\w+)\s*\}\}/g, (_match, varPart, field) => {
+  // Match both {{ var.field }} (double braces) and {var.field} (single braces, from context tag atoms)
+  return text.replace(/\{?\{\s*(\w+)\.(\w+)\s*\}?\}/g, (_match, varPart, field) => {
     if (varPart !== itemVar) return _match;
     const val = dataItem[field];
     if (val == null) return '';
@@ -1153,7 +1154,8 @@ function getImageFieldFromText(
   itemVar: string,
   dataItem: Record<string, unknown>
 ): { url: string; name: string } | null {
-  const re = /\{\{\s*(\w+)\.(\w+)\s*\}\}/g;
+  // Match both {{ var.field }} (double braces) and {var.field} (single braces, from context tag atoms)
+  const re = /\{?\{\s*(\w+)\.(\w+)\s*\}?\}/g;
   let match;
   while ((match = re.exec(text)) !== null) {
     const [, varPart, field] = match;
