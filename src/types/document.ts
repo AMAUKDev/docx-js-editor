@@ -221,6 +221,12 @@ export interface Document {
    * Stores template provenance, editor settings, etc.
    */
   fpDocumentMeta?: FPDocumentMeta;
+  /**
+   * Loop block metadata from the Custom XML Part.
+   * Stores template XML and per-item rendered values for round-trip diff detection.
+   * Keyed by collection name (e.g. "photos").
+   */
+  loopMetadata?: Record<string, import('../docx/contextTagMetadata').FPLoopMeta>;
 }
 
 /**

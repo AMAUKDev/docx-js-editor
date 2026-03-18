@@ -47,9 +47,28 @@ export type { ContextTagMeta, FPDocumentMeta };
 // PARSED RESULT
 // ============================================================================
 
+/** Per-item rendered values stored for loop diff detection on re-upload. */
+export interface FPLoopItemMeta {
+  index: number;
+  /** tagKey → rendered string value (e.g. { "photo.caption": "Damage to port bow" }) */
+  renderedTags: Record<string, string>;
+  /** tagKey → image info for image fields */
+  renderedImages: Record<string, { caseFileId: number; width?: number; height?: number }>;
+}
+
+/** Metadata for a single loop block, stored in the manifest. */
+export interface FPLoopMeta {
+  loopExpr: string; // e.g. "photo in photos"
+  collectionKey: string; // e.g. "photos"
+  itemVar: string; // e.g. "photo"
+  templateXml: string; // Original <w:tr> XML with {{ tags }} intact
+  items: FPLoopItemMeta[];
+}
+
 export interface FPManifest {
   document: FPDocumentMeta;
   tags: Record<string, ContextTagMeta>;
+  loops?: Record<string, FPLoopMeta>;
 }
 
 // ============================================================================
@@ -137,6 +156,11 @@ function validateManifest(jsonStr: string): FPManifest {
     }
   }
 
+  // Parse loop metadata (pass through as-is — complex nested structure)
+  if (raw.loops && typeof raw.loops === 'object' && !Array.isArray(raw.loops)) {
+    result.loops = raw.loops as Record<string, FPLoopMeta>;
+  }
+
   return result;
 }
 
@@ -160,13 +184,17 @@ function sanitizeTagEntry(obj: Record<string, unknown>): ContextTagMeta {
  */
 export function serializeManifest(
   documentMeta: FPDocumentMeta | undefined,
-  tags: Record<string, ContextTagMeta> | undefined
+  tags: Record<string, ContextTagMeta> | undefined,
+  loops?: Record<string, FPLoopMeta>
 ): string {
-  const manifest = {
+  const manifest: Record<string, unknown> = {
     version: MANIFEST_VERSION,
     document: documentMeta || {},
     tags: tags || {},
   };
+  if (loops && Object.keys(loops).length > 0) {
+    manifest.loops = loops;
+  }
   const json = JSON.stringify(manifest);
   return (
     `<?xml version="1.0" encoding="UTF-8"?>\n` +

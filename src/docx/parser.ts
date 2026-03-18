@@ -292,6 +292,8 @@ export async function parseDocx(input: DocxInput, options: ParseOptions = {}): P
       warnings: warnings.length > 0 ? warnings : undefined,
       contextTagMetadata: Object.keys(fpManifest.tags).length > 0 ? fpManifest.tags : undefined,
       fpDocumentMeta: Object.keys(fpManifest.document).length > 0 ? fpManifest.document : undefined,
+      loopMetadata:
+        fpManifest.loops && Object.keys(fpManifest.loops).length > 0 ? fpManifest.loops : undefined,
     };
 
     // Restore context tags from FP bookmarks (rendered tag preservation).

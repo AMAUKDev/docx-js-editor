@@ -384,8 +384,13 @@ export async function repackDocx(doc: Document, options: RepackOptions = {}): Pr
   // Write FP metadata manifest (document meta + context tag metadata) as Custom XML Part
   const hasTagMeta = doc.contextTagMetadata && Object.keys(doc.contextTagMetadata).length > 0;
   const hasDocMeta = doc.fpDocumentMeta && Object.keys(doc.fpDocumentMeta).length > 0;
-  if (hasTagMeta || hasDocMeta) {
-    const metaXml = serializeManifest(doc.fpDocumentMeta, doc.contextTagMetadata);
+  const hasLoopMeta = doc.loopMetadata && Object.keys(doc.loopMetadata).length > 0;
+  if (hasTagMeta || hasDocMeta || hasLoopMeta) {
+    const metaXml = serializeManifest(
+      doc.fpDocumentMeta,
+      doc.contextTagMetadata,
+      hasLoopMeta ? doc.loopMetadata : undefined
+    );
     newZip.file(CUSTOM_XML_PATH, metaXml, {
       compression: 'DEFLATE',
       compressionOptions: { level: compressionLevel },
@@ -608,8 +613,13 @@ export async function repackDocxFromRaw(
   // Write FP metadata manifest as Custom XML Part
   const hasTagMetaRaw = doc.contextTagMetadata && Object.keys(doc.contextTagMetadata).length > 0;
   const hasDocMetaRaw = doc.fpDocumentMeta && Object.keys(doc.fpDocumentMeta).length > 0;
-  if (hasTagMetaRaw || hasDocMetaRaw) {
-    const metaXml = serializeManifest(doc.fpDocumentMeta, doc.contextTagMetadata);
+  const hasLoopMetaRaw = doc.loopMetadata && Object.keys(doc.loopMetadata).length > 0;
+  if (hasTagMetaRaw || hasDocMetaRaw || hasLoopMetaRaw) {
+    const metaXml = serializeManifest(
+      doc.fpDocumentMeta,
+      doc.contextTagMetadata,
+      hasLoopMetaRaw ? doc.loopMetadata : undefined
+    );
     newZip.file(CUSTOM_XML_PATH, metaXml, {
       compression: 'DEFLATE',
       compressionOptions: { level: compressionLevel },
