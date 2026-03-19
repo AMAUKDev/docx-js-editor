@@ -526,37 +526,44 @@ export async function repackDocx(doc: Document, options: RepackOptions = {}): Pr
     }
   }
 
-  // ── Regenerate comments.xml if comments were modified ──
-  // Also reconcile: remove any commentRangeStart/End from document.xml
-  // that don't have matching entries in comments array (prevents corruption)
-  if (
-    (doc as unknown as Record<string, boolean>).commentsModified &&
-    doc.package.document?.comments
-  ) {
-    const comments = doc.package.document.comments;
-    // Build set of valid comment IDs
+  // ── Always reconcile comment markers in document.xml with comments.xml ──
+  // This prevents "unreadable content" from orphaned commentRangeStart/End
+  // markers that reference non-existent comments (e.g., after deleting comments).
+  {
+    const comments = doc.package.document?.comments || [];
     const validIds = new Set(comments.map((c) => c.id));
-    // Remove orphaned comment markers from document.xml
     const docXmlFile = newZip.file('word/document.xml');
     if (docXmlFile) {
       let docXml = await docXmlFile.async('text');
-      // Remove commentRangeStart/End/Reference for IDs not in our comments array
-      docXml = docXml.replace(/<w:commentRangeStart\s+w:id="(\d+)"\/>/g, (m, id) =>
-        validIds.has(parseInt(id, 10)) ? m : ''
-      );
-      docXml = docXml.replace(/<w:commentRangeEnd\s+w:id="(\d+)"\/>/g, (m, id) =>
-        validIds.has(parseInt(id, 10)) ? m : ''
-      );
-      docXml = docXml.replace(
-        /<w:r><w:rPr><w:rStyle\s+w:val="CommentReference"\/><\/w:rPr><w:commentReference\s+w:id="(\d+)"\/><\/w:r>/g,
-        (m, id) => (validIds.has(parseInt(id, 10)) ? m : '')
-      );
-      newZip.file('word/document.xml', docXml, {
-        compression: 'DEFLATE',
-        compressionOptions: { level: compressionLevel },
-      });
+      // Check if there are any comment markers at all
+      if (docXml.includes('commentRangeStart') || docXml.includes('commentReference')) {
+        let changed = false;
+        // Remove commentRangeStart/End/Reference for IDs not in our comments array
+        docXml = docXml.replace(/<w:commentRangeStart\s+w:id="(\d+)"\/>/g, (m, id) =>
+          validIds.has(parseInt(id, 10)) ? m : ((changed = true), '')
+        );
+        docXml = docXml.replace(/<w:commentRangeEnd\s+w:id="(\d+)"\/>/g, (m, id) =>
+          validIds.has(parseInt(id, 10)) ? m : ((changed = true), '')
+        );
+        docXml = docXml.replace(
+          /<w:r><w:rPr><w:rStyle\s+w:val="CommentReference"\/><\/w:rPr><w:commentReference\s+w:id="(\d+)"\/><\/w:r>/g,
+          (m, id) => (validIds.has(parseInt(id, 10)) ? m : ((changed = true), ''))
+        );
+        if (changed) {
+          newZip.file('word/document.xml', docXml, {
+            compression: 'DEFLATE',
+            compressionOptions: { level: compressionLevel },
+          });
+        }
+      }
     }
-    if (comments.length > 0) {
+    // Remove stale comments.xml if no comments exist
+    if (comments.length === 0) {
+      if (newZip.file('word/comments.xml')) {
+        newZip.remove('word/comments.xml');
+      }
+    }
+    if (hasModifiedComments && comments.length > 0) {
       const commentsXml = serializeCommentsXml(comments);
       newZip.file('word/comments.xml', commentsXml, {
         compression: 'DEFLATE',
