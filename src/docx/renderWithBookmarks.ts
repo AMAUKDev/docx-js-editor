@@ -23,6 +23,11 @@ import type { FPLoopItemMeta } from './contextTagMetadata';
 /** Prefix for context-tag bookmarks */
 export const FP_BOOKMARK_PREFIX = '_FP_ctx_';
 
+/** Truncate a metaId to 8 chars for bookmark names (Word's 40-char limit). */
+function shortMetaId(metaId: string): string {
+  return metaId.replace(/-/g, '').slice(0, 8);
+}
+
 /** Regex matching {{ context.tag! }} or {context.tag!} patterns in a single text string */
 const TAG_PATTERN = /\{\{\s*(context\.[\w.]+)(!?)\s*\}\}|\{(context\.[\w.]+)(!?)\}/g;
 
@@ -192,7 +197,7 @@ export function renderParagraphContent(
           const bStart: BookmarkStart = {
             type: 'bookmarkStart',
             id: bookmarkId,
-            name: `${FP_BOOKMARK_PREFIX}${metaId}`,
+            name: `${FP_BOOKMARK_PREFIX}${shortMetaId(metaId)}`,
           };
           const bEnd: BookmarkEnd = {
             type: 'bookmarkEnd',
@@ -216,7 +221,7 @@ export function renderParagraphContent(
           const bStart: BookmarkStart = {
             type: 'bookmarkStart',
             id: bookmarkId,
-            name: `${FP_BOOKMARK_PREFIX}${metaId}`,
+            name: `${FP_BOOKMARK_PREFIX}${shortMetaId(metaId)}`,
           };
           const bEnd: BookmarkEnd = {
             type: 'bookmarkEnd',
@@ -358,8 +363,18 @@ export function restoreParagraphContent(
     }
 
     if (item.type === 'bookmarkEnd' && item.id === captureForBookmarkId) {
-      // End capture — emit the tag pattern
-      const meta = manifest[capturedMetaId];
+      // End capture — emit the tag pattern.
+      // Try exact match first, then prefix match (bookmark names use truncated metaId).
+      let meta = manifest[capturedMetaId];
+      if (!meta) {
+        // Prefix match: bookmark has short id, manifest has full UUID
+        for (const [key, val] of Object.entries(manifest)) {
+          if (key.replace(/-/g, '').startsWith(capturedMetaId)) {
+            meta = val;
+            break;
+          }
+        }
+      }
       if (meta?.tagKey) {
         // removeIfEmpty is now tracked in CustomXML metadata, not in-band.
         const tagText = `{{ ${meta.tagKey} }}`;
@@ -657,22 +672,50 @@ export function restoreLoopBlocksFromBookmarks(doc: Document): LoopDiffReport[] 
       const imageChanges: Record<string, { changed: boolean }> = {};
 
       if (manifestItem) {
-        // Compare cell texts against rendered values
+        // Compare cell texts against rendered values.
+        // Strategy: first map each rendered value to the cell that contains it
+        // (unchanged values "claim" cells). Then for changed tags, look at the
+        // cell at the same position (if we can infer it) or unclaimed cells.
         const cellTexts = extractCellTexts(table);
         const allText = cellTexts.join(' ');
 
-        for (const [tagKey, renderedValue] of Object.entries(manifestItem.renderedTags || {})) {
-          // Check if the rendered value still appears in the table
-          if (!allText.includes(renderedValue) && renderedValue.trim() !== '') {
-            // Text changed — find what it changed to
-            // For simple cases (caption in its own cell), the cell text IS the new value
-            // Try to find the cell that had this value
-            const currentValue = cellTexts.find((t) => t !== '' && t !== renderedValue);
-            tagChanges[tagKey] = {
-              old: renderedValue,
-              current: currentValue ?? '',
-            };
+        const renderedEntries = Object.entries(manifestItem.renderedTags || {});
+        // Pass 1: map unchanged rendered values to their cell index
+        const tagToCellIdx = new Map<string, number>();
+        const claimedCells = new Set<number>();
+        for (const [tagKey, renderedValue] of renderedEntries) {
+          if (!renderedValue || renderedValue.trim() === '') continue;
+          if (allText.includes(renderedValue)) {
+            // Value unchanged — find which cell contains it
+            for (let ci = 0; ci < cellTexts.length; ci++) {
+              if (!claimedCells.has(ci) && cellTexts[ci].includes(renderedValue)) {
+                tagToCellIdx.set(tagKey, ci);
+                claimedCells.add(ci);
+                break;
+              }
+            }
           }
+        }
+
+        // Pass 2: for changed tags, find their current value
+        for (const [tagKey, renderedValue] of renderedEntries) {
+          if (!renderedValue || renderedValue.trim() === '') continue;
+          if (allText.includes(renderedValue)) continue; // unchanged
+
+          // Value changed — find the most likely cell.
+          // Look for unclaimed non-empty cells first.
+          let currentValue = '';
+          for (let ci = 0; ci < cellTexts.length; ci++) {
+            if (claimedCells.has(ci)) continue;
+            if (cellTexts[ci].trim() === '') continue;
+            currentValue = cellTexts[ci].trim();
+            claimedCells.add(ci);
+            break;
+          }
+          tagChanges[tagKey] = {
+            old: renderedValue,
+            current: currentValue,
+          };
         }
 
         // Image changes: detect replaced/resized images
