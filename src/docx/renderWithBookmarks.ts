@@ -618,6 +618,20 @@ export function restoreLoopBlocksFromBookmarks(doc: Document): LoopDiffReport[] 
     group.bodyPositions.push(i);
   }
 
+  // Detect loops with metadata but NO bookmarks found (bookmarks lost in Word editing)
+  for (const [collectionKey, meta] of Object.entries(loopMeta)) {
+    if (!loopGroups.has(collectionKey)) {
+      diffReports.push({
+        collection: collectionKey,
+        loopExpr: meta.loopExpr,
+        expectedCount: meta.items?.length ?? 0,
+        foundCount: 0,
+        structural: true, // Can't collapse — bookmarks lost
+        items: [],
+      });
+    }
+  }
+
   // Pass 2: For each loop group, diff and collapse
   // Process in reverse order so splice positions stay valid
   const collectionKeys = [...loopGroups.keys()];
@@ -715,10 +729,15 @@ export function restoreLoopBlocksFromBookmarks(doc: Document): LoopDiffReport[] 
       const templateTable = tables[0];
       stripLoopBookmarks(templateTable);
 
-      // Replace rendered text values with {{ tagKey }} template patterns
+      // Replace rendered values (text + images) with {{ tagKey }} template patterns
       const firstItem = meta.items?.[0];
-      if (firstItem?.renderedTags) {
-        restoreLoopTagPatterns(templateTable, firstItem.renderedTags, meta.itemVar);
+      if (firstItem) {
+        restoreLoopTagPatterns(
+          templateTable,
+          firstItem.renderedTags || {},
+          meta.itemVar,
+          firstItem.renderedImages
+        );
       }
 
       // Replace the range of expanded tables with the loop block
@@ -731,24 +750,48 @@ export function restoreLoopBlocksFromBookmarks(doc: Document): LoopDiffReport[] 
 }
 
 /**
- * Replace rendered text values in a table with {{ tagKey }} template patterns.
+ * Replace rendered values in a table with {{ tagKey }} Jinja2 template patterns.
+ * Handles both text values (captions etc.) and images (photos).
  * Used to restore the loop template from the first expanded table.
  */
 function restoreLoopTagPatterns(
   table: Table,
   renderedTags: Record<string, string>,
-  _itemVar: string
+  _itemVar: string,
+  renderedImages?: Record<string, { caseFileId: number; width?: number; height?: number }>
 ): void {
   for (const row of table.rows) {
     for (const cell of row.cells) {
       for (const block of cell.content as BlockContent[]) {
         if (block.type !== 'paragraph') continue;
-        for (const item of block.content) {
+        const para = block as Paragraph;
+
+        // Check if this paragraph contains a rendered image that should be
+        // restored to a {{ tagKey }} text pattern for the loop template.
+        if (renderedImages && Object.keys(renderedImages).length > 0) {
+          const hasDrawing = para.content.some(
+            (item) =>
+              item.type === 'run' && (item as Run).content.some((rc) => rc.type === 'drawing')
+          );
+          if (hasDrawing) {
+            // Replace the entire paragraph content with {{ imageTagKey }} text.
+            // The first image tag key from renderedImages is used.
+            const imageTagKey = Object.keys(renderedImages)[0];
+            if (imageTagKey) {
+              const textContent = { type: 'text' as const, text: `{{ ${imageTagKey} }}` };
+              const run: Run = { type: 'run', content: [textContent] };
+              para.content = [run];
+              continue; // Skip text processing for this paragraph
+            }
+          }
+        }
+
+        // Text value restoration
+        for (const item of para.content) {
           if (item.type !== 'run') continue;
           const run = item as Run;
           for (const rc of run.content) {
             if (rc.type !== 'text' || !rc.text) continue;
-            // Check each rendered tag value — if the cell text matches, replace it
             for (const [tagKey, renderedValue] of Object.entries(renderedTags)) {
               if (renderedValue && rc.text.includes(renderedValue)) {
                 rc.text = rc.text.replace(renderedValue, `{{ ${tagKey} }}`);

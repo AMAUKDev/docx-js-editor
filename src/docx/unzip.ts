@@ -178,8 +178,18 @@ export async function unzipDocx(buffer: ArrayBuffer): Promise<RawDocxContent> {
         lowerPath === 'customxml/fpmeta.xml' ||
         lowerPath === 'customxml/contexttagmeta.xml'
       ) {
-        // Accept both new path and legacy path (prefer new if both exist)
+        // Legacy paths — accept directly
         if (!content.fpMetaXml || lowerPath === 'customxml/fpmeta.xml') {
+          content.fpMetaXml = xmlContent;
+        }
+      } else if (lowerPath.match(/^customxml\/item\d+\.xml$/)) {
+        // Check if this OOXML Custom XML Data Store item is our FPMetadata.
+        // Word stores custom XML in customXml/itemN.xml — we need to find ours
+        // by checking for the FPMetadata namespace or CDATA content.
+        if (
+          xmlContent.includes('FPMetadata') ||
+          xmlContent.includes('financialportal.app/fpMeta')
+        ) {
           content.fpMetaXml = xmlContent;
         }
       } else if (lowerPath.match(/^word\/header\d+\.xml$/)) {

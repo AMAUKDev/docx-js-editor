@@ -53,6 +53,12 @@ export type ToFlowBlocksOptions = {
   /** Numbering map for resolving list markers with correct numFmt and lvlText. */
   numberingMap?: NumberingMap | null;
   /**
+   * Shared list counters — tracks numbering state across the whole document
+   * including paragraphs inside table cells. Without this, table cell paragraphs
+   * with numPr would show raw %1. instead of resolved numbers like 1., 2., etc.
+   */
+  listCounters?: Map<number, number[]>;
+  /**
    * Display mode for template elements.
    * - 'rendered' (default): context tags show label or {tagKey}, loop blocks show styled markers
    * - 'raw': context tags show raw {context.key} text, loop blocks show {% for %} / {% endfor %}
@@ -920,7 +926,28 @@ function convertTableCell(node: PMNode, startPos: number, options: ToFlowBlocksO
 
   node.forEach((child) => {
     if (child.type.name === 'paragraph') {
-      blocks.push(convertParagraph(child, offset, options));
+      const block = convertParagraph(child, offset, options);
+
+      // Resolve numbered list markers for paragraphs inside table cells.
+      // The document-level listCounters (shared via options) ensures numbering
+      // continues correctly across tables (e.g., photo loop: 1., 2., 3.).
+      const pmAttrs = child.attrs as Record<string, unknown>;
+      const numPr = pmAttrs.numPr as { numId?: number; ilvl?: number } | undefined;
+      if (numPr?.numId && numPr.numId !== 0 && options.listCounters) {
+        const numId = numPr.numId;
+        const level = numPr.ilvl ?? 0;
+        const counters = options.listCounters.get(numId) ?? new Array(9).fill(0);
+        counters[level] = (counters[level] ?? 0) + 1;
+        for (let lvl = level + 1; lvl < counters.length; lvl++) counters[lvl] = 0;
+        options.listCounters.set(numId, counters);
+
+        if (!pmAttrs.listIsBullet) {
+          const marker = formatNumberedMarker(counters, level, options.numberingMap, numId);
+          block.attrs = { ...block.attrs, listMarker: marker };
+        }
+      }
+
+      blocks.push(block);
     } else if (child.type.name === 'table') {
       blocks.push(convertTable(child, offset, options));
     }
@@ -1302,7 +1329,11 @@ export function toFlowBlocks(doc: PMNode, options: ToFlowBlocksOptions = {}): Fl
   };
 
   const blocks: FlowBlock[] = [];
+  // Document-level list counters — shared across top-level paragraphs AND
+  // paragraphs inside table cells so numbering is continuous (1, 2, 3...)
+  // rather than resetting per table (%1. everywhere).
   const listCounters = new Map<number, number[]>();
+  opts.listCounters = listCounters;
 
   // Build an array of [node, offset] pairs so we can skip ahead for loop expansion
   const children: Array<{ node: PMNode; pos: number }> = [];
@@ -1403,8 +1434,11 @@ export function toFlowBlocks(doc: PMNode, options: ToFlowBlocksOptions = {}): Fl
             }
 
             if (endforIndex !== -1 && templateChildren.length > 0) {
-              // Convert template nodes to FlowBlocks (without loop expansion recursion)
-              const templateOpts = { ...opts, loopPreviewData: undefined };
+              // Convert template nodes to FlowBlocks (without loop expansion recursion).
+              // IMPORTANT: Disable listCounters so table cell paragraphs keep raw %1.
+              // markers instead of resolving to "1.". The substituteBlocksForItem()
+              // function handles %1. → N. replacement per iteration index (line ~1254).
+              const templateOpts = { ...opts, loopPreviewData: undefined, listCounters: undefined };
               const templateBlocks: FlowBlock[] = [];
               for (const { node: tNode, pos: tPos } of templateChildren) {
                 if (tNode.type.name === 'paragraph') {

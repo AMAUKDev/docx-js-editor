@@ -31,14 +31,25 @@ const MAX_PAYLOAD_SIZE = 1_048_576; // 1 MB
 /** Current manifest version */
 const MANIFEST_VERSION = 1;
 
-/** Path inside the DOCX zip */
-export const CUSTOM_XML_PATH = 'customXml/fpMeta.xml';
+/** Legacy path (kept for backward-compat reading) */
+export const CUSTOM_XML_LEGACY_PATH = 'customXml/fpMeta.xml';
 
 /** Content type for registration in [Content_Types].xml */
 export const CUSTOM_XML_CONTENT_TYPE = 'application/xml';
 
-/** XML namespace */
+/** Content type for itemProps registration */
+export const CUSTOM_XML_PROPS_CONTENT_TYPE =
+  'application/vnd.openxmlformats-officedocument.customXmlProperties+xml';
+
+/** XML namespace for our metadata */
 const XMLNS = 'http://financialportal.app/fpMeta';
+
+/**
+ * Stable datastore GUID for our Custom XML Part.
+ * Word uses this GUID to identify our schema across save/load cycles.
+ * Using a fixed GUID ensures Word recognizes and preserves our data.
+ */
+export const FP_DATASTORE_GUID = '{B7E6D12F-4A8C-4D3E-9F1A-2C5B8E7D9F0A}';
 
 // Re-export types for convenience
 export type { ContextTagMeta, FPDocumentMeta };

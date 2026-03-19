@@ -36,7 +36,12 @@ import { serializeDocument, documentHasLockedParagraphs } from './serializer/doc
 import { serializeHeaderFooter } from './serializer/headerFooterSerializer';
 import { RELATIONSHIP_TYPES } from './relsParser';
 import { type RawDocxContent } from './unzip';
-import { CUSTOM_XML_PATH, CUSTOM_XML_CONTENT_TYPE, serializeManifest } from './contextTagMetadata';
+import {
+  CUSTOM_XML_LEGACY_PATH,
+  CUSTOM_XML_PROPS_CONTENT_TYPE,
+  FP_DATASTORE_GUID,
+  serializeManifest,
+} from './contextTagMetadata';
 import { FP_BOOKMARK_PREFIX } from './renderWithBookmarks';
 
 // ============================================================================
@@ -381,7 +386,9 @@ export async function repackDocx(doc: Document, options: RepackOptions = {}): Pr
     }
   }
 
-  // Write FP metadata manifest (document meta + context tag metadata) as Custom XML Part
+  // ── Write FP metadata as a proper OOXML Custom XML Data Store item ──
+  // Word requires: itemN.xml + itemPropsN.xml + _rels/itemN.xml.rels + relationships
+  // Without this structure, Word drops our Custom XML Part on save.
   const hasTagMeta = doc.contextTagMetadata && Object.keys(doc.contextTagMetadata).length > 0;
   const hasDocMeta = doc.fpDocumentMeta && Object.keys(doc.fpDocumentMeta).length > 0;
   const hasLoopMeta = doc.loopMetadata && Object.keys(doc.loopMetadata).length > 0;
@@ -391,35 +398,102 @@ export async function repackDocx(doc: Document, options: RepackOptions = {}): Pr
       doc.contextTagMetadata,
       hasLoopMeta ? doc.loopMetadata : undefined
     );
-    newZip.file(CUSTOM_XML_PATH, metaXml, {
+
+    // Find next available item number (avoid colliding with existing customXml items)
+    let itemNum = 1;
+    while (newZip.file(`customXml/item${itemNum}.xml`)) {
+      // Check if this item is ours (has FPMetadata) — if so, reuse the slot
+      const existing = await newZip.file(`customXml/item${itemNum}.xml`)!.async('text');
+      if (existing.includes('FPMetadata') || existing.includes('financialportal.app')) {
+        break; // Reuse this slot
+      }
+      itemNum++;
+    }
+
+    const itemPath = `customXml/item${itemNum}.xml`;
+    const propsPath = `customXml/itemProps${itemNum}.xml`;
+    const relsPath = `customXml/_rels/item${itemNum}.xml.rels`;
+
+    // 1. Write the data part
+    newZip.file(itemPath, metaXml, {
       compression: 'DEFLATE',
       compressionOptions: { level: compressionLevel },
     });
 
-    // Remove legacy file if present
+    // 2. Write itemProps (datastore GUID identifies our schema)
+    const itemPropsXml =
+      `<?xml version="1.0" encoding="UTF-8" standalone="no"?>` +
+      `<ds:datastoreItem ds:itemID="${FP_DATASTORE_GUID}" ` +
+      `xmlns:ds="http://schemas.openxmlformats.org/officeDocument/2006/customXml">` +
+      `<ds:schemaRefs><ds:schemaRef ds:uri="http://financialportal.app/fpMeta"/></ds:schemaRefs>` +
+      `</ds:datastoreItem>`;
+    newZip.file(propsPath, itemPropsXml, {
+      compression: 'DEFLATE',
+      compressionOptions: { level: compressionLevel },
+    });
+
+    // 3. Write rels (points itemProps to the data item)
+    const relsXml =
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+      `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+      `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/customXmlProps" ` +
+      `Target="itemProps${itemNum}.xml"/></Relationships>`;
+    newZip.file(relsPath, relsXml, {
+      compression: 'DEFLATE',
+      compressionOptions: { level: compressionLevel },
+    });
+
+    // Remove legacy files if present
+    if (newZip.file(CUSTOM_XML_LEGACY_PATH)) {
+      newZip.remove(CUSTOM_XML_LEGACY_PATH);
+    }
     if (newZip.file('customXml/contextTagMeta.xml')) {
       newZip.remove('customXml/contextTagMeta.xml');
     }
 
-    // Ensure [Content_Types].xml has an override for our custom XML part
+    // 4. Update [Content_Types].xml
     const ctFile = newZip.file('[Content_Types].xml');
     if (ctFile) {
       let ctXml = await ctFile.async('text');
-      // Remove legacy content type if present
+      // Remove legacy entries
       ctXml = ctXml.replace(
         /<Override[^>]*PartName="\/customXml\/contextTagMeta\.xml"[^>]*\/>/g,
         ''
       );
-      if (!ctXml.includes(CUSTOM_XML_PATH)) {
+      ctXml = ctXml.replace(/<Override[^>]*PartName="\/customXml\/fpMeta\.xml"[^>]*\/>/g, '');
+      // Add itemProps content type if not present
+      if (!ctXml.includes(propsPath)) {
         ctXml = ctXml.replace(
           '</Types>',
-          `<Override PartName="/${CUSTOM_XML_PATH}" ContentType="${CUSTOM_XML_CONTENT_TYPE}"/></Types>`
+          `<Override PartName="/${propsPath}" ContentType="${CUSTOM_XML_PROPS_CONTENT_TYPE}"/></Types>`
         );
       }
       newZip.file('[Content_Types].xml', ctXml, {
         compression: 'DEFLATE',
         compressionOptions: { level: compressionLevel },
       });
+    }
+
+    // 5. Update word/_rels/document.xml.rels — add relationship to our custom XML item
+    const docRelsFile = newZip.file('word/_rels/document.xml.rels');
+    if (docRelsFile) {
+      let docRels = await docRelsFile.async('text');
+      const relTarget = `../customXml/item${itemNum}.xml`;
+      if (!docRels.includes(relTarget)) {
+        // Find next available rId
+        const existingIds = [...docRels.matchAll(/Id="rId(\d+)"/g)].map((m) => parseInt(m[1], 10));
+        const nextId = existingIds.length > 0 ? Math.max(...existingIds) + 1 : 100;
+        docRels = docRels.replace(
+          '</Relationships>',
+          `<Relationship Id="rId${nextId}" ` +
+            `Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/customXml" ` +
+            `Target="${relTarget}"/></Relationships>`
+        );
+        newZip.file('word/_rels/document.xml.rels', docRels, {
+          compression: 'DEFLATE',
+          compressionOptions: { level: compressionLevel },
+        });
+      }
     }
   }
 
@@ -610,7 +684,7 @@ export async function repackDocxFromRaw(
     }
   }
 
-  // Write FP metadata manifest as Custom XML Part
+  // Write FP metadata as proper OOXML Custom XML (same logic as contentDirty path above)
   const hasTagMetaRaw = doc.contextTagMetadata && Object.keys(doc.contextTagMetadata).length > 0;
   const hasDocMetaRaw = doc.fpDocumentMeta && Object.keys(doc.fpDocumentMeta).length > 0;
   const hasLoopMetaRaw = doc.loopMetadata && Object.keys(doc.loopMetadata).length > 0;
@@ -620,14 +694,44 @@ export async function repackDocxFromRaw(
       doc.contextTagMetadata,
       hasLoopMetaRaw ? doc.loopMetadata : undefined
     );
-    newZip.file(CUSTOM_XML_PATH, metaXml, {
+
+    let itemNum = 1;
+    while (newZip.file(`customXml/item${itemNum}.xml`)) {
+      const existing = await newZip.file(`customXml/item${itemNum}.xml`)!.async('text');
+      if (existing.includes('FPMetadata') || existing.includes('financialportal.app')) break;
+      itemNum++;
+    }
+
+    const itemPath = `customXml/item${itemNum}.xml`;
+    const propsPath = `customXml/itemProps${itemNum}.xml`;
+    const relsPath = `customXml/_rels/item${itemNum}.xml.rels`;
+
+    newZip.file(itemPath, metaXml, {
       compression: 'DEFLATE',
       compressionOptions: { level: compressionLevel },
     });
 
-    if (newZip.file('customXml/contextTagMeta.xml')) {
-      newZip.remove('customXml/contextTagMeta.xml');
-    }
+    const itemPropsXml =
+      `<?xml version="1.0" encoding="UTF-8" standalone="no"?>` +
+      `<ds:datastoreItem ds:itemID="${FP_DATASTORE_GUID}" xmlns:ds="http://schemas.openxmlformats.org/officeDocument/2006/customXml">` +
+      `<ds:schemaRefs><ds:schemaRef ds:uri="http://financialportal.app/fpMeta"/></ds:schemaRefs></ds:datastoreItem>`;
+    newZip.file(propsPath, itemPropsXml, {
+      compression: 'DEFLATE',
+      compressionOptions: { level: compressionLevel },
+    });
+
+    const relsXml =
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+      `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+      `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/customXmlProps" Target="itemProps${itemNum}.xml"/></Relationships>`;
+    newZip.file(relsPath, relsXml, {
+      compression: 'DEFLATE',
+      compressionOptions: { level: compressionLevel },
+    });
+
+    // Remove legacy files
+    if (newZip.file(CUSTOM_XML_LEGACY_PATH)) newZip.remove(CUSTOM_XML_LEGACY_PATH);
+    if (newZip.file('customXml/contextTagMeta.xml')) newZip.remove('customXml/contextTagMeta.xml');
 
     const ctFile = newZip.file('[Content_Types].xml');
     if (ctFile) {
@@ -636,16 +740,35 @@ export async function repackDocxFromRaw(
         /<Override[^>]*PartName="\/customXml\/contextTagMeta\.xml"[^>]*\/>/g,
         ''
       );
-      if (!ctXml.includes(CUSTOM_XML_PATH)) {
+      ctXml = ctXml.replace(/<Override[^>]*PartName="\/customXml\/fpMeta\.xml"[^>]*\/>/g, '');
+      if (!ctXml.includes(propsPath)) {
         ctXml = ctXml.replace(
           '</Types>',
-          `<Override PartName="/${CUSTOM_XML_PATH}" ContentType="${CUSTOM_XML_CONTENT_TYPE}"/></Types>`
+          `<Override PartName="/${propsPath}" ContentType="${CUSTOM_XML_PROPS_CONTENT_TYPE}"/></Types>`
         );
       }
       newZip.file('[Content_Types].xml', ctXml, {
         compression: 'DEFLATE',
         compressionOptions: { level: compressionLevel },
       });
+    }
+
+    const docRelsFile = newZip.file('word/_rels/document.xml.rels');
+    if (docRelsFile) {
+      let docRels = await docRelsFile.async('text');
+      const relTarget = `../customXml/item${itemNum}.xml`;
+      if (!docRels.includes(relTarget)) {
+        const existingIds = [...docRels.matchAll(/Id="rId(\d+)"/g)].map((m) => parseInt(m[1], 10));
+        const nextId = existingIds.length > 0 ? Math.max(...existingIds) + 1 : 100;
+        docRels = docRels.replace(
+          '</Relationships>',
+          `<Relationship Id="rId${nextId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/customXml" Target="${relTarget}"/></Relationships>`
+        );
+        newZip.file('word/_rels/document.xml.rels', docRels, {
+          compression: 'DEFLATE',
+          compressionOptions: { level: compressionLevel },
+        });
+      }
     }
   }
 

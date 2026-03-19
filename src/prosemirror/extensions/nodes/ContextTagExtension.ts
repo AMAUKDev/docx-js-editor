@@ -13,15 +13,25 @@
 import { createNodeExtension } from '../create';
 
 /** Generate a compact UUID v4 (crypto.randomUUID with fallback). */
+/**
+ * Generate a short unique ID for context tag metadata.
+ * Uses 8 hex chars (32 bits of randomness) — sufficient for document-level
+ * uniqueness while keeping bookmark names under Word's 40-character limit.
+ * (_FP_ctx_ prefix = 9 chars + 8 hex = 17 chars total, well under 40)
+ *
+ * IMPORTANT: Do NOT use full UUIDs — Word truncates bookmark names longer
+ * than ~40 characters, breaking the round-trip tag restoration system.
+ */
 function generateMetaId(): string {
-  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
-    return crypto.randomUUID();
+  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+    const buf = new Uint8Array(4);
+    crypto.getRandomValues(buf);
+    return Array.from(buf, (b) => b.toString(16).padStart(2, '0')).join('');
   }
-  // Fallback for older environments
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0;
-    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
-  });
+  // Fallback
+  return Math.floor(Math.random() * 0xffffffff)
+    .toString(16)
+    .padStart(8, '0');
 }
 
 export { generateMetaId };
