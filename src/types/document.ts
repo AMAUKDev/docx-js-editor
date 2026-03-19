@@ -232,6 +232,10 @@ export interface Document {
    * Present only when a re-uploaded document had expanded loop bookmarks.
    */
   loopDiffReports?: import('../docx/renderWithBookmarks').LoopDiffReport[];
+  /** True when comments have been added/removed/modified during this session */
+  commentsModified?: boolean;
+  /** True when footnotes have been added/removed/modified during this session */
+  footnotesModified?: boolean;
 }
 
 /**

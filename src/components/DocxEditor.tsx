@@ -2121,7 +2121,7 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
       // when ProseMirror state changed and a new agent was created.
       if (addedCommentsRef.current.length > 0) {
         const doc = agentRef.current.getDocument();
-        (doc as unknown as Record<string, boolean>).commentsModified = true;
+        doc.commentsModified = true;
         if (doc.package.document) {
           if (!doc.package.document.comments) {
             doc.package.document.comments = [];
@@ -2461,7 +2461,7 @@ body { background: white; }
             doc.package.document.comments = [];
           }
           doc.package.document.comments.push(newComment);
-          (doc as unknown as Record<string, boolean>).commentsModified = true;
+          doc.commentsModified = true;
         }
         addedCommentsRef.current = [...addedCommentsRef.current, newComment];
 
@@ -2486,7 +2486,7 @@ body { background: white; }
           doc.package.document.comments = doc.package.document.comments.filter(
             (c) => c.id !== commentId
           );
-          (doc as unknown as Record<string, boolean>).commentsModified = true;
+          doc.commentsModified = true;
         }
         addedCommentsRef.current = addedCommentsRef.current.filter((c) => c.id !== commentId);
       },
@@ -2804,7 +2804,7 @@ body { background: white; }
           // Sync added comments to agent document (may have been lost on agent recreation)
           if (agentRef.current && addedCommentsRef.current.length > 0) {
             const d = agentRef.current.getDocument();
-            (d as unknown as Record<string, boolean>).commentsModified = true;
+            d.commentsModified = true;
             if (d.package.document) {
               if (!d.package.document.comments) d.package.document.comments = [];
               const ids = new Set(d.package.document.comments.map((c) => c.id));
@@ -2832,8 +2832,8 @@ body { background: white; }
         }
 
         // Propagate commentsModified flag so rezip regenerates comments.xml
-        if ((baseDoc as unknown as Record<string, boolean>).commentsModified) {
-          (renderedDocument as unknown as Record<string, boolean>).commentsModified = true;
+        if (baseDoc.commentsModified) {
+          renderedDocument.commentsModified = true;
         }
 
         // Serialize to DOCX buffer

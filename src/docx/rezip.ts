@@ -132,47 +132,80 @@ function injectCommentMarkersIntoXml(xml: string, doc: Document): string {
   const comments = doc.package.document?.comments;
   if (!comments || comments.length === 0) return xml;
 
-  // Extract comment text from each comment to find its location in the XML
-  for (const comment of comments) {
-    // Check if this comment's markers are already in the XML
-    if (xml.includes(`w:id="${comment.id}"`) && xml.includes('commentRangeStart')) {
-      continue; // Already has markers
-    }
+  // Collect all <w:p> positions in <w:body> so we can distribute comments
+  const bodyStart = xml.indexOf('<w:body');
+  if (bodyStart === -1) return xml;
 
-    // Find the first <w:p> in <w:body> and inject comment markers there.
-    // This is a simple heuristic — the comment will be attached to the first
-    // text run we can find. The PM comment marks handle precise positioning
-    // when contentDirty is true (full re-serialization path).
-    const bodyStart = xml.indexOf('<w:body');
-    if (bodyStart === -1) continue;
-
-    // Find first <w:p> after <w:body>
-    const firstPIdx = xml.indexOf('<w:p ', bodyStart);
-    if (firstPIdx === -1) continue;
+  const paragraphs: Array<{ pStart: number; rStart: number; pEnd: number }> = [];
+  let searchFrom = bodyStart;
+   
+  while (true) {
+    const pIdx1 = xml.indexOf('<w:p ', searchFrom);
+    const pIdx2 = xml.indexOf('<w:p>', searchFrom);
+    const pIdx = Math.min(pIdx1 === -1 ? Infinity : pIdx1, pIdx2 === -1 ? Infinity : pIdx2);
+    if (pIdx === Infinity) break;
 
     // Find first <w:r> in that paragraph
-    const firstRIdx = xml.indexOf('<w:r>', firstPIdx);
-    const firstRIdx2 = xml.indexOf('<w:r ', firstPIdx);
+    const pEnd = xml.indexOf('</w:p>', pIdx);
+    if (pEnd === -1) break;
+
+    const rIdx1 = xml.indexOf('<w:r>', pIdx);
+    const rIdx2 = xml.indexOf('<w:r ', pIdx);
     const rIdx = Math.min(
-      firstRIdx === -1 ? Infinity : firstRIdx,
-      firstRIdx2 === -1 ? Infinity : firstRIdx2
+      rIdx1 === -1 || rIdx1 > pEnd ? Infinity : rIdx1,
+      rIdx2 === -1 || rIdx2 > pEnd ? Infinity : rIdx2
     );
-    if (rIdx === Infinity) continue;
 
-    // Inject commentRangeStart before the first run
-    const startMarker = `<w:commentRangeStart w:id="${comment.id}"/>`;
-    const endMarker =
-      `<w:commentRangeEnd w:id="${comment.id}"/>` +
-      `<w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr>` +
-      `<w:commentReference w:id="${comment.id}"/></w:r>`;
+    if (rIdx !== Infinity) {
+      paragraphs.push({ pStart: pIdx, rStart: rIdx, pEnd });
+    }
+    searchFrom = pEnd + 6; // past '</w:p>'
+  }
 
-    // Find the end of this paragraph
-    const pEndIdx = xml.indexOf('</w:p>', rIdx);
-    if (pEndIdx === -1) continue;
+  if (paragraphs.length === 0) return xml;
+
+  // Filter comments that need marker injection (skip those already present)
+  const commentsToInject = comments.filter((comment) => {
+    // Check if commentRangeStart with this ID already exists in the XML
+    const markerPattern = `<w:commentRangeStart w:id="${comment.id}"`;
+    return !xml.includes(markerPattern);
+  });
+
+  if (commentsToInject.length === 0) return xml;
+
+  // Distribute comments across available paragraphs (round-robin)
+  // This avoids piling all comment markers onto the first paragraph.
+  // Group by target paragraph index.
+  const injections: Map<number, typeof commentsToInject> = new Map();
+  for (let i = 0; i < commentsToInject.length; i++) {
+    const paraIdx = Math.min(i, paragraphs.length - 1);
+    if (!injections.has(paraIdx)) injections.set(paraIdx, []);
+    injections.get(paraIdx)!.push(commentsToInject[i]);
+  }
+
+  // Apply injections in reverse paragraph order so earlier offsets remain valid
+  const sortedParaIndices = [...injections.keys()].sort((a, b) => b - a);
+  for (const paraIdx of sortedParaIndices) {
+    const paraComments = injections.get(paraIdx)!;
+    const para = paragraphs[paraIdx];
+
+    let startMarkers = '';
+    let endMarkers = '';
+    for (const comment of paraComments) {
+      startMarkers += `<w:commentRangeStart w:id="${comment.id}"/>`;
+      endMarkers +=
+        `<w:commentRangeEnd w:id="${comment.id}"/>` +
+        `<w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr>` +
+        `<w:commentReference w:id="${comment.id}"/></w:r>`;
+    }
 
     // Insert: commentRangeStart before first run, commentRangeEnd before </w:p>
     xml =
-      xml.slice(0, rIdx) + startMarker + xml.slice(rIdx, pEndIdx) + endMarker + xml.slice(pEndIdx);
+      xml.slice(0, para.rStart) +
+      startMarkers +
+      xml.slice(para.rStart, para.pEnd) +
+      endMarkers +
+      xml.slice(para.pEnd);
   }
 
   return xml;
@@ -420,8 +453,11 @@ export async function repackDocx(doc: Document, options: RepackOptions = {}): Pr
   // editing), preserve the original document.xml to avoid lossy re-serialization.
   // Our parser strips SDTs, mc:AlternateContent, rsid attrs, etc. — re-serializing
   // unmodified content produces a degraded file that Word may reject as corrupt.
-  const hasModifiedComments = (doc as unknown as Record<string, boolean>).commentsModified;
-  if (!doc.contentDirty && doc.originalDocumentXml) {
+  // However, if footnotes were modified we must force re-serialization so that
+  // footnote reference changes in document.xml (and footnotes.xml) are captured.
+  const hasModifiedComments = doc.commentsModified;
+  const hasModifiedFootnotes = doc.footnotesModified;
+  if (!doc.contentDirty && !hasModifiedFootnotes && doc.originalDocumentXml) {
     // No edits made — keep the original document.xml.
     // If comments were added, inject comment markers into the original XML.
     let origXml = doc.originalDocumentXml;
@@ -484,7 +520,8 @@ export async function repackDocx(doc: Document, options: RepackOptions = {}): Pr
           const metaId = tagKeyToMetaId.get(tagKey);
           if (resolved) {
             changed = true;
-            const renderedRun = `${beforeTag}${preText}${resolved}${afterTag}`;
+            const escapedResolved = escapeXml(resolved);
+            const renderedRun = `${beforeTag}${preText}${escapedResolved}${afterTag}`;
             if (metaId) {
               const shortId = metaId.replace(/-/g, '').slice(0, 8);
               const bmStart = `<w:bookmarkStart w:id="${hfBookmarkId}" w:name="${FP_BOOKMARK_PREFIX}${shortId}"/>`;
@@ -509,7 +546,7 @@ export async function repackDocx(doc: Document, options: RepackOptions = {}): Pr
         const resolved = tags[tagKey];
         if (resolved) {
           changed = true;
-          return resolved;
+          return escapeXml(resolved);
         }
         if (mode === 'omit') {
           changed = true;
@@ -863,7 +900,8 @@ export async function repackDocxFromRaw(
           const metaId = tagKeyToMetaId.get(tagKey);
           if (resolved) {
             changed = true;
-            const renderedRun = `${beforeTag}${preText}${resolved}${afterTag}`;
+            const escapedResolved = escapeXml(resolved);
+            const renderedRun = `${beforeTag}${preText}${escapedResolved}${afterTag}`;
             if (metaId) {
               const shortId = metaId.replace(/-/g, '').slice(0, 8);
               const bmStart = `<w:bookmarkStart w:id="${hfBookmarkId}" w:name="${FP_BOOKMARK_PREFIX}${shortId}"/>`;
@@ -888,7 +926,7 @@ export async function repackDocxFromRaw(
         const resolved = tags[tagKey];
         if (resolved) {
           changed = true;
-          return resolved;
+          return escapeXml(resolved);
         }
         if (mode === 'omit') {
           changed = true;
