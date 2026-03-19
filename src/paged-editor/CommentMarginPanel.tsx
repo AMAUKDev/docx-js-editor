@@ -162,7 +162,18 @@ export const CommentMarginPanel: React.FC<CommentMarginPanelProps> = ({
     return () => scrollParent.removeEventListener('scroll', onScroll);
   }, [visible, pagesContainer, computePositions]);
 
+  // Get page width to position panel to its right
+  const pageWidth = pagesContainer
+    ? (() => {
+        const firstPage = pagesContainer.querySelector('.layout-page') as HTMLElement;
+        return firstPage ? firstPage.offsetWidth : 612;
+      })()
+    : 612;
+
   if (!visible || cards.length === 0) return null;
+
+  // Position relative to pages container — center offset + half page width + gap
+  const panelLeft = pageWidth / 2 + 20; // 20px gap from page edge
 
   return (
     <div
@@ -170,8 +181,8 @@ export const CommentMarginPanel: React.FC<CommentMarginPanelProps> = ({
       style={{
         position: 'absolute',
         top: 0,
-        right: -260,
-        width: 240,
+        left: `calc(50% + ${panelLeft}px)`,
+        width: 220,
         pointerEvents: 'auto',
         zIndex: 12,
       }}
@@ -183,7 +194,7 @@ export const CommentMarginPanel: React.FC<CommentMarginPanelProps> = ({
             position: 'absolute',
             top: card.top,
             left: 0,
-            width: 240,
+            width: 220,
             padding: '6px 8px',
             background: card.done ? '#e8e8e8' : '#fffde7',
             border: '1px solid #e0d68a',
