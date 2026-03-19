@@ -356,6 +356,20 @@ export interface DocxEditorRef {
   print: () => void;
   /** Get the currently selected text (empty string if no selection) */
   getSelectedText: () => string;
+  /** Add an inline comment wrapping the current selection */
+  addComment: (author: string, text: string) => number | null;
+  /** Remove an inline comment by ID (removes highlight + Comment object) */
+  removeComment: (commentId: number) => void;
+  /** Get all document comments */
+  getDocumentComments: () => Array<{
+    id: number;
+    author: string;
+    date?: string;
+    text: string;
+    anchorText: string;
+    parentId?: number;
+    done?: boolean;
+  }>;
   /** Insert a context tag at the current cursor position */
   insertContextTag: (tagKey: string, label?: string, removeIfEmpty?: boolean) => void;
   /** Insert a cross-reference at the current cursor position */
@@ -701,6 +715,8 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
   // Keep history.state accessible in stable callbacks without stale closures
   const historyStateRef = useRef(history.state);
   historyStateRef.current = history.state;
+  // Separate ref for comments added via addComment() — survives history state changes
+  const addedCommentsRef = useRef<import('../types/content').Comment[]>([]);
   // Keep cross-ref updater plugin refs in sync with latest data
   crossRefNumMapRef.current = history.state?.package.numbering
     ? createNumberingMapFromDefs(history.state.package.numbering)
@@ -2358,6 +2374,130 @@ body { background: white; }
         const { from, to } = view.state.selection;
         if (from === to) return '';
         return view.state.doc.textBetween(from, to, ' ');
+      },
+      addComment: (author: string, text: string) => {
+        const view = pagedEditorRef.current?.getView();
+        if (!view) return null;
+        const { from, to } = view.state.selection;
+        if (from === to) return null; // Need a selection
+
+        const schema = view.state.schema;
+        const commentMark = schema.marks.comment;
+        if (!commentMark) return null;
+
+        // Generate a new comment ID (avoid collision with existing)
+        const doc = historyStateRef.current;
+        const existingIds = new Set<number>();
+        if (doc?.package.document?.comments) {
+          for (const c of doc.package.document.comments) {
+            existingIds.add(c.id);
+          }
+        }
+        let newId = 1;
+        while (existingIds.has(newId)) newId++;
+
+        // Apply comment mark to selection
+        const mark = commentMark.create({ commentId: newId });
+        const tr = view.state.tr.addMark(from, to, mark);
+        view.dispatch(tr);
+
+        // Add Comment object to document model AND to the addedComments ref
+        const newComment: import('../types/content').Comment = {
+          id: newId,
+          author,
+          date: new Date().toISOString(),
+          content: [
+            {
+              type: 'paragraph' as const,
+              content: [{ type: 'run' as const, content: [{ type: 'text' as const, text }] }],
+              formatting: {},
+            },
+          ],
+        };
+        if (doc?.package.document) {
+          if (!doc.package.document.comments) {
+            doc.package.document.comments = [];
+          }
+          doc.package.document.comments.push(newComment);
+          (doc as unknown as Record<string, boolean>).commentsModified = true;
+        }
+        addedCommentsRef.current = [...addedCommentsRef.current, newComment];
+
+        return newId;
+      },
+      removeComment: (commentId: number) => {
+        const view = pagedEditorRef.current?.getView();
+        if (!view) return;
+        const schema = view.state.schema;
+        const commentMark = schema.marks.comment;
+        if (!commentMark) return;
+
+        // Remove comment mark from entire document
+        const tr = view.state.tr;
+        const mark = commentMark.create({ commentId });
+        const docSize = view.state.doc.content.size;
+        view.dispatch(tr.removeMark(0, docSize, mark));
+
+        // Remove Comment object from document model and addedComments ref
+        const doc = historyStateRef.current;
+        if (doc?.package.document?.comments) {
+          doc.package.document.comments = doc.package.document.comments.filter(
+            (c) => c.id !== commentId
+          );
+          (doc as unknown as Record<string, boolean>).commentsModified = true;
+        }
+        addedCommentsRef.current = addedCommentsRef.current.filter((c) => c.id !== commentId);
+      },
+      getDocumentComments: () => {
+        const doc = historyStateRef.current;
+        const docComments = doc?.package.document?.comments || [];
+        // Merge with addedCommentsRef to catch comments that haven't propagated to history yet
+        const seenIds = new Set(docComments.map((c) => c.id));
+        const extra = addedCommentsRef.current.filter((c) => !seenIds.has(c.id));
+        const comments = [...docComments, ...extra];
+        const view = pagedEditorRef.current?.getView();
+
+        // Build anchor text map from PM doc comment marks
+        const anchorMap = new Map<number, string>();
+        if (view) {
+          view.state.doc.descendants((node) => {
+            if (node.isText) {
+              for (const mark of node.marks) {
+                if (mark.type.name === 'comment') {
+                  const cid = mark.attrs.commentId as number;
+                  const existing = anchorMap.get(cid) || '';
+                  anchorMap.set(cid, existing + (node.text || ''));
+                }
+              }
+            }
+          });
+        }
+
+        return comments.map((c) => {
+          // Extract text from comment content paragraphs
+          let commentText = '';
+          if (c.content) {
+            for (const para of c.content) {
+              for (const item of para.content || []) {
+                if ('content' in item) {
+                  for (const rc of (item as { content: Array<{ type: string; text?: string }> })
+                    .content) {
+                    if (rc.type === 'text' && rc.text) commentText += rc.text;
+                  }
+                }
+              }
+            }
+          }
+          return {
+            id: c.id,
+            author: c.author || 'Unknown',
+            date: c.date,
+            text: commentText,
+            anchorText: anchorMap.get(c.id) || '',
+            parentId: c.parentId,
+            done: c.done,
+          };
+        });
       },
       insertContextTag: (tagKey: string, label?: string, removeIfEmpty?: boolean) => {
         const view = pagedEditorRef.current?.getView();

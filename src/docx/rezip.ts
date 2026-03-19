@@ -43,6 +43,79 @@ import {
   serializeManifest,
 } from './contextTagMetadata';
 import { FP_BOOKMARK_PREFIX } from './renderWithBookmarks';
+import type { Comment } from '../types/content';
+
+// ============================================================================
+// COMMENT SERIALIZATION
+// ============================================================================
+
+function escapeXml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/**
+ * Serialize Comment objects to OOXML comments.xml format.
+ */
+function serializeCommentsXml(comments: Comment[]): string {
+  const parts: string[] = [
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+    '<w:comments xmlns:wpc="http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas" ' +
+      'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" ' +
+      'xmlns:o="urn:schemas-microsoft-com:office:office" ' +
+      'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" ' +
+      'xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math" ' +
+      'xmlns:v="urn:schemas-microsoft-com:vml" ' +
+      'xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" ' +
+      'xmlns:w10="urn:schemas-microsoft-com:office:word" ' +
+      'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" ' +
+      'xmlns:wne="http://schemas.microsoft.com/office/word/2006/wordml">',
+  ];
+
+  for (const comment of comments) {
+    const initials =
+      comment.initials ||
+      comment.author
+        ?.split(' ')
+        .map((w) => w[0])
+        .join('') ||
+      '';
+    const dateAttr = comment.date ? ` w:date="${escapeXml(comment.date)}"` : '';
+    parts.push(
+      `<w:comment w:id="${comment.id}" w:author="${escapeXml(comment.author || 'Unknown')}" w:initials="${escapeXml(initials)}"${dateAttr}>`
+    );
+
+    // Serialize comment content as paragraphs
+    if (comment.content && comment.content.length > 0) {
+      for (const para of comment.content) {
+        parts.push('<w:p>');
+        for (const item of para.content || []) {
+          if ('content' in item) {
+            const run = item as { content: Array<{ type: string; text?: string }> };
+            parts.push('<w:r>');
+            for (const rc of run.content) {
+              if (rc.type === 'text' && rc.text) {
+                parts.push(`<w:t xml:space="preserve">${escapeXml(rc.text)}</w:t>`);
+              }
+            }
+            parts.push('</w:r>');
+          }
+        }
+        parts.push('</w:p>');
+      }
+    } else {
+      parts.push('<w:p><w:r><w:t></w:t></w:r></w:p>');
+    }
+
+    parts.push('</w:comment>');
+  }
+
+  parts.push('</w:comments>');
+  return parts.join('');
+}
 
 // ============================================================================
 // NEW IMAGE HANDLING
@@ -382,6 +455,55 @@ export async function repackDocx(doc: Document, options: RepackOptions = {}): Pr
           compression: 'DEFLATE',
           compressionOptions: { level: compressionLevel },
         });
+      }
+    }
+  }
+
+  // ── Regenerate comments.xml if comments were modified ──
+  if (
+    (doc as unknown as Record<string, boolean>).commentsModified &&
+    doc.package.document?.comments
+  ) {
+    const comments = doc.package.document.comments;
+    if (comments.length > 0) {
+      const commentsXml = serializeCommentsXml(comments);
+      newZip.file('word/comments.xml', commentsXml, {
+        compression: 'DEFLATE',
+        compressionOptions: { level: compressionLevel },
+      });
+      // Ensure [Content_Types].xml has comments entry
+      const ctFile = newZip.file('[Content_Types].xml');
+      if (ctFile) {
+        let ctXml = await ctFile.async('text');
+        if (!ctXml.includes('word/comments.xml')) {
+          ctXml = ctXml.replace(
+            '</Types>',
+            '<Override PartName="/word/comments.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml"/></Types>'
+          );
+          newZip.file('[Content_Types].xml', ctXml, {
+            compression: 'DEFLATE',
+            compressionOptions: { level: compressionLevel },
+          });
+        }
+      }
+      // Ensure document.xml.rels has comments relationship
+      const docRelsFile = newZip.file('word/_rels/document.xml.rels');
+      if (docRelsFile) {
+        let docRels = await docRelsFile.async('text');
+        if (!docRels.includes('comments.xml')) {
+          const existingIds = [...docRels.matchAll(/Id="rId(\d+)"/g)].map((m) =>
+            parseInt(m[1], 10)
+          );
+          const nextId = existingIds.length > 0 ? Math.max(...existingIds) + 1 : 100;
+          docRels = docRels.replace(
+            '</Relationships>',
+            `<Relationship Id="rId${nextId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments" Target="comments.xml"/></Relationships>`
+          );
+          newZip.file('word/_rels/document.xml.rels', docRels, {
+            compression: 'DEFLATE',
+            compressionOptions: { level: compressionLevel },
+          });
+        }
       }
     }
   }

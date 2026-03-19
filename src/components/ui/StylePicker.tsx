@@ -260,14 +260,21 @@ export function StylePicker({
     return options;
   }, [styles, allowedStyleIds, numberingMap]);
 
-  // Key to force remount after selection — allows re-applying the same style
+  // Key to force remount after selection — allows re-applying the same style.
+  // After each selection the key increments AND we briefly set a sentinel value
+  // so that Radix Select treats the next click on the same style as a real change.
   const [selectKey, setSelectKey] = React.useState(0);
+  const [overrideValue, setOverrideValue] = React.useState<string | null>(null);
 
   const handleValueChange = React.useCallback(
     (newValue: string) => {
       onChange?.(newValue);
-      // Force remount so the same value can be re-selected (re-enforce style)
-      setSelectKey((k) => k + 1);
+      // Set a sentinel value so Radix sees the next identical pick as a change
+      setOverrideValue('__reset__');
+      requestAnimationFrame(() => {
+        setOverrideValue(null);
+        setSelectKey((k) => k + 1);
+      });
     },
     [onChange]
   );
@@ -281,7 +288,7 @@ export function StylePicker({
       <div className={cn('flex items-center gap-2', className)}>
         <Select
           key={selectKey}
-          value={currentValue}
+          value={overrideValue ?? currentValue}
           onValueChange={handleValueChange}
           disabled={disabled}
         >
@@ -328,7 +335,7 @@ export function StylePicker({
   return (
     <Select
       key={selectKey}
-      value={currentValue}
+      value={overrideValue ?? currentValue}
       onValueChange={handleValueChange}
       disabled={disabled}
     >
