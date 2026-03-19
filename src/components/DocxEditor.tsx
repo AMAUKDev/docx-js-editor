@@ -2104,6 +2104,26 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
           Object.keys(ctMeta).length > 0 ? ctMeta : undefined;
       }
 
+      // If comments were added/removed during this session, ensure the
+      // commentsModified flag is set on the current agent document and
+      // the comments array is up-to-date. The flag may have been lost
+      // when ProseMirror state changed and a new agent was created.
+      if (addedCommentsRef.current.length > 0) {
+        const doc = agentRef.current.getDocument();
+        (doc as unknown as Record<string, boolean>).commentsModified = true;
+        if (doc.package.document) {
+          if (!doc.package.document.comments) {
+            doc.package.document.comments = [];
+          }
+          const existingIds = new Set(doc.package.document.comments.map((c) => c.id));
+          for (const c of addedCommentsRef.current) {
+            if (!existingIds.has(c.id)) {
+              doc.package.document.comments.push(c);
+            }
+          }
+        }
+      }
+
       const buffer = await agentRef.current.toBuffer();
       onSave?.(buffer);
       return buffer;
@@ -2760,6 +2780,18 @@ body { background: white; }
         if (mode === 'raw' || !schema.nodes.contextTag) {
           if (agentRef.current && ctMeta) {
             agentRef.current.getDocument().contextTagMetadata = ctMeta;
+          }
+          // Sync added comments to agent document (may have been lost on agent recreation)
+          if (agentRef.current && addedCommentsRef.current.length > 0) {
+            const d = agentRef.current.getDocument();
+            (d as unknown as Record<string, boolean>).commentsModified = true;
+            if (d.package.document) {
+              if (!d.package.document.comments) d.package.document.comments = [];
+              const ids = new Set(d.package.document.comments.map((c) => c.id));
+              for (const c of addedCommentsRef.current) {
+                if (!ids.has(c.id)) d.package.document.comments.push(c);
+              }
+            }
           }
           return agentRef.current?.toBuffer() ?? null;
         }
