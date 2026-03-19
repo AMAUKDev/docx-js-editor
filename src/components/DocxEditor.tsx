@@ -2761,6 +2761,19 @@ body { background: white; }
           if (agentRef.current && ctMeta) {
             agentRef.current.getDocument().contextTagMetadata = ctMeta;
           }
+          // If comments were modified, rebuild document body from PM to get
+          // commentRangeStart/End markers in the serialized XML
+          if (
+            agentRef.current &&
+            (baseDoc as unknown as Record<string, boolean>).commentsModified
+          ) {
+            const doc = agentRef.current.getDocument();
+            const rebuilt = fromProseDoc(view.state.doc, doc);
+            rebuilt.contextTagMetadata = ctMeta;
+            (rebuilt as unknown as Record<string, boolean>).commentsModified = true;
+            const tempAgent = new DocumentAgent(rebuilt);
+            return tempAgent.toBuffer();
+          }
           return agentRef.current?.toBuffer() ?? null;
         }
 
@@ -2777,6 +2790,11 @@ body { background: white; }
         // (headers/footers use original XML — replaced at text level, not Document model)
         if (Object.keys(tags).length > 0) {
           renderedDocument.contextTagReplacements = { tags, mode };
+        }
+
+        // Propagate commentsModified flag so rezip regenerates comments.xml
+        if ((baseDoc as unknown as Record<string, boolean>).commentsModified) {
+          (renderedDocument as unknown as Record<string, boolean>).commentsModified = true;
         }
 
         // Serialize to DOCX buffer

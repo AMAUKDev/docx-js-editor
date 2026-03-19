@@ -70,6 +70,8 @@ export function fromProseDoc(pmDoc: PMNode, baseDocument?: Document): Document {
     finalSectionProperties: baseDocument?.package.document.finalSectionProperties,
     sections: baseDocument?.package.document.sections,
     rawDocumentTag: baseDocument?.package.document.rawDocumentTag,
+    // Preserve comments for Word round-trip
+    comments: baseDocument?.package.document.comments,
   };
 
   // If we have a base document, preserve its package structure

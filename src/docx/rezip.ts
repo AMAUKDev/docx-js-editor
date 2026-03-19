@@ -359,7 +359,10 @@ export async function repackDocx(doc: Document, options: RepackOptions = {}): Pr
   // editing), preserve the original document.xml to avoid lossy re-serialization.
   // Our parser strips SDTs, mc:AlternateContent, rsid attrs, etc. — re-serializing
   // unmodified content produces a degraded file that Word may reject as corrupt.
-  if (!doc.contentDirty && doc.originalDocumentXml) {
+  // Exception: if comments were modified, we MUST re-serialize to include
+  // commentRangeStart/End markers in the document XML.
+  const hasModifiedComments = (doc as unknown as Record<string, boolean>).commentsModified;
+  if (!doc.contentDirty && !hasModifiedComments && doc.originalDocumentXml) {
     // No edits made — keep the original document.xml exactly as-is
     newZip.file('word/document.xml', doc.originalDocumentXml, {
       compression: 'DEFLATE',

@@ -770,7 +770,12 @@ function serializeParagraphContent(content: ParagraphContent): string {
     case 'commentRangeStart':
       return `<w:commentRangeStart w:id="${content.id}"/>`;
     case 'commentRangeEnd':
-      return `<w:commentRangeEnd w:id="${content.id}"/>`;
+      // Word requires a commentReference run after the range end
+      return (
+        `<w:commentRangeEnd w:id="${content.id}"/>` +
+        `<w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr>` +
+        `<w:commentReference w:id="${content.id}"/></w:r>`
+      );
     case 'insertion':
       return serializeTrackedChange('ins', content);
     case 'deletion':
