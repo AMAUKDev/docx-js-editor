@@ -390,20 +390,43 @@ export interface DocxEditorRef {
   setDocumentMeta: (meta: FPDocumentMeta) => void;
 }
 
-/** Regex matching {{ context.tag }} patterns (same as toProseDoc).
- *  A trailing `!` before `}}` or `}` signals removeIfEmpty but is ignored for HF. */
-const HF_CONTEXT_TAG_RE = /\{\{\s*(context\.[\w.]+)!?\s*\}\}|\{(context\.[\w.]+)!?\}/g;
+/** Regex for matching context tag patterns in header/footer text.
+ *  Matches both {{ tag.path }} (double-brace) and {tag.path} (single-brace, 0+ dots).
+ *  Used for both discovery and substitution in H/F content. */
+const HF_CONTEXT_TAG_RE = /\{\{\s*([\w]+(?:\.[\w]+)*)!?\s*\}\}|\{([\w]+(?:\.[\w]+)*)\}/g;
+
+// ─── HEADER/FOOTER CONTEXT TAG SUBSTITUTION ────────────────────────────────
+//
+// ARCHITECTURE NOTE:
+// H/F tag substitution happens in TWO complementary places:
+//
+// 1. DocxEditor (here): replaceContextTagsInHf() creates NEW HeaderFooter
+//    objects with tag patterns replaced by resolved values. These objects are
+//    passed as props to PagedEditor for visual display ONLY.
+//    The original Document model is NOT mutated — saving uses the original.
+//
+// 2. PagedEditor: substituteHfContextTags() in convertHeaderFooterToContent()
+//    provides a second pass during layout. This handles tags in the FlowBlock
+//    text that might not have been caught by Path 1 (e.g., single-brace tags
+//    that were already in the saved DOCX as rendered text).
+//
+// CRITICAL: replaceContextTagsInHf() MUST always return a new object reference
+// (via spread), even when no substitutions occurred. This ensures React's
+// dependency tracking detects the change when contextTags changes, triggering
+// a re-render in PagedEditor. Returning the same reference is the root cause
+// of the recurring "footer doesn't update" bug.
+// ────────────────────────────────────────────────────────────────────────────
 
 /**
- * Replace {{ context.tag }} text patterns in a single HeaderFooter (for visual display).
- * Returns a new object with replacements applied; original is not mutated.
+ * Replace context tag text patterns in a HeaderFooter for visual display.
+ * ALWAYS returns a new object to ensure React prop change detection.
+ * Does NOT mutate the original — the Document model keeps tag patterns for saving.
  */
 function replaceContextTagsInHf(
   hf: HeaderFooter,
   tags: Record<string, string>,
   mode: 'omit' | 'keep'
 ): HeaderFooter {
-  let anyChanged = false;
   const newContent = hf.content.map((block) => {
     if (block.type !== 'paragraph') return block;
     let paraChanged = false;
@@ -412,9 +435,11 @@ function replaceContextTagsInHf(
       const newRunContent = item.content.map((rc) => {
         if (rc.type !== 'text' || !rc.text) return rc;
         const replaced = rc.text.replace(HF_CONTEXT_TAG_RE, (_match, g1, g2) => {
-          const tagKey = g1 || g2;
+          const rawKey = g1 || g2;
+          // Strip legacy "context." prefix
+          const tagKey = rawKey.startsWith('context.') ? rawKey.slice(8) : rawKey;
           const resolved = tags[tagKey];
-          if (resolved) {
+          if (resolved !== undefined && resolved !== '') {
             paraChanged = true;
             return resolved;
           }
@@ -428,13 +453,11 @@ function replaceContextTagsInHf(
       });
       return paraChanged ? { ...item, content: newRunContent } : item;
     });
-    if (paraChanged) {
-      anyChanged = true;
-      return { ...block, content: newParaContent };
-    }
-    return block;
+    return paraChanged ? { ...block, content: newParaContent } : block;
   });
-  return anyChanged ? { ...hf, content: newContent } : hf;
+  // ALWAYS return a new object — never return `hf` directly.
+  // This ensures React detects the prop change even when no tags matched.
+  return { ...hf, content: newContent };
 }
 
 /** Set locked state on all paragraphs in every header and footer. */
@@ -2826,8 +2849,10 @@ body { background: white; }
     // When no titlePg differentiation, headerContent is used for all pages.
     // When titlePg is set, headerContent = default (pages 2+), firstPage* = page 1.
     //
-    // Resolve context tags for visual display only — the original document model
-    // stays unchanged so template variables survive round-trip saving.
+    // Substitute context tags for visual display. The original Document model is
+    // NOT mutated — these are new objects for PagedEditor's layout pipeline.
+    // replaceContextTagsInHf ALWAYS returns a new reference (even if no tags matched)
+    // to ensure React dependency tracking works correctly.
     const tags = contextTags ?? {};
     const hasCtx = Object.keys(tags).length > 0;
     return {

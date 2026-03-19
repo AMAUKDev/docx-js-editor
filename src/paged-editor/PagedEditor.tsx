@@ -1261,6 +1261,12 @@ function resolveAlignment(
 /**
  * Substitute context tag patterns in header/footer text with resolved values.
  *
+ * This is the SECOND pass of H/F tag substitution (see DocxEditor.tsx for the first).
+ * DocxEditor's replaceContextTagsInHf() handles tags in the Document model text,
+ * while this function handles any remaining tags in FlowBlock text during layout.
+ * Both passes are needed because the Document model may have already-substituted
+ * text from DocxEditor, or it may have raw tag patterns from the original DOCX.
+ *
  * Handles both single-brace `{dotted.path}` and double-brace `{{ dotted.path }}` patterns.
  * Falls back to original text if tag key is not found in the map.
  */
@@ -3669,6 +3675,12 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
     // Re-layout when header/footer content or context tag values change.
     // Also re-triggers when renderMode flips (raw ↔ rendered) so H/F tags
     // show/hide resolved values in sync with the body.
+    //
+    // CRITICAL: `contextTags` MUST be in this dependency array.
+    // H/F tag substitution happens in convertHeaderFooterToContent() during layout.
+    // The Document model header/footer objects do NOT change when contextTags changes
+    // (they keep original tag patterns like {office.phone}), so only the contextTags
+    // dep triggers re-substitution. Do NOT remove it from the deps.
     const headerFooterEpochRef = useRef(0);
     useEffect(() => {
       // Skip the initial render — handleEditorViewReady already does the first layout
@@ -3685,8 +3697,8 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
       footerContent,
       firstPageHeaderContent,
       firstPageFooterContent,
-      contextTags,
-      renderMode,
+      contextTags, // ← triggers H/F re-substitution when values change
+      renderMode, // ← triggers raw/rendered toggle for H/F
       runLayoutPipeline,
     ]);
 
