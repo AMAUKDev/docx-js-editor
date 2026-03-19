@@ -194,6 +194,8 @@ export interface PagedEditorProps {
   showCommentPanel?: boolean;
   /** Callback when comment action occurs (reply, resolve, delete). */
   onCommentAction?: (action: 'reply' | 'resolve' | 'delete', commentId: number) => void;
+  /** Bump to force comment panel refresh. */
+  commentPanelKey?: number;
   /** Custom class name. */
   className?: string;
   /** Custom styles. */
@@ -1648,6 +1650,7 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
       onContextTagRightClick,
       showCommentPanel,
       onCommentAction,
+      commentPanelKey,
       className,
       style,
     } = props;
@@ -3922,6 +3925,7 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
           {/* Comment margin panel (Word-like) */}
           {showCommentPanel && (
             <CommentMarginPanel
+              key={commentPanelKey}
               pagesContainer={pagesContainerRef.current}
               view={hiddenPMRef.current?.getView() ?? null}
               comments={document?.package.document?.comments || []}

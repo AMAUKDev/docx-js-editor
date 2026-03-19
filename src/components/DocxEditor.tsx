@@ -254,6 +254,8 @@ export interface DocxEditorProps {
   showCommentPanel?: boolean;
   /** Callback when comment action occurs in the margin panel */
   onCommentAction?: (action: 'reply' | 'resolve' | 'delete', commentId: number) => void;
+  /** Bump to force comment margin panel refresh */
+  commentPanelKey?: number;
   /** Additional CSS class name */
   className?: string;
   /** Additional inline styles */
@@ -616,6 +618,7 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     onPageCountChange: onPageCountChangeProp,
     showCommentPanel,
     onCommentAction,
+    commentPanelKey,
   },
   ref
 ) {
@@ -3531,6 +3534,7 @@ body { background: white; }
                       onContextTagRightClick={onContextTagRightClick}
                       showCommentPanel={showCommentPanel}
                       onCommentAction={onCommentAction}
+                      commentPanelKey={commentPanelKey}
                       onPageCountChange={(pageCount) => {
                         setState((prev) => {
                           if (prev.totalPages !== pageCount) {
