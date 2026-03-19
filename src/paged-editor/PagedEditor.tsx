@@ -2612,6 +2612,64 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
       (e: React.MouseEvent) => {
         if (!onContextTagRightClick || !hiddenPMRef.current) return;
 
+        // First: check if right-click target is a context tag span (fast DOM check)
+        const target = e.target as HTMLElement;
+        const tagEl = target.closest('.layout-context-tag[data-tag-key]') as HTMLElement;
+        if (tagEl) {
+          e.preventDefault();
+          const tagKey = tagEl.dataset.tagKey || '';
+          const pmStart = Number(tagEl.dataset.pmStart || '0');
+          // Look up the PM node to get full attributes
+          const view = hiddenPMRef.current.getView?.() ?? (hiddenPMRef.current as any)?.view;
+          if (view) {
+            try {
+              const $pos = view.state.doc.resolve(pmStart);
+              const parent = $pos.parent;
+              let nodeFound = false;
+              parent.forEach((node: import('prosemirror-model').Node, offset: number) => {
+                if (nodeFound) return;
+                const nodeStart = $pos.start() + offset;
+                if (node.type.name === 'contextTag' && Math.abs(nodeStart - pmStart) <= 1) {
+                  nodeFound = true;
+                  onContextTagRightClick({
+                    tagKey: node.attrs.tagKey as string,
+                    label: node.attrs.label as string,
+                    removeIfEmpty: !!node.attrs.removeIfEmpty,
+                    removeTableRow: !!node.attrs.removeTableRow,
+                    pmPos: nodeStart,
+                    clientX: e.clientX,
+                    clientY: e.clientY,
+                  });
+                }
+              });
+              if (!nodeFound) {
+                // Fallback: use tagKey from DOM
+                onContextTagRightClick({
+                  tagKey,
+                  label: tagEl.textContent || '',
+                  removeIfEmpty: false,
+                  removeTableRow: false,
+                  pmPos: pmStart,
+                  clientX: e.clientX,
+                  clientY: e.clientY,
+                });
+              }
+            } catch {
+              onContextTagRightClick({
+                tagKey,
+                label: tagEl.textContent || '',
+                removeIfEmpty: false,
+                removeTableRow: false,
+                pmPos: pmStart,
+                clientX: e.clientX,
+                clientY: e.clientY,
+              });
+            }
+          }
+          return;
+        }
+
+        // Fallback: original PM position-based detection
         const view = hiddenPMRef.current.getView?.() ?? (hiddenPMRef.current as any)?.view;
         if (!view) return;
 
@@ -2628,7 +2686,7 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
           if (
             node.type.name === 'contextTag' &&
             pmPos >= nodeStart &&
-            pmPos < nodeStart + node.nodeSize
+            pmPos <= nodeStart + node.nodeSize
           ) {
             found = true;
             e.preventDefault();

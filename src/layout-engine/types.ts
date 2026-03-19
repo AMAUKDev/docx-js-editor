@@ -66,6 +66,8 @@ export type TextRun = RunFormatting & {
    * entire run as contributing exactly 1 PM unit, not text.length PM units.
    */
   isAtomicNode?: boolean;
+  /** Context tag key (e.g. "case.case_no") — set for contextTag nodes. */
+  contextTagKey?: string;
 };
 
 /**

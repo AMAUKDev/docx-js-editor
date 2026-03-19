@@ -486,7 +486,8 @@ export async function repackDocx(doc: Document, options: RepackOptions = {}): Pr
             changed = true;
             const renderedRun = `${beforeTag}${preText}${resolved}${afterTag}`;
             if (metaId) {
-              const bmStart = `<w:bookmarkStart w:id="${hfBookmarkId}" w:name="${FP_BOOKMARK_PREFIX}${metaId}"/>`;
+              const shortId = metaId.replace(/-/g, '').slice(0, 8);
+              const bmStart = `<w:bookmarkStart w:id="${hfBookmarkId}" w:name="${FP_BOOKMARK_PREFIX}${shortId}"/>`;
               const bmEnd = `<w:bookmarkEnd w:id="${hfBookmarkId}"/>`;
               hfBookmarkId++;
               return `${bmStart}${renderedRun}${bmEnd}`;
@@ -864,7 +865,8 @@ export async function repackDocxFromRaw(
             changed = true;
             const renderedRun = `${beforeTag}${preText}${resolved}${afterTag}`;
             if (metaId) {
-              const bmStart = `<w:bookmarkStart w:id="${hfBookmarkId}" w:name="${FP_BOOKMARK_PREFIX}${metaId}"/>`;
+              const shortId = metaId.replace(/-/g, '').slice(0, 8);
+              const bmStart = `<w:bookmarkStart w:id="${hfBookmarkId}" w:name="${FP_BOOKMARK_PREFIX}${shortId}"/>`;
               const bmEnd = `<w:bookmarkEnd w:id="${hfBookmarkId}"/>`;
               hfBookmarkId++;
               return `${bmStart}${renderedRun}${bmEnd}`;

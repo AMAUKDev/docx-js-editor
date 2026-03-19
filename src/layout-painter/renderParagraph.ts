@@ -214,6 +214,12 @@ function renderTextRun(run: TextRun, doc: Document): HTMLElement {
   applyRunStyles(span, run);
   applyPmPositions(span, run.pmStart, run.pmEnd);
 
+  // Context tag identification — add data attribute for coloring/right-click
+  if (run.contextTagKey) {
+    span.dataset.tagKey = run.contextTagKey;
+    span.classList.add('layout-context-tag');
+  }
+
   // Handle hyperlinks
   if (run.hyperlink) {
     const anchor = doc.createElement('a');

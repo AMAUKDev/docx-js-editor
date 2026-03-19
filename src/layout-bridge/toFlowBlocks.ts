@@ -454,9 +454,8 @@ function paragraphToRuns(node: PMNode, startPos: number, _options: ToFlowBlocksO
           kind: 'text',
           text: lines[li],
           ...formatting,
-          // Mark as atomic: this run occupies exactly 1 PM unit (nodeSize=1)
-          // even though it may display as multiple characters.
           isAtomicNode: true,
+          contextTagKey: tagKey,
           pmStart: childPos,
           pmEnd: childPos + child.nodeSize,
         };
