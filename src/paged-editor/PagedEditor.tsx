@@ -34,6 +34,7 @@ import type { EditorView } from 'prosemirror-view';
 import { HiddenProseMirror, type HiddenProseMirrorRef } from './HiddenProseMirror';
 import { SelectionOverlay } from './SelectionOverlay';
 import { ImageSelectionOverlay, type ImageSelectionInfo } from './ImageSelectionOverlay';
+import { CommentMarginPanel } from './CommentMarginPanel';
 
 // Layout engine
 import { layoutDocument } from '../layout-engine';
@@ -189,6 +190,10 @@ export interface PagedEditorProps {
    * where image fields have been resolved from case_file_id to {url, name}.
    */
   loopPreviewData?: Record<string, Array<Record<string, unknown>>> | null;
+  /** Show inline comment margin panel alongside pages. */
+  showCommentPanel?: boolean;
+  /** Callback when comment action occurs (reply, resolve, delete). */
+  onCommentAction?: (action: 'reply' | 'resolve' | 'delete', commentId: number) => void;
   /** Custom class name. */
   className?: string;
   /** Custom styles. */
@@ -1641,6 +1646,8 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
       onBodyClick,
       onPageCountChange,
       onContextTagRightClick,
+      showCommentPanel,
+      onCommentAction,
       className,
       style,
     } = props;
@@ -3910,6 +3917,19 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
             <div className="paged-editor__plugin-overlays" style={pluginOverlaysStyles}>
               {pluginOverlays}
             </div>
+          )}
+
+          {/* Comment margin panel (Word-like) */}
+          {showCommentPanel && (
+            <CommentMarginPanel
+              pagesContainer={pagesContainerRef.current}
+              view={hiddenPMRef.current?.getView() ?? null}
+              comments={document?.package.document?.comments || []}
+              visible={!!showCommentPanel}
+              onReply={onCommentAction ? (id) => onCommentAction('reply', id) : undefined}
+              onResolve={onCommentAction ? (id) => onCommentAction('resolve', id) : undefined}
+              onDelete={onCommentAction ? (id) => onCommentAction('delete', id) : undefined}
+            />
           )}
         </div>
       </div>

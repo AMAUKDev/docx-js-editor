@@ -250,6 +250,10 @@ export interface DocxEditorProps {
   readOnly?: boolean;
   /** Custom toolbar actions */
   toolbarExtra?: ReactNode;
+  /** Show inline comment margin panel alongside pages */
+  showCommentPanel?: boolean;
+  /** Callback when comment action occurs in the margin panel */
+  onCommentAction?: (action: 'reply' | 'resolve' | 'delete', commentId: number) => void;
   /** Additional CSS class name */
   className?: string;
   /** Additional inline styles */
@@ -610,6 +614,8 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     onContextTagRightClick,
     loopPreviewData,
     onPageCountChange: onPageCountChangeProp,
+    showCommentPanel,
+    onCommentAction,
   },
   ref
 ) {
@@ -3523,6 +3529,8 @@ body { background: white; }
                       onRenderedDomContextReady={onRenderedDomContextReady}
                       pluginOverlays={pluginOverlays}
                       onContextTagRightClick={onContextTagRightClick}
+                      showCommentPanel={showCommentPanel}
+                      onCommentAction={onCommentAction}
                       onPageCountChange={(pageCount) => {
                         setState((prev) => {
                           if (prev.totalPages !== pageCount) {
