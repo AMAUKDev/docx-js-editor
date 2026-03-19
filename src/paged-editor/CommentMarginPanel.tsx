@@ -68,7 +68,11 @@ export const CommentMarginPanel: React.FC<CommentMarginPanelProps> = ({
       return;
     }
 
-    const containerRect = pagesContainer.getBoundingClientRect();
+    // Use the scroll parent (the .paged-editor div) as coordinate reference
+    const scrollParent = pagesContainer.closest('.paged-editor') as HTMLElement;
+    const containerRect = scrollParent
+      ? scrollParent.getBoundingClientRect()
+      : pagesContainer.getBoundingClientRect();
 
     // Step 1: Find PM position ranges for each comment mark
     const commentRanges = new Map<number, { from: number; to: number }>();
@@ -120,7 +124,8 @@ export const CommentMarginPanel: React.FC<CommentMarginPanelProps> = ({
       let top = results.length * 80; // fallback: stack vertically
       if (bestEl) {
         const rect = bestEl.getBoundingClientRect();
-        top = rect.top - containerRect.top + pagesContainer.scrollTop;
+        const scrollTop = scrollParent ? scrollParent.scrollTop : 0;
+        top = rect.top - containerRect.top + scrollTop;
       }
 
       // Prevent overlapping: ensure minimum spacing
@@ -162,18 +167,7 @@ export const CommentMarginPanel: React.FC<CommentMarginPanelProps> = ({
     return () => scrollParent.removeEventListener('scroll', onScroll);
   }, [visible, pagesContainer, computePositions]);
 
-  // Get page width to position panel to its right
-  const pageWidth = pagesContainer
-    ? (() => {
-        const firstPage = pagesContainer.querySelector('.layout-page') as HTMLElement;
-        return firstPage ? firstPage.offsetWidth : 612;
-      })()
-    : 612;
-
   if (!visible || cards.length === 0) return null;
-
-  // Position relative to pages container — center offset + half page width + gap
-  const panelLeft = pageWidth / 2 + 20; // 20px gap from page edge
 
   return (
     <div
@@ -181,10 +175,10 @@ export const CommentMarginPanel: React.FC<CommentMarginPanelProps> = ({
       style={{
         position: 'absolute',
         top: 0,
-        left: `calc(50% + ${panelLeft}px)`,
-        width: 220,
+        right: 8,
+        width: 230,
         pointerEvents: 'auto',
-        zIndex: 12,
+        zIndex: 20,
       }}
     >
       {cards.map((card) => (
