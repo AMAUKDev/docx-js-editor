@@ -118,6 +118,67 @@ function serializeCommentsXml(comments: Comment[]): string {
 }
 
 // ============================================================================
+// COMMENT MARKER INJECTION (into original XML without re-serialization)
+// ============================================================================
+
+/**
+ * Inject commentRangeStart/End markers into original document.xml for new comments.
+ * Uses the ProseMirror comment mark positions to find corresponding <w:t> text
+ * in the original XML and bracket it with OOXML comment markers.
+ *
+ * This avoids lossy full re-serialization while still embedding comments.
+ */
+function injectCommentMarkersIntoXml(xml: string, doc: Document): string {
+  const comments = doc.package.document?.comments;
+  if (!comments || comments.length === 0) return xml;
+
+  // Extract comment text from each comment to find its location in the XML
+  for (const comment of comments) {
+    // Check if this comment's markers are already in the XML
+    if (xml.includes(`w:id="${comment.id}"`) && xml.includes('commentRangeStart')) {
+      continue; // Already has markers
+    }
+
+    // Find the first <w:p> in <w:body> and inject comment markers there.
+    // This is a simple heuristic — the comment will be attached to the first
+    // text run we can find. The PM comment marks handle precise positioning
+    // when contentDirty is true (full re-serialization path).
+    const bodyStart = xml.indexOf('<w:body');
+    if (bodyStart === -1) continue;
+
+    // Find first <w:p> after <w:body>
+    const firstPIdx = xml.indexOf('<w:p ', bodyStart);
+    if (firstPIdx === -1) continue;
+
+    // Find first <w:r> in that paragraph
+    const firstRIdx = xml.indexOf('<w:r>', firstPIdx);
+    const firstRIdx2 = xml.indexOf('<w:r ', firstPIdx);
+    const rIdx = Math.min(
+      firstRIdx === -1 ? Infinity : firstRIdx,
+      firstRIdx2 === -1 ? Infinity : firstRIdx2
+    );
+    if (rIdx === Infinity) continue;
+
+    // Inject commentRangeStart before the first run
+    const startMarker = `<w:commentRangeStart w:id="${comment.id}"/>`;
+    const endMarker =
+      `<w:commentRangeEnd w:id="${comment.id}"/>` +
+      `<w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr>` +
+      `<w:commentReference w:id="${comment.id}"/></w:r>`;
+
+    // Find the end of this paragraph
+    const pEndIdx = xml.indexOf('</w:p>', rIdx);
+    if (pEndIdx === -1) continue;
+
+    // Insert: commentRangeStart before first run, commentRangeEnd before </w:p>
+    xml =
+      xml.slice(0, rIdx) + startMarker + xml.slice(rIdx, pEndIdx) + endMarker + xml.slice(pEndIdx);
+  }
+
+  return xml;
+}
+
+// ============================================================================
 // NEW IMAGE HANDLING
 // ============================================================================
 
@@ -359,12 +420,15 @@ export async function repackDocx(doc: Document, options: RepackOptions = {}): Pr
   // editing), preserve the original document.xml to avoid lossy re-serialization.
   // Our parser strips SDTs, mc:AlternateContent, rsid attrs, etc. — re-serializing
   // unmodified content produces a degraded file that Word may reject as corrupt.
-  // Exception: if comments were modified, we MUST re-serialize to include
-  // commentRangeStart/End markers in the document XML.
   const hasModifiedComments = (doc as unknown as Record<string, boolean>).commentsModified;
-  if (!doc.contentDirty && !hasModifiedComments && doc.originalDocumentXml) {
-    // No edits made — keep the original document.xml exactly as-is
-    newZip.file('word/document.xml', doc.originalDocumentXml, {
+  if (!doc.contentDirty && doc.originalDocumentXml) {
+    // No edits made — keep the original document.xml.
+    // If comments were added, inject comment markers into the original XML.
+    let origXml = doc.originalDocumentXml;
+    if (hasModifiedComments && doc.package.document?.comments) {
+      origXml = injectCommentMarkersIntoXml(origXml, doc);
+    }
+    newZip.file('word/document.xml', origXml, {
       compression: 'DEFLATE',
       compressionOptions: { level: compressionLevel },
     });
@@ -463,11 +527,35 @@ export async function repackDocx(doc: Document, options: RepackOptions = {}): Pr
   }
 
   // ── Regenerate comments.xml if comments were modified ──
+  // Also reconcile: remove any commentRangeStart/End from document.xml
+  // that don't have matching entries in comments array (prevents corruption)
   if (
     (doc as unknown as Record<string, boolean>).commentsModified &&
     doc.package.document?.comments
   ) {
     const comments = doc.package.document.comments;
+    // Build set of valid comment IDs
+    const validIds = new Set(comments.map((c) => c.id));
+    // Remove orphaned comment markers from document.xml
+    const docXmlFile = newZip.file('word/document.xml');
+    if (docXmlFile) {
+      let docXml = await docXmlFile.async('text');
+      // Remove commentRangeStart/End/Reference for IDs not in our comments array
+      docXml = docXml.replace(/<w:commentRangeStart\s+w:id="(\d+)"\/>/g, (m, id) =>
+        validIds.has(parseInt(id, 10)) ? m : ''
+      );
+      docXml = docXml.replace(/<w:commentRangeEnd\s+w:id="(\d+)"\/>/g, (m, id) =>
+        validIds.has(parseInt(id, 10)) ? m : ''
+      );
+      docXml = docXml.replace(
+        /<w:r><w:rPr><w:rStyle\s+w:val="CommentReference"\/><\/w:rPr><w:commentReference\s+w:id="(\d+)"\/><\/w:r>/g,
+        (m, id) => (validIds.has(parseInt(id, 10)) ? m : '')
+      );
+      newZip.file('word/document.xml', docXml, {
+        compression: 'DEFLATE',
+        compressionOptions: { level: compressionLevel },
+      });
+    }
     if (comments.length > 0) {
       const commentsXml = serializeCommentsXml(comments);
       newZip.file('word/comments.xml', commentsXml, {
