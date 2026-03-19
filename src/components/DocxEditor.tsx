@@ -362,8 +362,10 @@ export interface DocxEditorRef {
   print: () => void;
   /** Get the currently selected text (empty string if no selection) */
   getSelectedText: () => string;
+  /** Get the current PM selection range { from, to } */
+  getSelectionRange: () => { from: number; to: number } | null;
   /** Add an inline comment wrapping the current selection */
-  addComment: (author: string, text: string) => number | null;
+  addComment: (author: string, text: string, from?: number, to?: number) => number | null;
   /** Remove an inline comment by ID (removes highlight + Comment object) */
   removeComment: (commentId: number) => void;
   /** Get all document comments */
@@ -2406,10 +2408,19 @@ body { background: white; }
         if (from === to) return '';
         return view.state.doc.textBetween(from, to, ' ');
       },
-      addComment: (author: string, text: string) => {
+      getSelectionRange: () => {
         const view = pagedEditorRef.current?.getView();
         if (!view) return null;
         const { from, to } = view.state.selection;
+        if (from === to) return null;
+        return { from, to };
+      },
+      addComment: (author: string, text: string, fromPos?: number, toPos?: number) => {
+        const view = pagedEditorRef.current?.getView();
+        if (!view) return null;
+        // Use provided positions or fall back to current selection
+        const from = fromPos ?? view.state.selection.from;
+        const to = toPos ?? view.state.selection.to;
         if (from === to) return null; // Need a selection
 
         const schema = view.state.schema;
