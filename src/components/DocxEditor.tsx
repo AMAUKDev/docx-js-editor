@@ -354,6 +354,8 @@ export interface DocxEditorRef {
   openPrintPreview: () => void;
   /** Print the document directly */
   print: () => void;
+  /** Get the currently selected text (empty string if no selection) */
+  getSelectedText: () => string;
   /** Insert a context tag at the current cursor position */
   insertContextTag: (tagKey: string, label?: string, removeIfEmpty?: boolean) => void;
   /** Insert a cross-reference at the current cursor position */
@@ -2350,6 +2352,13 @@ body { background: white; }
       },
       openPrintPreview: handleDirectPrint,
       print: handleDirectPrint,
+      getSelectedText: () => {
+        const view = pagedEditorRef.current?.getView();
+        if (!view) return '';
+        const { from, to } = view.state.selection;
+        if (from === to) return '';
+        return view.state.doc.textBetween(from, to, ' ');
+      },
       insertContextTag: (tagKey: string, label?: string, removeIfEmpty?: boolean) => {
         const view = pagedEditorRef.current?.getView();
         if (!view) return;
