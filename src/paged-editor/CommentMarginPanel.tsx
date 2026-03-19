@@ -151,10 +151,16 @@ export const CommentMarginPanel: React.FC<CommentMarginPanelProps> = ({
   // Recompute positions when comments change or panel becomes visible
   useEffect(() => {
     if (!visible) return;
-    // Small delay to ensure layout has settled
-    const timer = setTimeout(computePositions, 200);
-    return () => clearTimeout(timer);
-  }, [visible, comments, computePositions]);
+    // Multiple attempts: layout may not be ready immediately
+    const t1 = setTimeout(computePositions, 200);
+    const t2 = setTimeout(computePositions, 800);
+    const t3 = setTimeout(computePositions, 2000);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+      clearTimeout(t3);
+    };
+  }, [visible, comments, computePositions, view]);
 
   // Also recompute on scroll (comments move with pages but positions are absolute)
   useEffect(() => {
