@@ -370,6 +370,8 @@ export interface DocxEditorRef {
     parentId?: number;
     done?: boolean;
   }>;
+  /** Get Y-positions of comment marks relative to the pages container */
+  getCommentPositions: () => Array<{ commentId: number; top: number; height: number }>;
   /** Insert a context tag at the current cursor position */
   insertContextTag: (tagKey: string, label?: string, removeIfEmpty?: boolean) => void;
   /** Insert a cross-reference at the current cursor position */
@@ -2498,6 +2500,61 @@ body { background: white; }
             done: c.done,
           };
         });
+      },
+      getCommentPositions: () => {
+        const view = pagedEditorRef.current?.getView();
+        if (!view) return [];
+
+        // Step 1: Find PM position ranges for each comment mark
+        const commentRanges = new Map<number, { from: number; to: number }>();
+        view.state.doc.descendants((node, pos) => {
+          for (const mark of node.marks) {
+            if (mark.type.name === 'comment') {
+              const cid = mark.attrs.commentId as number;
+              const existing = commentRanges.get(cid);
+              if (!existing) {
+                commentRanges.set(cid, { from: pos, to: pos + node.nodeSize });
+              } else {
+                existing.to = Math.max(existing.to, pos + node.nodeSize);
+              }
+            }
+          }
+        });
+
+        if (commentRanges.size === 0) return [];
+
+        // Step 2: Find visible DOM elements matching those PM positions
+        // Query all rendered spans with PM position data attributes
+        const pagesContainer = pagedEditorRef.current?.getPagesContainer?.();
+        if (!pagesContainer) return [];
+        const containerRect = pagesContainer.getBoundingClientRect();
+        const scrollTop = pagesContainer.scrollTop || 0;
+
+        const results: Array<{ commentId: number; top: number; height: number }> = [];
+
+        for (const [commentId, range] of commentRanges) {
+          // Find the first span whose PM range overlaps the comment range
+          const spans = pagesContainer.querySelectorAll('span[data-pm-start][data-pm-end]');
+          let bestEl: HTMLElement | null = null;
+          for (const span of Array.from(spans)) {
+            const pmStart = Number((span as HTMLElement).dataset.pmStart);
+            const pmEnd = Number((span as HTMLElement).dataset.pmEnd);
+            if (pmStart < range.to && pmEnd > range.from) {
+              bestEl = span as HTMLElement;
+              break; // Use first overlapping span
+            }
+          }
+          if (bestEl) {
+            const rect = bestEl.getBoundingClientRect();
+            results.push({
+              commentId,
+              top: rect.top - containerRect.top + scrollTop,
+              height: rect.height,
+            });
+          }
+        }
+
+        return results;
       },
       insertContextTag: (tagKey: string, label?: string, removeIfEmpty?: boolean) => {
         const view = pagedEditorRef.current?.getView();

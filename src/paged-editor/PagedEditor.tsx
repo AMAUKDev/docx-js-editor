@@ -222,6 +222,8 @@ export interface PagedEditorRef {
   relayout(): void;
   /** Scroll the visible pages to bring a PM position into view. */
   scrollToPosition(pmPos: number): void;
+  /** Get the visible pages container element. */
+  getPagesContainer(): HTMLElement | null;
 }
 
 // =============================================================================
@@ -3769,6 +3771,9 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
           }
         },
         scrollToPosition: scrollToPositionImpl,
+        getPagesContainer() {
+          return pagesContainerRef.current;
+        },
       }),
       [layout, runLayoutPipeline, scrollToPositionImpl]
     );
@@ -3813,6 +3818,7 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
             }
           },
           scrollToPosition: scrollToPositionImpl,
+          getPagesContainer: () => pagesContainerRef.current,
         });
       }
     }, [layout, runLayoutPipeline]);
