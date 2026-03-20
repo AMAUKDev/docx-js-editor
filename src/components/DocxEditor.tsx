@@ -3546,6 +3546,7 @@ body { background: white; }
                       showCommentPanel={showCommentPanel}
                       onCommentAction={onCommentAction}
                       commentPanelKey={commentPanelKey}
+                      additionalComments={addedCommentsRef.current}
                       onPageCountChange={(pageCount) => {
                         setState((prev) => {
                           if (prev.totalPages !== pageCount) {

@@ -196,6 +196,8 @@ export interface PagedEditorProps {
   onCommentAction?: (action: 'reply' | 'resolve' | 'delete', commentId: number) => void;
   /** Bump to force comment panel refresh. */
   commentPanelKey?: number;
+  /** Extra comments from addedCommentsRef (not yet in document model). */
+  additionalComments?: import('../types/content').Comment[];
   /** Custom class name. */
   className?: string;
   /** Custom styles. */
@@ -1651,6 +1653,7 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
       showCommentPanel,
       onCommentAction,
       commentPanelKey,
+      additionalComments,
       className,
       style,
     } = props;
@@ -3986,7 +3989,13 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
               key={commentPanelKey}
               pagesContainer={pagesContainerRef.current}
               view={hiddenPMRef.current?.getView() ?? null}
-              comments={document?.package.document?.comments || []}
+              comments={(() => {
+                const docComments = document?.package.document?.comments || [];
+                const extra = additionalComments;
+                if (!extra || extra.length === 0) return docComments;
+                const ids = new Set(docComments.map((c) => c.id));
+                return [...docComments, ...extra.filter((c) => !ids.has(c.id))];
+              })()}
               visible={!!showCommentPanel}
               onReply={onCommentAction ? (id) => onCommentAction('reply', id) : undefined}
               onResolve={onCommentAction ? (id) => onCommentAction('resolve', id) : undefined}
