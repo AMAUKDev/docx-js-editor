@@ -138,7 +138,7 @@ function injectCommentMarkersIntoXml(xml: string, doc: Document): string {
 
   const paragraphs: Array<{ pStart: number; rStart: number; pEnd: number }> = [];
   let searchFrom = bodyStart;
-   
+
   while (true) {
     const pIdx1 = xml.indexOf('<w:p ', searchFrom);
     const pIdx2 = xml.indexOf('<w:p>', searchFrom);
@@ -394,6 +394,18 @@ export interface RepackOptions {
 }
 
 /**
+ * Determine whether the document.xml needs full re-serialization.
+ * True when the user has edited body content or modified footnotes
+ * (which changes footnote references inside document.xml).
+ *
+ * Note: commentsModified alone does NOT require re-serialization —
+ * comment markers are injected into the original XML instead.
+ */
+function shouldReserializeDocument(doc: Document): boolean {
+  return !!(doc.contentDirty || doc.footnotesModified);
+}
+
+/**
  * Repack a Document into a valid DOCX file
  *
  * @param doc - Document with modified content
@@ -449,19 +461,15 @@ export async function repackDocx(doc: Document, options: RepackOptions = {}): Pr
     }
   }
 
-  // If the document content hasn't been modified (e.g. user opened and saved without
-  // editing), preserve the original document.xml to avoid lossy re-serialization.
-  // Our parser strips SDTs, mc:AlternateContent, rsid attrs, etc. — re-serializing
-  // unmodified content produces a degraded file that Word may reject as corrupt.
-  // However, if footnotes were modified we must force re-serialization so that
-  // footnote reference changes in document.xml (and footnotes.xml) are captured.
-  const hasModifiedComments = doc.commentsModified;
-  const hasModifiedFootnotes = doc.footnotesModified;
-  if (!doc.contentDirty && !hasModifiedFootnotes && doc.originalDocumentXml) {
+  // If the document content hasn't been modified, preserve the original
+  // document.xml to avoid lossy re-serialization. Our parser strips SDTs,
+  // mc:AlternateContent, rsid attrs, etc. — re-serializing unmodified content
+  // produces a degraded file that Word may reject as corrupt.
+  if (!shouldReserializeDocument(doc) && doc.originalDocumentXml) {
     // No edits made — keep the original document.xml.
     // If comments were added, inject comment markers into the original XML.
     let origXml = doc.originalDocumentXml;
-    if (hasModifiedComments && doc.package.document?.comments) {
+    if (doc.commentsModified && doc.package.document?.comments) {
       origXml = injectCommentMarkersIntoXml(origXml, doc);
     }
     newZip.file('word/document.xml', origXml, {
@@ -601,7 +609,7 @@ export async function repackDocx(doc: Document, options: RepackOptions = {}): Pr
         newZip.remove('word/comments.xml');
       }
     }
-    if (hasModifiedComments && comments.length > 0) {
+    if (doc.commentsModified && comments.length > 0) {
       const commentsXml = serializeCommentsXml(comments);
       newZip.file('word/comments.xml', commentsXml, {
         compression: 'DEFLATE',
@@ -854,12 +862,24 @@ export async function repackDocxFromRaw(
     });
   }
 
-  // Serialize and update document.xml
-  const documentXml = serializeDocument(doc);
-  newZip.file('word/document.xml', documentXml, {
-    compression: 'DEFLATE',
-    compressionOptions: { level: compressionLevel },
-  });
+  // Re-serialize document.xml if content was modified; otherwise preserve the
+  // original XML to avoid lossy round-trip (same rationale as repackDocx).
+  if (shouldReserializeDocument(doc) || !doc.originalDocumentXml) {
+    const documentXml = serializeDocument(doc);
+    newZip.file('word/document.xml', documentXml, {
+      compression: 'DEFLATE',
+      compressionOptions: { level: compressionLevel },
+    });
+  } else {
+    let origXml = doc.originalDocumentXml;
+    if (doc.commentsModified && doc.package.document?.comments) {
+      origXml = injectCommentMarkersIntoXml(origXml, doc);
+    }
+    newZip.file('word/document.xml', origXml, {
+      compression: 'DEFLATE',
+      compressionOptions: { level: compressionLevel },
+    });
+  }
 
   // Apply context tag replacements to header/footer XML (same as repackDocx)
   if (doc.contextTagReplacements) {
