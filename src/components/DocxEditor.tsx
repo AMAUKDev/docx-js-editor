@@ -314,6 +314,8 @@ export interface DocxEditorProps {
     label: string;
     removeIfEmpty: boolean;
     removeTableRow: boolean;
+    alwaysShow: boolean;
+    imageWidth: number;
     pmPos: number;
     clientX: number;
     clientY: number;
@@ -383,9 +385,20 @@ export interface DocxEditorRef {
   /** Insert a context tag at the current cursor position */
   insertContextTag: (tagKey: string, label?: string, removeIfEmpty?: boolean) => void;
   /** Insert a cross-reference at the current cursor position */
-  insertCrossRef: (refType: 'heading' | 'figure', refTarget: string, displayText: string) => void;
+  insertCrossRef: (
+    refType: 'heading' | 'figure',
+    refTarget: string,
+    displayText: string,
+    bookmarkName?: string
+  ) => void;
   /** Get all headings and captions in the document for cross-reference picking */
-  getReferenceable: () => Array<{ type: 'heading' | 'figure'; text: string; number: string }>;
+  getReferenceable: () => Array<{
+    type: 'heading' | 'figure';
+    text: string;
+    number: string;
+    bookmarkName: string | null;
+    pmPos: number;
+  }>;
   /** Force-refresh all cross-ref displayText and caption figure numbers */
   refreshNumbering: (tocStyleOverride?: string) => void;
   /** Get available paragraph styles for TOC style picker */
@@ -414,6 +427,18 @@ export interface DocxEditorRef {
   getDocumentMeta: () => FPDocumentMeta | undefined;
   /** Set/update document-level metadata (written to Custom XML Part on next save) */
   setDocumentMeta: (meta: FPDocumentMeta) => void;
+}
+
+/** Convert a context tag value (which may be a string, object, or null) to a display string.
+ *  Image objects `{ case_file_id, name }` are shown as their filename. */
+function contextTagDisplayValue(val: unknown): string {
+  if (val == null) return '';
+  if (typeof val === 'object') {
+    const obj = val as Record<string, unknown>;
+    if (obj.case_file_id) return (obj.name as string) || '(image)';
+    return '';
+  }
+  return String(val);
 }
 
 /** Regex for matching context tag patterns in header/footer text.
@@ -464,8 +489,9 @@ function replaceContextTagsInHf(
           const rawKey = g1 || g2;
           // Strip legacy "context." prefix
           const tagKey = rawKey.startsWith('context.') ? rawKey.slice(8) : rawKey;
-          const resolved = tags[tagKey];
-          if (resolved !== undefined && resolved !== '') {
+          const rawResolved = tags[tagKey];
+          const resolved = contextTagDisplayValue(rawResolved);
+          if (resolved !== '') {
             paraChanged = true;
             return resolved;
           }
@@ -2613,7 +2639,7 @@ body { background: white; }
         const node = nodeType.create(
           {
             tagKey,
-            label: label || contextTags?.[tagKey] || '',
+            label: label || contextTagDisplayValue(contextTags?.[tagKey]) || '',
             removeIfEmpty: removeIfEmpty ?? false,
             metaId: generateMetaId(),
           },
@@ -2625,15 +2651,67 @@ body { background: white; }
         view.dispatch(tr);
         pagedEditorRef.current?.focus();
       },
-      insertCrossRef: (refType: 'heading' | 'figure', refTarget: string, displayText: string) => {
+      insertCrossRef: (
+        refType: 'heading' | 'figure',
+        refTarget: string,
+        displayText: string,
+        bookmarkName?: string
+      ) => {
         const view = pagedEditorRef.current?.getView();
         if (!view) return;
         const schema = view.state.schema;
         const nodeType = schema.nodes.crossRef;
         if (!nodeType) return;
-        const node = nodeType.create({ refType, refTarget, displayText });
-        const tr = view.state.tr.replaceSelectionWith(node).scrollIntoView();
-        view.dispatch(tr);
+
+        let bmName = bookmarkName || '';
+
+        // If no bookmark provided, find the target paragraph and ensure it has one
+        if (!bmName) {
+          // Scan document for matching paragraph
+          let targetPos: number | null = null;
+          view.state.doc.descendants((node, pos) => {
+            if (targetPos !== null) return false;
+            if (node.type.name !== 'paragraph') return true;
+            if (node.textContent === refTarget || node.textContent.startsWith(refTarget)) {
+              targetPos = pos;
+              return false;
+            }
+            return true;
+          });
+
+          if (targetPos !== null) {
+            const targetNode = view.state.doc.nodeAt(targetPos);
+            if (targetNode) {
+              const existing = (
+                targetNode.attrs.bookmarks as Array<{ id: number; name: string }>
+              )?.find((b) => b.name.startsWith('_FP_Ref_'));
+              if (existing) {
+                bmName = existing.name;
+              } else {
+                // Generate a new bookmark
+                const uuid = Math.random().toString(36).substring(2, 10);
+                bmName = `_FP_Ref_${uuid}`;
+                const existingBookmarks =
+                  (targetNode.attrs.bookmarks as Array<{ id: number; name: string }>) || [];
+                const tr = view.state.tr.setNodeMarkup(targetPos, undefined, {
+                  ...targetNode.attrs,
+                  bookmarks: [
+                    ...existingBookmarks,
+                    { id: Math.floor(Math.random() * 2147483647), name: bmName },
+                  ],
+                });
+                view.dispatch(tr);
+              }
+            }
+          }
+        }
+
+        const node = nodeType.create({ refType, refTarget, displayText, bookmarkName: bmName });
+        // Use a fresh transaction since we may have dispatched above
+        const currentView = pagedEditorRef.current?.getView();
+        if (!currentView) return;
+        const tr2 = currentView.state.tr.replaceSelectionWith(node).scrollIntoView();
+        currentView.dispatch(tr2);
         pagedEditorRef.current?.focus();
       },
       insertImage: (dataUrl: string, alt: string, width: number, height: number) => {
@@ -2687,7 +2765,13 @@ body { background: white; }
       getReferenceable: () => {
         const view = pagedEditorRef.current?.getView();
         if (!view) return [];
-        const items: Array<{ type: 'heading' | 'figure'; text: string; number: string }> = [];
+        const items: Array<{
+          type: 'heading' | 'figure';
+          text: string;
+          number: string;
+          bookmarkName: string | null;
+          pmPos: number;
+        }> = [];
         const headingCounters = [0, 0, 0, 0, 0, 0, 0, 0, 0];
         let figureCount = 0;
 
@@ -2700,10 +2784,15 @@ body { background: white; }
           ? createStyleResolver(currentDoc.package.styles)
           : null;
 
-        view.state.doc.descendants((node) => {
+        view.state.doc.descendants((node, pos) => {
           if (node.type.name !== 'paragraph') return true;
           const styleId = node.attrs.styleId as string | null;
           if (!styleId) return true;
+
+          // Find existing _FP_Ref_ bookmark on paragraph
+          const bookmarks = (node.attrs.bookmarks as Array<{ id: number; name: string }>) || [];
+          const fpRefBookmark = bookmarks.find((b) => b.name.startsWith('_FP_Ref_'));
+
           // Heading numbering
           const headingMatch = styleId.match(/^Heading(\d)$/);
           if (headingMatch) {
@@ -2723,12 +2812,24 @@ body { background: white; }
               const parts = headingCounters.slice(0, level + 1).filter((v) => v > 0);
               number = parts.join('.');
             }
-            items.push({ type: 'heading', text: node.textContent, number });
+            items.push({
+              type: 'heading',
+              text: node.textContent,
+              number,
+              bookmarkName: fpRefBookmark?.name ?? null,
+              pmPos: pos,
+            });
           }
           // Caption numbering
           if (styleId === 'Caption') {
             figureCount++;
-            items.push({ type: 'figure', text: node.textContent, number: `Figure ${figureCount}` });
+            items.push({
+              type: 'figure',
+              text: node.textContent,
+              number: `Figure ${figureCount}`,
+              bookmarkName: fpRefBookmark?.name ?? null,
+              pmPos: pos,
+            });
           }
           return true;
         });
@@ -2983,9 +3084,20 @@ body { background: white; }
         const tagKey = node.attrs.tagKey as string;
         discoveredKeys.add(tagKey);
         const currentLabel = node.attrs.label as string;
-        const newLabel = tags[tagKey] ?? '';
-        if (currentLabel !== newLabel) {
-          tr = tr.setNodeMarkup(pos, undefined, { ...node.attrs, label: newLabel });
+        const currentImageUrl = (node.attrs.imageUrl as string) || '';
+        const rawVal = tags[tagKey];
+        const newLabel = contextTagDisplayValue(rawVal);
+        // Compute imageUrl for image-type values
+        const newImageUrl =
+          rawVal && typeof rawVal === 'object' && (rawVal as Record<string, unknown>).case_file_id
+            ? `/api/dms/case-files/${(rawVal as Record<string, unknown>).case_file_id}/preview/`
+            : '';
+        if (currentLabel !== newLabel || currentImageUrl !== newImageUrl) {
+          tr = tr.setNodeMarkup(pos, undefined, {
+            ...node.attrs,
+            label: newLabel,
+            imageUrl: newImageUrl,
+          });
           changed = true;
         }
         return false; // atom node, no children
