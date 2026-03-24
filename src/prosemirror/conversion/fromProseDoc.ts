@@ -537,8 +537,9 @@ function extractParagraphContent(paragraph: PMNode): ParagraphContent[] {
       }
       content.push(createMathFromNode(node));
     } else if (node.type.name === 'crossRef') {
-      // Cross-reference — serialize as a REF complex field so it round-trips.
-      // Instruction encodes refType and refTarget for reload detection.
+      // Cross-reference — serialize as a Word-native REF complex field.
+      // When a bookmark name is available, use REF _FP_Ref_X \h (Word-native).
+      // Falls back to legacy CROSSREF instruction when no bookmark is set.
       if (currentRun) {
         content.push(currentRun);
         currentRun = null;
@@ -546,6 +547,7 @@ function extractParagraphContent(paragraph: PMNode): ParagraphContent[] {
       }
       const refType = (node.attrs.refType as string) || 'heading';
       const refTarget = (node.attrs.refTarget as string) || '';
+      const bookmarkName = (node.attrs.bookmarkName as string) || '';
       const displayText = (node.attrs.displayText as string) || '[ref]';
       const formatting = node.marks.length > 0 ? marksToTextFormatting(node.marks) : undefined;
       const displayRun: Run = {
@@ -553,9 +555,19 @@ function extractParagraphContent(paragraph: PMNode): ParagraphContent[] {
         content: [{ type: 'text' as const, text: displayText }],
         ...(formatting && Object.keys(formatting).length > 0 ? { formatting } : {}),
       };
+
+      let instruction: string;
+      if (bookmarkName) {
+        // Word-native: REF _FP_Ref_X \h
+        instruction = ` REF ${bookmarkName} \\h `;
+      } else {
+        // Legacy fallback: CROSSREF heading "target text"
+        instruction = ` CROSSREF ${refType} "${refTarget.replace(/"/g, '\\"')}" `;
+      }
+
       const crossRefField: ComplexField = {
         type: 'complexField',
-        instruction: ` CROSSREF ${refType} "${refTarget.replace(/"/g, '\\"')}" `,
+        instruction,
         fieldType: 'REF' as FieldType,
         fieldCode: [],
         fieldResult: [displayRun],

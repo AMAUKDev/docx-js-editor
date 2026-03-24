@@ -23,6 +23,8 @@ export const CrossRefExtension = createNodeExtension({
       refTarget: { default: '' },
       /** Current display text (resolved number, e.g., "1.1" or "Figure 3") */
       displayText: { default: '' },
+      /** Bookmark name on the target paragraph. Used for Word-native REF fields. */
+      bookmarkName: { default: '' },
     },
     parseDOM: [
       {

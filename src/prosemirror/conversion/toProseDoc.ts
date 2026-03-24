@@ -188,6 +188,12 @@ function applyContextTagMetadata(
           if (meta.removeTableRow !== undefined) {
             newAttrs.removeTableRow = meta.removeTableRow;
           }
+          if (meta.imageWidth !== undefined) {
+            newAttrs.imageWidth = meta.imageWidth;
+          }
+          if (meta.alwaysShow) {
+            newAttrs.alwaysShow = true;
+          }
           return node.type.create(newAttrs, node.content, node.marks);
         }
       }
@@ -1062,6 +1068,9 @@ function convertTableCell(
 /** Regex to detect our custom CROSSREF field instruction */
 const CROSSREF_RE = /^\s*CROSSREF\s+(heading|figure)\s+"((?:[^"\\]|\\.)*)"\s*$/;
 
+/** Regex to detect Word-native REF _FP_Ref_X field (our bookmark-based cross-refs) */
+const FP_REF_RE = /^\s*REF\s+(_FP_Ref_\w+)\s*(.*?)\s*$/;
+
 function convertField(
   field: SimpleField | ComplexField,
   styleFormatting?: TextFormatting
@@ -1095,6 +1104,20 @@ function convertField(
     const refType = crossRefMatch[1] as 'heading' | 'figure';
     const refTarget = crossRefMatch[2].replace(/\\"/g, '"');
     return schema.node('crossRef', { refType, refTarget, displayText }, undefined, marks);
+  }
+
+  // Detect Word-native REF _FP_Ref_X fields (bookmark-based cross-refs)
+  const fpRefMatch = field.instruction.match(FP_REF_RE);
+  if (fpRefMatch && schema.nodes.crossRef) {
+    const bookmarkName = fpRefMatch[1];
+    // Determine refType from display text heuristic (Figure/Table → figure, else heading)
+    const refType = /^(Figure|Table)\s/i.test(displayText) ? 'figure' : 'heading';
+    return schema.node(
+      'crossRef',
+      { refType, refTarget: displayText, displayText, bookmarkName },
+      undefined,
+      marks
+    );
   }
 
   // Convert NUMPAGES field back to {{ total_pages }} contextTag on re-import
