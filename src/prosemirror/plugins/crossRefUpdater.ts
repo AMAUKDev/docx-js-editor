@@ -232,6 +232,12 @@ function getPageForPmPos(layout: Layout, pmPos: number): number {
  * Build a map of refTarget → currentNumber by scanning the document.
  * Also returns caption number mappings and heading entries for TOC refresh.
  */
+/** Paragraph target info for bookmark-based cross-references */
+interface ParagraphTarget {
+  pmPos: number;
+  bookmarkName: string | null;
+}
+
 function buildReferenceMap(
   state: EditorState,
   config: CrossRefUpdaterConfig
@@ -240,11 +246,14 @@ function buildReferenceMap(
   captionMap: Map<string, string>;
   captions: CaptionInfo[];
   headingEntries: HeadingEntry[];
+  /** Map from paragraph text → position + existing _FP_Ref_ bookmark (if any) */
+  targetMap: Map<string, ParagraphTarget>;
 } {
   const headingMap = new Map<string, string>();
   const captionMap = new Map<string, string>();
   const captions: CaptionInfo[] = [];
   const headingEntries: HeadingEntry[] = [];
+  const targetMap = new Map<string, ParagraphTarget>();
   const headingCounters = [0, 0, 0, 0, 0, 0, 0, 0, 0];
   const captionCounters: Record<string, number> = {};
 
@@ -293,9 +302,16 @@ function buildReferenceMap(
 
       headingMap.set(node.textContent, number);
 
-      // Extract _Toc bookmark from heading paragraph
+      // Extract bookmarks from heading paragraph
       const bookmarks = (node.attrs.bookmarks as Array<{ id: number; name: string }>) || [];
       const tocBookmark = bookmarks.find((b) => b.name.startsWith('_Toc'));
+      const fpRefBookmark = bookmarks.find((b) => b.name.startsWith('_FP_Ref_'));
+
+      // Track this paragraph as a cross-ref target
+      targetMap.set(node.textContent, {
+        pmPos: pos,
+        bookmarkName: fpRefBookmark?.name ?? null,
+      });
 
       headingEntries.push({
         text: trimmedText,
@@ -314,13 +330,21 @@ function buildReferenceMap(
         const count = captionCounters[prefix];
         captionMap.set(node.textContent, `${prefix} ${count}`);
         captions.push({ pos, correctNumber: count, prefix });
+
+        // Track as cross-ref target
+        const capBookmarks = (node.attrs.bookmarks as Array<{ id: number; name: string }>) || [];
+        const capFpRef = capBookmarks.find((b) => b.name.startsWith('_FP_Ref_'));
+        targetMap.set(node.textContent, {
+          pmPos: pos,
+          bookmarkName: capFpRef?.name ?? null,
+        });
       }
     }
 
     return true;
   });
 
-  return { headingMap, captionMap, captions, headingEntries };
+  return { headingMap, captionMap, captions, headingEntries, targetMap };
 }
 
 /**
@@ -405,18 +429,22 @@ export function refreshAllReferences(
   state: EditorState,
   config: CrossRefUpdaterConfig
 ): Transaction | null {
-  const { headingMap, captionMap, captions, headingEntries } = buildReferenceMap(state, config);
+  const { headingMap, captionMap, captions, headingEntries, targetMap } = buildReferenceMap(
+    state,
+    config
+  );
 
   let tr = state.tr;
   let changed = false;
 
-  // Scan for crossRef nodes
+  // Scan for crossRef nodes — update display text and migrate missing bookmarks
   state.doc.descendants((node, pos) => {
     if (node.type.name === 'crossRef') {
-      const { refType, refTarget, displayText } = node.attrs as {
+      const { refType, refTarget, displayText, bookmarkName } = node.attrs as {
         refType: string;
         refTarget: string;
         displayText: string;
+        bookmarkName: string;
       };
 
       let currentNumber: string | undefined;
@@ -426,11 +454,47 @@ export function refreshAllReferences(
         currentNumber = captionMap.get(refTarget);
       }
 
-      if (currentNumber != null && currentNumber !== displayText) {
-        tr = tr.setNodeMarkup(tr.mapping.map(pos), undefined, {
-          ...node.attrs,
-          displayText: currentNumber,
-        });
+      const needsDisplayUpdate = currentNumber != null && currentNumber !== displayText;
+      const needsBookmark = !bookmarkName && refTarget;
+
+      if (needsDisplayUpdate || needsBookmark) {
+        const newAttrs = { ...node.attrs };
+        if (needsDisplayUpdate) {
+          newAttrs.displayText = currentNumber;
+        }
+
+        // Migrate: assign _FP_Ref_ bookmark to target paragraph if missing
+        if (needsBookmark) {
+          const target = targetMap.get(refTarget);
+          if (target) {
+            if (target.bookmarkName) {
+              // Target already has a bookmark — use it
+              newAttrs.bookmarkName = target.bookmarkName;
+            } else {
+              // Generate a new bookmark on the target paragraph
+              const uuid = Math.random().toString(36).substring(2, 10);
+              const bmName = `_FP_Ref_${uuid}`;
+              const mappedTargetPos = tr.mapping.map(target.pmPos);
+              const targetNode = tr.doc.nodeAt(mappedTargetPos);
+              if (targetNode && targetNode.type.name === 'paragraph') {
+                const existingBm =
+                  (targetNode.attrs.bookmarks as Array<{ id: number; name: string }>) || [];
+                tr = tr.setNodeMarkup(mappedTargetPos, undefined, {
+                  ...targetNode.attrs,
+                  bookmarks: [
+                    ...existingBm,
+                    { id: Math.floor(Math.random() * 2147483647), name: bmName },
+                  ],
+                });
+                // Update target map so other crossRefs to same target reuse it
+                target.bookmarkName = bmName;
+              }
+              newAttrs.bookmarkName = bmName;
+            }
+          }
+        }
+
+        tr = tr.setNodeMarkup(tr.mapping.map(pos), undefined, newAttrs);
         changed = true;
       }
       return false; // atom, no children
