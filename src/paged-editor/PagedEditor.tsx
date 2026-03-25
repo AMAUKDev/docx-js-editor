@@ -167,6 +167,8 @@ export interface PagedEditorProps {
     label: string;
     removeIfEmpty: boolean;
     removeTableRow: boolean;
+    alwaysShow: boolean;
+    imageWidth: number;
     pmPos: number;
     clientX: number;
     clientY: number;
@@ -1229,6 +1231,12 @@ function convertDocumentRunsToFlowRuns(content: unknown[]): Run[] {
     if (itemObj.type === 'hyperlink' && Array.isArray(itemObj.children)) {
       const childRuns = convertDocumentRunsToFlowRuns(itemObj.children as unknown[]);
       runs.push(...childRuns);
+    }
+
+    // Handle InlineSdt (content controls) — unwrap and render the runs inside
+    if (itemObj.type === 'inlineSdt' && Array.isArray(itemObj.content)) {
+      const sdtRuns = convertDocumentRunsToFlowRuns(itemObj.content as unknown[]);
+      runs.push(...sdtRuns);
     }
   }
 
@@ -2434,7 +2442,11 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
       (state: EditorState) => {
         // Check if this is an image node selection - suppress text overlay if so
         const { selection } = state;
-        if (selection instanceof NodeSelection && selection.node.type.name === 'image') {
+        const isImageSelection =
+          selection instanceof NodeSelection &&
+          (selection.node.type.name === 'image' ||
+            (selection.node.type.name === 'contextTag' && !!selection.node.attrs.imageUrl));
+        if (isImageSelection) {
           // Suppress text selection overlay for image selections
           setSelectionRects([]);
           setCaretPosition(null);
@@ -2455,13 +2467,29 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
             return;
           }
           const { selection: sel } = view.state;
-          if (sel instanceof NodeSelection && sel.node.type.name === 'image') {
+          const isImgSel =
+            sel instanceof NodeSelection &&
+            (sel.node.type.name === 'image' ||
+              (sel.node.type.name === 'contextTag' && !!sel.node.attrs.imageUrl));
+          if (isImgSel) {
             const pmPos = sel.from;
             const imgEl = pagesContainerRef.current?.querySelector(
               `[data-pm-start="${pmPos}"]`
             ) as HTMLElement | null;
             if (imgEl) {
               setSelectedImageInfo(buildImageSelectionInfo(imgEl, pmPos));
+              return;
+            }
+          }
+          // Also check if there's a context tag image at the selection position
+          // (covers the case where imageUrl is set on the layout div but NodeSelection
+          //  for contextTag atoms may not always be a NodeSelection instance)
+          if (!isImgSel && sel.from !== undefined) {
+            const ctImgEl = pagesContainerRef.current?.querySelector(
+              `.layout-context-tag-image[data-pm-start="${sel.from}"]`
+            ) as HTMLElement | null;
+            if (ctImgEl) {
+              setSelectedImageInfo(buildImageSelectionInfo(ctImgEl, sel.from));
               return;
             }
           }
@@ -2615,9 +2643,10 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
       (e: React.MouseEvent) => {
         if (!onContextTagRightClick || !hiddenPMRef.current) return;
 
-        // First: check if right-click target is a context tag span (fast DOM check)
+        // First: check if right-click target is a context tag span or image (fast DOM check)
         const target = e.target as HTMLElement;
-        const tagEl = target.closest('.layout-context-tag[data-tag-key]') as HTMLElement;
+        const tagEl = (target.closest('.layout-context-tag[data-tag-key]') ??
+          target.closest('.layout-context-tag-image[data-tag-key]')) as HTMLElement;
         if (tagEl) {
           e.preventDefault();
           const tagKey = tagEl.dataset.tagKey || '';
@@ -2639,6 +2668,8 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
                     label: node.attrs.label as string,
                     removeIfEmpty: !!node.attrs.removeIfEmpty,
                     removeTableRow: !!node.attrs.removeTableRow,
+                    alwaysShow: !!node.attrs.alwaysShow,
+                    imageWidth: (node.attrs.imageWidth as number) || 0,
                     pmPos: nodeStart,
                     clientX: e.clientX,
                     clientY: e.clientY,
@@ -2652,6 +2683,8 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
                   label: tagEl.textContent || '',
                   removeIfEmpty: false,
                   removeTableRow: false,
+                  alwaysShow: false,
+                  imageWidth: 0,
                   pmPos: pmStart,
                   clientX: e.clientX,
                   clientY: e.clientY,
@@ -2663,6 +2696,8 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
                 label: tagEl.textContent || '',
                 removeIfEmpty: false,
                 removeTableRow: false,
+                alwaysShow: false,
+                imageWidth: 0,
                 pmPos: pmStart,
                 clientX: e.clientX,
                 clientY: e.clientY,
@@ -2670,6 +2705,30 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
             }
           }
           return;
+        }
+
+        // Fallback for overlay right-click: if an image context tag is currently selected,
+        // use the selected node's position to open the context tag properties modal
+        if (selectedImageInfo) {
+          const view2 = hiddenPMRef.current.getView?.() ?? (hiddenPMRef.current as any)?.view;
+          if (view2) {
+            const node = view2.state.doc.nodeAt(selectedImageInfo.pmPos);
+            if (node?.type.name === 'contextTag') {
+              e.preventDefault();
+              onContextTagRightClick({
+                tagKey: node.attrs.tagKey as string,
+                label: node.attrs.label as string,
+                removeIfEmpty: !!node.attrs.removeIfEmpty,
+                removeTableRow: !!node.attrs.removeTableRow,
+                alwaysShow: !!node.attrs.alwaysShow,
+                imageWidth: (node.attrs.imageWidth as number) || 0,
+                pmPos: selectedImageInfo.pmPos,
+                clientX: e.clientX,
+                clientY: e.clientY,
+              });
+              return;
+            }
+          }
         }
 
         // Fallback: original PM position-based detection
@@ -2698,6 +2757,8 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
               label: node.attrs.label as string,
               removeIfEmpty: !!node.attrs.removeIfEmpty,
               removeTableRow: !!node.attrs.removeTableRow,
+              alwaysShow: !!node.attrs.alwaysShow,
+              imageWidth: (node.attrs.imageWidth as number) || 0,
               pmPos: nodeStart,
               clientX: e.clientX,
               clientY: e.clientY,
@@ -2705,7 +2766,7 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
           }
         });
       },
-      [getPositionFromMouse, onContextTagRightClick]
+      [getPositionFromMouse, onContextTagRightClick, selectedImageInfo]
     );
 
     /**
@@ -3407,16 +3468,28 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
 
       try {
         const node = view.state.doc.nodeAt(pmPos);
-        if (!node || node.type.name !== 'image') return;
+        if (!node) return;
 
-        const tr = view.state.tr.setNodeMarkup(pmPos, undefined, {
-          ...node.attrs,
-          width: newWidth,
-          height: newHeight,
-        });
-        view.dispatch(tr);
+        if (node.type.name === 'image') {
+          const tr = view.state.tr.setNodeMarkup(pmPos, undefined, {
+            ...node.attrs,
+            width: newWidth,
+            height: newHeight,
+          });
+          view.dispatch(tr);
+        } else if (node.type.name === 'contextTag') {
+          // Context tag image — store width in node attrs
+          const tr = view.state.tr.setNodeMarkup(pmPos, undefined, {
+            ...node.attrs,
+            imageWidth: newWidth,
+          });
+          tr.setMeta('allowLockedEdit', true);
+          view.dispatch(tr);
+        } else {
+          return;
+        }
 
-        // Re-select the image after resize
+        // Re-select the node after resize
         hiddenPMRef.current?.setNodeSelection(pmPos);
       } catch {
         // Position may have changed during resize
@@ -3973,6 +4046,7 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
             onDragStart={handleImageDragStart}
             onDragEnd={handleImageDragEnd}
             onAddCaption={handleAddCaption}
+            onContextMenu={handlePagesContextMenu}
             readOnly={readOnly}
           />
 

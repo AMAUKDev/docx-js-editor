@@ -376,13 +376,18 @@ function makeApplyStyle(schema: Schema) {
         }
       }
 
-      // Mark types that are controlled by style definitions
-      const styleControlledMarks = [
-        schema.marks.bold,
-        schema.marks.italic,
+      // Marks split into two categories for style reapplication:
+      // "Style-level" marks are always reset to the style definition (font, size, color).
+      // "Emphasis" marks (bold, italic, underline, strike) are preserved on existing
+      // text — they represent deliberate user formatting, not style overrides.
+      const styleResetMarks = [
         schema.marks.fontSize,
         schema.marks.fontFamily,
         schema.marks.textColor,
+      ].filter(Boolean);
+      const emphasisMarks = [
+        schema.marks.bold,
+        schema.marks.italic,
         schema.marks.underline,
         schema.marks.strike,
       ].filter(Boolean);
@@ -439,13 +444,23 @@ function makeApplyStyle(schema: Schema) {
             const paragraphEnd = pos + node.nodeSize - 1;
 
             if (paragraphEnd > paragraphStart) {
-              // Clear old style-controlled marks first
-              for (const markType of styleControlledMarks) {
+              // Always reset style-level marks (font, size, color) to the style definition
+              for (const markType of styleResetMarks) {
                 tr = tr.removeMark(paragraphStart, paragraphEnd, markType);
               }
-              // Then add the new style's marks
+              // Add back the style's font/size/color marks
               for (const mark of styleMarks) {
-                tr = tr.addMark(paragraphStart, paragraphEnd, mark);
+                if (styleResetMarks.some((mt) => mt === mark.type)) {
+                  tr = tr.addMark(paragraphStart, paragraphEnd, mark);
+                }
+              }
+              // For emphasis marks (bold/italic/underline/strike):
+              // Only ADD them paragraph-wide if the style defines them.
+              // Don't REMOVE existing ones — they're deliberate user formatting.
+              for (const mark of styleMarks) {
+                if (emphasisMarks.some((mt) => mt === mark.type)) {
+                  tr = tr.addMark(paragraphStart, paragraphEnd, mark);
+                }
               }
             }
           }

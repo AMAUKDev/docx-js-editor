@@ -16,6 +16,7 @@ import {
 import type { Mark } from 'prosemirror-model';
 import { createExtension } from '../create';
 import { textFormattingToMarks } from '../marks/markUtils';
+import { getNextStyleId } from '../../styles/styleStore';
 import { Priority } from '../types';
 import type { ExtensionRuntime, ExtensionContext } from '../types';
 import type { Command, Transaction } from 'prosemirror-state';
@@ -136,12 +137,22 @@ const splitBlockClearBorders: Command = (state, dispatch, view) => {
       const newAttrs = { ...newPara.attrs };
       let attrsChanged = false;
 
-      // Copy inherited attrs from source paragraph
+      // Copy inherited attrs from source paragraph, respecting style.next
       if (sourcePara) {
         for (const key of INHERITED_PARA_ATTRS) {
           const srcVal = sourcePara.attrs[key];
           if (srcVal != null && newAttrs[key] == null) {
             newAttrs[key] = srcVal;
+            attrsChanged = true;
+          }
+        }
+
+        // Check if the source style defines a "next" style (e.g., Heading1.next = Normal)
+        const sourceStyleId = sourcePara.attrs.styleId as string | undefined;
+        if (sourceStyleId) {
+          const nextStyleId = getNextStyleId(sourceStyleId);
+          if (nextStyleId && nextStyleId !== sourceStyleId) {
+            newAttrs.styleId = nextStyleId;
             attrsChanged = true;
           }
         }

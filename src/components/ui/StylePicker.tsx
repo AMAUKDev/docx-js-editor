@@ -186,6 +186,10 @@ export function StylePicker({
           if (s.qFormat) return true;
           // Show explicitly allowed styles even if semi-hidden (e.g. Heading 6+)
           if (allowedStyleIds?.includes(s.styleId)) return true;
+          // Always show AMA-prefixed styles (company house styles)
+          const id = s.styleId?.toLowerCase() ?? '';
+          const name = s.name?.toLowerCase() ?? '';
+          if (id.startsWith('ama') || name.startsWith('ama')) return true;
           if (s.hidden || s.semiHidden) return false;
           return true;
         })
@@ -252,9 +256,15 @@ export function StylePicker({
       options = docStyles.sort((a, b) => (a.priority ?? 99) - (b.priority ?? 99));
     }
 
-    // Filter to allowed style IDs if provided
+    // Filter to allowed style IDs if provided.
+    // AMA-prefixed styles are always permitted (company house styles).
     if (allowedStyleIds) {
-      options = options.filter((s) => allowedStyleIds.includes(s.styleId));
+      options = options.filter(
+        (s) =>
+          allowedStyleIds.includes(s.styleId) ||
+          s.styleId.toLowerCase().startsWith('ama') ||
+          (s.name ?? '').toLowerCase().startsWith('ama')
+      );
     }
 
     return options;

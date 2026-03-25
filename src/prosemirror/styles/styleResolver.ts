@@ -118,6 +118,25 @@ export class StyleResolver {
     // Merge style properties into result
     this.mergeStyleIntoResult(result, style);
 
+    // Font fallback cascade: if style cascade didn't produce a fontFamily,
+    // walk AMA_normal → AMA_default → Normal before falling through to
+    // document defaults (which are often Arial 10pt).
+    if (!result.runFormatting?.fontFamily?.ascii) {
+      const fallbackIds = ['AMA_normal', 'AMA_default', 'Normal'];
+      for (const fid of fallbackIds) {
+        if (fid === styleId) continue; // already tried this one
+        const fallback = this.stylesById.get(fid);
+        if (fallback?.rPr?.fontFamily?.ascii) {
+          if (!result.runFormatting) result.runFormatting = {};
+          result.runFormatting.fontFamily = { ...fallback.rPr.fontFamily };
+          if (!result.runFormatting.fontSize && fallback.rPr.fontSize) {
+            result.runFormatting.fontSize = fallback.rPr.fontSize;
+          }
+          break;
+        }
+      }
+    }
+
     return result;
   }
 

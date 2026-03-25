@@ -127,7 +127,9 @@ export function createStyleEnforcerPlugin(options: StyleEnforcerOptions = {}): P
       newState.doc.descendants((node, pos) => {
         // Remap disallowed styleId to Normal
         if (node.type.name === 'paragraph' && node.attrs.styleId) {
-          if (!allowed.has(node.attrs.styleId)) {
+          const sid = (node.attrs.styleId as string).toLowerCase();
+          // Always permit AMA-prefixed styles (company house styles)
+          if (!allowed.has(node.attrs.styleId) && !sid.startsWith('ama')) {
             tr.setNodeMarkup(pos, undefined, {
               ...node.attrs,
               styleId: 'Normal',

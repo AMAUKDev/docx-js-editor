@@ -22,6 +22,8 @@ import {
 } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import type { Document, Theme, HeaderFooter } from '../types/document';
+import type { Run } from '../types/content';
+import { setDocumentStyles } from '../prosemirror/styles/styleStore';
 
 import { Toolbar, type SelectionFormatting, type FormattingAction } from './Toolbar';
 import { pointsToHalfPoints } from './ui/FontSizePicker';
@@ -469,9 +471,117 @@ const HF_CONTEXT_TAG_RE = /\{\{\s*([\w]+(?:\.[\w]+)*)!?\s*\}\}|\{([\w]+(?:\.[\w]
 // ────────────────────────────────────────────────────────────────────────────
 
 /**
+ * Replace context tags across a group of runs, handling tags split across
+ * multiple runs (e.g., {primary_asset.display_name} split by proofErr elements).
+ *
+ * Algorithm: join all text segments into one string, apply regex, then
+ * redistribute replaced text back to the original run segments.
+ * Returns null if no changes were made.
+ */
+function _replaceTagsInRunGroup(
+  runs: readonly Run[],
+  tags: Record<string, string>,
+  mode: 'omit' | 'keep'
+): Run[] | null {
+  // 1. Collect text segments with character offsets in joined string
+  interface Seg {
+    runIdx: number;
+    rcIdx: number;
+    start: number;
+    end: number;
+  }
+  const segs: Seg[] = [];
+  let pos = 0;
+  for (let ri = 0; ri < runs.length; ri++) {
+    for (let ci = 0; ci < runs[ri].content.length; ci++) {
+      const rc = runs[ri].content[ci];
+      if (rc.type === 'text' && rc.text) {
+        segs.push({ runIdx: ri, rcIdx: ci, start: pos, end: pos + rc.text.length });
+        pos += rc.text.length;
+      }
+    }
+  }
+  if (segs.length === 0) return null;
+
+  // 2. Join all text and find tag matches
+  const joined = segs
+    .map((s) => (runs[s.runIdx].content[s.rcIdx] as { text: string }).text)
+    .join('');
+
+  interface TagMatch {
+    start: number;
+    end: number;
+    replacement: string;
+  }
+  const matches: TagMatch[] = [];
+  const re = new RegExp(HF_CONTEXT_TAG_RE.source, HF_CONTEXT_TAG_RE.flags);
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(joined)) !== null) {
+    const rawKey = m[1] || m[2];
+    const tagKey = rawKey.startsWith('context.') ? rawKey.slice(8) : rawKey;
+    const resolved = contextTagDisplayValue(tags[tagKey]);
+    let replacement: string;
+    if (resolved !== '') {
+      replacement = resolved;
+    } else if (mode === 'omit') {
+      replacement = '';
+    } else {
+      replacement = m[0]; // keep original tag text
+    }
+    if (replacement !== m[0]) {
+      matches.push({ start: m.index, end: m.index + m[0].length, replacement });
+    }
+  }
+  if (matches.length === 0) return null;
+
+  // 3. Build new text for each segment by applying matches right-to-left
+  const segTexts = segs.map((s) => (runs[s.runIdx].content[s.rcIdx] as { text: string }).text);
+  for (let mi = matches.length - 1; mi >= 0; mi--) {
+    const tm = matches[mi];
+    let firstSeg = -1;
+    for (let si = 0; si < segs.length; si++) {
+      const seg = segs[si];
+      if (seg.end <= tm.start || seg.start >= tm.end) continue; // no overlap
+      const localStart = Math.max(0, tm.start - seg.start);
+      const localEnd = Math.min(seg.end - seg.start, tm.end - seg.start);
+      if (firstSeg === -1) {
+        firstSeg = si;
+        // First overlapping segment gets the replacement text
+        segTexts[si] =
+          segTexts[si].slice(0, localStart) + tm.replacement + segTexts[si].slice(localEnd);
+      } else {
+        // Subsequent segments: remove the matched portion
+        segTexts[si] = segTexts[si].slice(0, localStart) + segTexts[si].slice(localEnd);
+      }
+    }
+  }
+
+  // 4. Rebuild runs with updated text
+  const newRuns = runs.map((run, ri) => {
+    let runChanged = false;
+    const newContent = run.content.map((rc, ci) => {
+      if (rc.type !== 'text') return rc;
+      const si = segs.findIndex((s) => s.runIdx === ri && s.rcIdx === ci);
+      if (si === -1) return rc;
+      if (segTexts[si] !== rc.text) {
+        runChanged = true;
+        return { ...rc, text: segTexts[si] };
+      }
+      return rc;
+    });
+    return runChanged ? { ...run, content: newContent } : run;
+  });
+
+  return newRuns;
+}
+
+/**
  * Replace context tag text patterns in a HeaderFooter for visual display.
  * ALWAYS returns a new object to ensure React prop change detection.
  * Does NOT mutate the original — the Document model keeps tag patterns for saving.
+ *
+ * Handles tags split across multiple runs (e.g., by proofErr elements) and
+ * tags inside InlineSdt content controls.
  */
 function replaceContextTagsInHf(
   hf: HeaderFooter,
@@ -481,30 +591,41 @@ function replaceContextTagsInHf(
   const newContent = hf.content.map((block) => {
     if (block.type !== 'paragraph') return block;
     let paraChanged = false;
+
+    // First pass: process InlineSdt content controls
     const newParaContent = block.content.map((item) => {
-      if (item.type !== 'run') return item;
-      const newRunContent = item.content.map((rc) => {
-        if (rc.type !== 'text' || !rc.text) return rc;
-        const replaced = rc.text.replace(HF_CONTEXT_TAG_RE, (_match, g1, g2) => {
-          const rawKey = g1 || g2;
-          // Strip legacy "context." prefix
-          const tagKey = rawKey.startsWith('context.') ? rawKey.slice(8) : rawKey;
-          const rawResolved = tags[tagKey];
-          const resolved = contextTagDisplayValue(rawResolved);
-          if (resolved !== '') {
-            paraChanged = true;
-            return resolved;
-          }
-          if (mode === 'omit') {
-            paraChanged = true;
-            return '';
-          }
-          return _match;
-        });
-        return replaced !== rc.text ? { ...rc, text: replaced } : rc;
-      });
-      return paraChanged ? { ...item, content: newRunContent } : item;
+      if (item.type === 'inlineSdt') {
+        const sdtRuns = item.content.filter((c): c is Run => c.type === 'run');
+        if (sdtRuns.length === 0) return item;
+        const replaced = _replaceTagsInRunGroup(sdtRuns, tags, mode);
+        if (!replaced) return item;
+        paraChanged = true;
+        let runIdx = 0;
+        const newSdtContent = item.content.map((c) => (c.type === 'run' ? replaced[runIdx++] : c));
+        return { ...item, content: newSdtContent };
+      }
+      return item;
     });
+
+    // Second pass: process direct runs in the paragraph as a group
+    const directRuns: Run[] = [];
+    const directRunIndices: number[] = [];
+    for (let i = 0; i < newParaContent.length; i++) {
+      if (newParaContent[i].type === 'run') {
+        directRuns.push(newParaContent[i] as Run);
+        directRunIndices.push(i);
+      }
+    }
+    if (directRuns.length > 0) {
+      const replaced = _replaceTagsInRunGroup(directRuns, tags, mode);
+      if (replaced) {
+        paraChanged = true;
+        for (let i = 0; i < directRunIndices.length; i++) {
+          newParaContent[directRunIndices[i]] = replaced[i];
+        }
+      }
+    }
+
     return paraChanged ? { ...block, content: newParaContent } : block;
   });
   // ALWAYS return a new object — never return `hf` directly.
@@ -763,6 +884,9 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
   crossRefStyleResolverRef.current = history.state?.package.styles
     ? createStyleResolver(history.state.package.styles)
     : null;
+  // Populate the style store so ProseMirror commands (Enter key, applyStyle)
+  // can access style.next and font fallback without threading styles through.
+  setDocumentStyles(history.state?.package.styles?.styles ?? []);
   // Track current border color/width for border presets (like Google Docs)
   const borderSpecRef = useRef({ style: 'single', size: 4, color: { rgb: '000000' } });
 
@@ -3109,20 +3233,33 @@ body { background: white; }
       }
 
       // Also discover context tags in headers/footers (Document model level)
+      // Join text across runs before matching to catch tags split across runs.
       const pkg = historyStateRef.current?.package;
+      const _discoverInRuns = (runs: readonly Run[]) => {
+        const joined = runs
+          .flatMap((r) => r.content)
+          .filter((rc) => rc.type === 'text' && (rc as { text: string }).text)
+          .map((rc) => (rc as { text: string }).text)
+          .join('');
+        if (!joined) return;
+        for (const m of joined.matchAll(HF_CONTEXT_TAG_RE)) {
+          const tagKey = m[1] || m[2];
+          if (tagKey) discoveredKeys.add(tagKey);
+        }
+      };
       const scanHfMap = (map: Map<string, HeaderFooter> | undefined) => {
         if (!map) return;
         for (const [, hf] of map) {
           for (const block of hf.content) {
             if (block.type !== 'paragraph') continue;
+            // Discover in direct runs (joined across the paragraph)
+            const directRuns = block.content.filter((c): c is Run => c.type === 'run');
+            if (directRuns.length > 0) _discoverInRuns(directRuns);
+            // Discover in InlineSdt content controls
             for (const item of block.content) {
-              if (item.type !== 'run') continue;
-              for (const rc of item.content) {
-                if (rc.type !== 'text' || !rc.text) continue;
-                for (const m of rc.text.matchAll(HF_CONTEXT_TAG_RE)) {
-                  const tagKey = m[1] || m[2];
-                  if (tagKey) discoveredKeys.add(tagKey);
-                }
+              if (item.type === 'inlineSdt') {
+                const sdtRuns = item.content.filter((c): c is Run => c.type === 'run');
+                if (sdtRuns.length > 0) _discoverInRuns(sdtRuns);
               }
             }
           }
