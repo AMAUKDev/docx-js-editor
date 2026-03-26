@@ -330,6 +330,8 @@ export interface DocxEditorProps {
   loopPreviewData?: Record<string, Array<Record<string, unknown>>> | null;
   /** Called when the page count changes after layout */
   onPageCountChange?: (pageCount: number) => void;
+  /** When true, show gear icons on styles + "Create New Style" in dropdown */
+  canModifyStyles?: boolean;
 }
 
 /**
@@ -768,6 +770,7 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     showCommentPanel,
     onCommentAction,
     commentPanelKey,
+    canModifyStyles = false,
   },
   ref
 ) {
@@ -3680,6 +3683,7 @@ body { background: white; }
                         restrictedMode || styleGalleryMode ? allowedStyleIds : undefined
                       }
                       numberingMap={numberingMap}
+                      canModifyStyles={canModifyStyles}
                       renderMode={state.renderMode}
                       onToggleRenderMode={() =>
                         setState((prev) => ({

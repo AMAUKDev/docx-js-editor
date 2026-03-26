@@ -187,6 +187,8 @@ export interface ToolbarProps {
   allowedStyleIds?: string[];
   /** Numbering map for computing heading prefixes in the style picker */
   numberingMap?: NumberingMap | null;
+  /** When true, show gear icons on styles + "Create New Style" in dropdown */
+  canModifyStyles?: boolean;
   /** Callback when user wants to insert a shape */
   onInsertShape?: (data: {
     shapeType: string;
@@ -376,6 +378,7 @@ export function Toolbar({
   styleGalleryMode,
   allowedStyleIds,
   numberingMap,
+  canModifyStyles = false,
   showFontPicker: showFontPickerProp = true,
   showFontSizePicker: showFontSizePickerProp = true,
   showTextColorPicker: showTextColorPickerProp = true,
@@ -903,6 +906,7 @@ export function Toolbar({
             galleryMode={styleGalleryMode ?? restrictedMode}
             allowedStyleIds={allowedStyleIds}
             numberingMap={numberingMap}
+            canModifyStyles={canModifyStyles}
           />
         </ToolbarGroup>
       )}

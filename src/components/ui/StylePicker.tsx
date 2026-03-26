@@ -53,6 +53,12 @@ export interface StylePickerProps {
   allowedStyleIds?: string[];
   /** Numbering map for computing heading numbering prefixes */
   numberingMap?: NumberingMap | null;
+  /** When true, show gear icons on each style + "Create New Style" entry */
+  canModifyStyles?: boolean;
+  /** Called when user clicks the gear icon on a style */
+  onModifyStyle?: (styleId: string) => void;
+  /** Called when user clicks "Create New Style..." */
+  onCreateStyle?: () => void;
 }
 
 // ============================================================================
@@ -169,6 +175,9 @@ export function StylePicker({
   galleryMode = false,
   allowedStyleIds,
   numberingMap,
+  canModifyStyles = false,
+  onModifyStyle,
+  onCreateStyle,
 }: StylePickerProps) {
   // Convert document styles to options with visual info
   const styleOptions = React.useMemo(() => {
@@ -292,8 +301,112 @@ export function StylePicker({
   const currentValue = value || 'Normal';
   const displayName = styleOptions.find((s) => s.styleId === currentValue)?.name || currentValue;
 
+  // Custom popover state — used when canModifyStyles is true (both gallery and default modes).
+  // Declared here (before gallery mode check) so both branches can use it.
+  const [customOpen, setCustomOpen] = React.useState(false);
+  const customRef = React.useRef<HTMLDivElement>(null);
+
+  // Close custom dropdown on outside click
+  React.useEffect(() => {
+    if (!customOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (customRef.current && !customRef.current.contains(e.target as Node)) {
+        setCustomOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [customOpen]);
+
   // Gallery mode: "Select Style" dropdown + current-style label
   if (galleryMode) {
+    // When canModifyStyles, use custom popover (Radix Select can't have interactive children)
+    if (canModifyStyles) {
+      return (
+        <div className={cn('flex items-center gap-2', className)}>
+          <div ref={customRef} style={{ position: 'relative', display: 'inline-block' }}>
+            <button
+              className="h-8 text-sm px-3 min-w-[120px] border border-slate-300 rounded bg-white hover:bg-slate-50 flex items-center gap-1"
+              aria-label="Select paragraph style"
+              disabled={disabled}
+              onClick={() => setCustomOpen((v) => !v)}
+            >
+              <span className="truncate flex-1 text-left">Select Style</span>
+              <span className="text-slate-400" style={{ fontSize: '10px' }}>
+                ▼
+              </span>
+            </button>
+            {customOpen && (
+              <div
+                role="listbox"
+                className="absolute left-0 top-full mt-1 min-w-[280px] max-h-[400px] overflow-y-auto bg-white border border-slate-200 rounded-md shadow-lg z-50"
+                style={{ zIndex: 9999 }}
+              >
+                {styleOptions.map((style) => {
+                  const isActive = style.styleId === currentValue;
+                  const previewCSS = getStylePreviewCSS(style);
+                  return (
+                    <div
+                      key={style.styleId}
+                      role="option"
+                      aria-selected={isActive}
+                      className={cn(
+                        'flex items-center gap-2 py-2 px-3 cursor-pointer hover:bg-slate-100',
+                        isActive && 'bg-slate-50'
+                      )}
+                      onClick={() => {
+                        handleValueChange(style.styleId);
+                        setCustomOpen(false);
+                      }}
+                    >
+                      <span
+                        className="flex-shrink-0 text-right text-slate-400"
+                        style={{ width: '44px', fontSize: '12px' }}
+                      >
+                        {style.numberPrefix || ''}
+                      </span>
+                      <span
+                        style={previewCSS}
+                        className={cn('truncate flex-1', isActive && 'underline decoration-1')}
+                      >
+                        {style.name}
+                      </span>
+                      <button
+                        data-testid="style-modify-btn"
+                        data-style-id={style.styleId}
+                        className="flex-shrink-0 p-1 rounded hover:bg-slate-300 text-slate-400 hover:text-slate-700"
+                        style={{ fontSize: '13px', lineHeight: 1 }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setCustomOpen(false);
+                          onModifyStyle?.(style.styleId);
+                        }}
+                        title={`Modify style "${style.name}"`}
+                      >
+                        ⚙
+                      </button>
+                    </div>
+                  );
+                })}
+                <div
+                  data-testid="style-create-new"
+                  className="py-2 px-3 text-sm text-blue-600 hover:bg-blue-50 cursor-pointer border-t border-slate-200"
+                  onClick={() => {
+                    setCustomOpen(false);
+                    onCreateStyle?.();
+                  }}
+                >
+                  + Create New Style...
+                </div>
+              </div>
+            )}
+          </div>
+          <span className="text-xs text-slate-500 whitespace-nowrap">{displayName}</span>
+        </div>
+      );
+    }
+
+    // Gallery mode without modify — standard Radix Select
     return (
       <div className={cn('flex items-center gap-2', className)}>
         <Select
@@ -315,14 +428,12 @@ export function StylePicker({
               return (
                 <SelectItem key={style.styleId} value={style.styleId} className="py-2 px-3">
                   <div className="flex items-baseline gap-2 w-full">
-                    {/* Numbering prefix column */}
                     <span
                       className="flex-shrink-0 text-right text-slate-400"
                       style={{ width: '44px', fontSize: '12px' }}
                     >
                       {style.numberPrefix || ''}
                     </span>
-                    {/* Style name with formatting preview */}
                     <span
                       style={previewCSS}
                       className={cn('truncate', isActive && 'underline decoration-1')}
@@ -335,13 +446,91 @@ export function StylePicker({
             })}
           </SelectContent>
         </Select>
-        {/* Current style indicator */}
         <span className="text-xs text-slate-500 whitespace-nowrap">{displayName}</span>
       </div>
     );
   }
 
-  // Default dropdown mode
+  // When canModifyStyles is true, use custom popover (same as gallery mode above)
+  if (canModifyStyles) {
+    return (
+      <div ref={customRef} style={{ position: 'relative', display: 'inline-block' }}>
+        <button
+          className={cn(
+            'h-8 text-sm border border-slate-300 rounded px-2 bg-white hover:bg-slate-50 flex items-center gap-1',
+            className
+          )}
+          style={{ width: typeof width === 'number' ? `${width}px` : width }}
+          aria-label="Select paragraph style"
+          disabled={disabled}
+          onClick={() => setCustomOpen((v) => !v)}
+        >
+          <span className="truncate flex-1 text-left">{displayName}</span>
+          <span className="text-slate-400" style={{ fontSize: '10px' }}>
+            ▼
+          </span>
+        </button>
+        {customOpen && (
+          <div
+            role="listbox"
+            className="absolute left-0 top-full mt-1 min-w-[260px] max-h-[400px] overflow-y-auto bg-white border border-slate-200 rounded-md shadow-lg z-50"
+            style={{ zIndex: 9999 }}
+          >
+            {styleOptions.map((style) => {
+              const isActive = style.styleId === currentValue;
+              return (
+                <div
+                  key={style.styleId}
+                  role="option"
+                  aria-selected={isActive}
+                  className={cn(
+                    'flex items-center gap-2 py-2.5 px-3 cursor-pointer hover:bg-slate-100',
+                    isActive && 'bg-slate-50'
+                  )}
+                  onClick={() => {
+                    handleValueChange(style.styleId);
+                    setCustomOpen(false);
+                  }}
+                >
+                  <span style={getStylePreviewCSS(style)} className="flex-1 truncate">
+                    {style.name}
+                  </span>
+                  {/* Gear icon for modify — separate click target */}
+                  <button
+                    data-testid="style-modify-btn"
+                    data-style-id={style.styleId}
+                    className="flex-shrink-0 p-1 rounded hover:bg-slate-300 text-slate-400 hover:text-slate-700"
+                    style={{ fontSize: '13px', lineHeight: 1 }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setCustomOpen(false);
+                      onModifyStyle?.(style.styleId);
+                    }}
+                    title={`Modify style "${style.name}"`}
+                  >
+                    ⚙
+                  </button>
+                </div>
+              );
+            })}
+            {/* Create New Style entry */}
+            <div
+              data-testid="style-create-new"
+              className="py-2 px-3 text-sm text-blue-600 hover:bg-blue-50 cursor-pointer border-t border-slate-200"
+              onClick={() => {
+                setCustomOpen(false);
+                onCreateStyle?.();
+              }}
+            >
+              + Create New Style...
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Default dropdown mode (no gear icons — standard Radix Select)
   return (
     <Select
       key={selectKey}
