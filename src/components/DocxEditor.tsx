@@ -4035,8 +4035,73 @@ body { background: white; }
                     .map((s) => ({ styleId: s.styleId, name: s.name || s.styleId })) ?? []
                 }
                 affectedParagraphCount={0}
-                onSave={() => {
-                  // TODO: apply style changes (Task #45)
+                onSave={(formData) => {
+                  const doc = agentRef.current?.getDocument();
+                  if (doc?.package.styles) {
+                    const styles = doc.package.styles;
+                    if (styleEditorState.mode === 'modify' && styleEditorState.styleId) {
+                      const existing = styles.styles.find(
+                        (s) => s.styleId === styleEditorState.styleId
+                      );
+                      if (existing) {
+                        existing.rPr = {
+                          ...existing.rPr,
+                          fontFamily: formData.fontFamily
+                            ? { ascii: formData.fontFamily, hAnsi: formData.fontFamily }
+                            : existing.rPr?.fontFamily,
+                          fontSize: formData.fontSize || existing.rPr?.fontSize,
+                          bold: formData.bold || undefined,
+                          italic: formData.italic || undefined,
+                          strike: formData.strikethrough || undefined,
+                          underline: formData.underline ? { style: 'single' } : undefined,
+                          color: formData.color ? { rgb: formData.color } : existing.rPr?.color,
+                        };
+                        existing.pPr = {
+                          ...existing.pPr,
+                          alignment: formData.alignment === 'justify' ? 'both' : formData.alignment,
+                          spaceBefore: formData.spaceBefore,
+                          spaceAfter: formData.spaceAfter,
+                          lineSpacing: formData.lineSpacing,
+                        };
+                        if (formData.basedOn) existing.basedOn = formData.basedOn;
+                        if (formData.next) existing.next = formData.next;
+                        existing._dirty = true;
+                      }
+                    } else if (styleEditorState.mode === 'create' && formData.name) {
+                      styles.styles.push({
+                        styleId: formData.name.replace(/\s+/g, '_'),
+                        type: 'paragraph' as const,
+                        name: formData.name,
+                        basedOn: formData.basedOn || undefined,
+                        next: formData.next || undefined,
+                        qFormat: true,
+                        rPr: {
+                          fontFamily: formData.fontFamily
+                            ? { ascii: formData.fontFamily, hAnsi: formData.fontFamily }
+                            : undefined,
+                          fontSize: formData.fontSize || undefined,
+                          bold: formData.bold || undefined,
+                          italic: formData.italic || undefined,
+                          strike: formData.strikethrough || undefined,
+                          underline: formData.underline ? { style: 'single' as const } : undefined,
+                          color: formData.color ? { rgb: formData.color } : undefined,
+                        },
+                        pPr: {
+                          alignment: formData.alignment === 'justify' ? 'both' : formData.alignment,
+                          spaceBefore: formData.spaceBefore,
+                          spaceAfter: formData.spaceAfter,
+                          lineSpacing: formData.lineSpacing,
+                        },
+                        _dirty: true,
+                      });
+                    }
+                    doc.package.stylesDirty = true;
+                    // Create new styles reference to trigger React re-render
+                    doc.package.styles = { ...styles, styles: [...styles.styles] };
+                    setDocumentStyles(doc.package.styles.styles);
+                    // Force document state update so Toolbar re-reads styles
+                    history.push({ ...doc, package: { ...doc.package } });
+                  }
                   setStyleEditorState({ open: false, mode: 'modify' });
                 }}
                 onClose={() => setStyleEditorState({ open: false, mode: 'modify' })}

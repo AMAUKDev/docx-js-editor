@@ -175,6 +175,10 @@ export interface DocxPackage {
   relationships?: RelationshipMap;
   /** Media files */
   media?: Map<string, MediaFile>;
+  /** True when styles have been modified/created via Style Editor — triggers styles.xml regeneration */
+  stylesDirty?: boolean;
+  /** Raw XML preamble from original styles.xml (docDefaults + latentStyles) for verbatim preservation */
+  _stylesXmlPreamble?: string;
   /** Document properties */
   properties?: {
     title?: string;

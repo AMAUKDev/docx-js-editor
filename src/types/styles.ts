@@ -82,6 +82,10 @@ export interface Style {
     trPr?: TableRowFormatting;
     tcPr?: TableCellFormatting;
   }>;
+  /** Raw XML of this style from the original DOCX (for verbatim preservation) */
+  _originalXml?: string;
+  /** True when modified via Style Editor — triggers reserialization on save */
+  _dirty?: boolean;
 }
 
 /**
@@ -111,6 +115,10 @@ export interface StyleDefinitions {
   };
   /** Style definitions */
   styles: Style[];
+  /** Raw XML preamble (everything before first <w:style>) for verbatim reconstruction */
+  _preamble?: string;
+  /** Raw XML postamble (closing </w:styles>) for verbatim reconstruction */
+  _postamble?: string;
 }
 
 // ============================================================================

@@ -1261,6 +1261,29 @@ export function parseStyleDefinitions(stylesXml: string, theme: Theme | null): S
     // Parse styles with full inheritance resolution
     const styleMap = parseStyles(stylesXml, theme);
     result.styles = Array.from(styleMap.values());
+
+    // Extract raw XML for each style (for verbatim preservation on save).
+    // Match <w:style w:type="..." w:styleId="...">...</w:style> blocks.
+    const styleXmlRegex = /<w:style\b[^>]*w:styleId="([^"]*)"[^>]*>[\s\S]*?<\/w:style>/g;
+    let m: RegExpExecArray | null;
+    while ((m = styleXmlRegex.exec(stylesXml)) !== null) {
+      const sid = m[1];
+      const style = result.styles.find((s) => s.styleId === sid);
+      if (style) {
+        style._originalXml = m[0];
+      }
+    }
+
+    // Also capture the preamble (everything before first <w:style>) for reconstruction
+    const firstStyleIdx = stylesXml.indexOf('<w:style ');
+    if (firstStyleIdx > 0) {
+      result._preamble = stylesXml.substring(0, firstStyleIdx);
+    }
+    // Capture the postamble (closing </w:styles> tag)
+    const closingIdx = stylesXml.lastIndexOf('</w:styles>');
+    if (closingIdx > 0) {
+      result._postamble = stylesXml.substring(closingIdx);
+    }
   } catch (error) {
     console.warn('Failed to parse style definitions:', error);
   }

@@ -488,6 +488,16 @@ export async function repackDocx(doc: Document, options: RepackOptions = {}): Pr
     });
   }
 
+  // Re-serialize word/styles.xml if styles were modified via Style Editor.
+  if (doc.package.stylesDirty && doc.package.styles) {
+    const { serializeStyleDefinitions } = await import('./serializer/styleSerializer');
+    const stylesXml = serializeStyleDefinitions(doc.package.styles);
+    newZip.file('word/styles.xml', stylesXml, {
+      compression: 'DEFLATE',
+      compressionOptions: { level: compressionLevel },
+    });
+  }
+
   // NOTE: We do NOT re-serialize headers/footers (lossy — drops mc:AlternateContent/VML).
   // Instead, we do text-level replacement of context tags directly in the original XML.
   if (doc.contextTagReplacements) {
@@ -876,6 +886,18 @@ export async function repackDocxFromRaw(
       origXml = injectCommentMarkersIntoXml(origXml, doc);
     }
     newZip.file('word/document.xml', origXml, {
+      compression: 'DEFLATE',
+      compressionOptions: { level: compressionLevel },
+    });
+  }
+
+  // Re-serialize word/styles.xml if styles were modified via Style Editor.
+  // Only dirty/new styles are serialized from objects; unmodified styles
+  // use their _originalXml verbatim for byte-identical preservation.
+  if (doc.package.stylesDirty && doc.package.styles) {
+    const { serializeStyleDefinitions } = await import('./serializer/styleSerializer');
+    const stylesXml = serializeStyleDefinitions(doc.package.styles);
+    newZip.file('word/styles.xml', stylesXml, {
       compression: 'DEFLATE',
       compressionOptions: { level: compressionLevel },
     });
