@@ -302,9 +302,14 @@ export function StylePicker({
   const displayName = styleOptions.find((s) => s.styleId === currentValue)?.name || currentValue;
 
   // Custom popover state — used when canModifyStyles is true (both gallery and default modes).
-  // Declared here (before gallery mode check) so both branches can use it.
+  // Uses position:fixed to escape overflow:auto containers (toolbar is sticky inside scroll area).
   const [customOpen, setCustomOpen] = React.useState(false);
   const customRef = React.useRef<HTMLDivElement>(null);
+  const triggerRef = React.useRef<HTMLButtonElement>(null);
+  const [dropdownPos, setDropdownPos] = React.useState<{ top: number; left: number }>({
+    top: 0,
+    left: 0,
+  });
 
   // Close custom dropdown on outside click
   React.useEffect(() => {
@@ -318,18 +323,28 @@ export function StylePicker({
     return () => document.removeEventListener('mousedown', handler);
   }, [customOpen]);
 
+  const openCustomDropdown = React.useCallback(() => {
+    // Calculate position from trigger button's bounding rect (fixed positioning)
+    if (triggerRef.current) {
+      const rect = triggerRef.current.getBoundingClientRect();
+      setDropdownPos({ top: rect.bottom + 4, left: rect.left });
+    }
+    setCustomOpen((v) => !v);
+  }, []);
+
   // Gallery mode: "Select Style" dropdown + current-style label
   if (galleryMode) {
     // When canModifyStyles, use custom popover (Radix Select can't have interactive children)
     if (canModifyStyles) {
       return (
         <div className={cn('flex items-center gap-2', className)}>
-          <div ref={customRef} style={{ position: 'relative', display: 'inline-block' }}>
+          <div style={{ position: 'relative', display: 'inline-block' }}>
             <button
+              ref={triggerRef}
               className="h-8 text-sm px-3 min-w-[120px] border border-slate-300 rounded bg-white hover:bg-slate-50 flex items-center gap-1"
               aria-label="Select paragraph style"
               disabled={disabled}
-              onClick={() => setCustomOpen((v) => !v)}
+              onClick={openCustomDropdown}
             >
               <span className="truncate flex-1 text-left">Select Style</span>
               <span className="text-slate-400" style={{ fontSize: '10px' }}>
@@ -338,9 +353,15 @@ export function StylePicker({
             </button>
             {customOpen && (
               <div
+                ref={customRef}
                 role="listbox"
-                className="absolute left-0 top-full mt-1 min-w-[280px] max-h-[400px] overflow-y-auto bg-white border border-slate-200 rounded-md shadow-lg z-50"
-                style={{ zIndex: 9999 }}
+                className="min-w-[280px] max-h-[400px] overflow-y-auto bg-white border border-slate-200 rounded-md shadow-lg"
+                style={{
+                  position: 'fixed',
+                  top: dropdownPos.top,
+                  left: dropdownPos.left,
+                  zIndex: 99999,
+                }}
               >
                 {styleOptions.map((style) => {
                   const isActive = style.styleId === currentValue;
@@ -454,8 +475,9 @@ export function StylePicker({
   // When canModifyStyles is true, use custom popover (same as gallery mode above)
   if (canModifyStyles) {
     return (
-      <div ref={customRef} style={{ position: 'relative', display: 'inline-block' }}>
+      <div style={{ position: 'relative', display: 'inline-block' }}>
         <button
+          ref={triggerRef}
           className={cn(
             'h-8 text-sm border border-slate-300 rounded px-2 bg-white hover:bg-slate-50 flex items-center gap-1',
             className
@@ -463,7 +485,7 @@ export function StylePicker({
           style={{ width: typeof width === 'number' ? `${width}px` : width }}
           aria-label="Select paragraph style"
           disabled={disabled}
-          onClick={() => setCustomOpen((v) => !v)}
+          onClick={openCustomDropdown}
         >
           <span className="truncate flex-1 text-left">{displayName}</span>
           <span className="text-slate-400" style={{ fontSize: '10px' }}>
@@ -472,9 +494,15 @@ export function StylePicker({
         </button>
         {customOpen && (
           <div
+            ref={customRef}
             role="listbox"
-            className="absolute left-0 top-full mt-1 min-w-[260px] max-h-[400px] overflow-y-auto bg-white border border-slate-200 rounded-md shadow-lg z-50"
-            style={{ zIndex: 9999 }}
+            className="min-w-[260px] max-h-[400px] overflow-y-auto bg-white border border-slate-200 rounded-md shadow-lg"
+            style={{
+              position: 'fixed',
+              top: dropdownPos.top,
+              left: dropdownPos.left,
+              zIndex: 99999,
+            }}
           >
             {styleOptions.map((style) => {
               const isActive = style.styleId === currentValue;
