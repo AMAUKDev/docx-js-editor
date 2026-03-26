@@ -23,7 +23,7 @@ import {
 import type { CSSProperties, ReactNode } from 'react';
 import type { Document, Theme, HeaderFooter } from '../types/document';
 import type { Run } from '../types/content';
-import { setDocumentStyles } from '../prosemirror/styles/styleStore';
+import { setDocumentStyles, getStyleDef } from '../prosemirror/styles/styleStore';
 
 import { Toolbar, type SelectionFormatting, type FormattingAction } from './Toolbar';
 import { pointsToHalfPoints } from './ui/FontSizePicker';
@@ -77,6 +77,11 @@ const ImagePropertiesDialog = lazy(() =>
 const FootnotePropertiesDialog = lazy(() =>
   import('./dialogs/FootnotePropertiesDialog').then((m) => ({
     default: m.FootnotePropertiesDialog,
+  }))
+);
+const StyleEditorDialog = lazy(() =>
+  import('./dialogs/StyleEditorDialog').then((m) => ({
+    default: m.StyleEditorDialog,
   }))
 );
 import { MaterialSymbol } from './ui/Icons';
@@ -800,6 +805,12 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
   const [imagePropsOpen, setImagePropsOpen] = useState(false);
   // Footnote properties dialog state
   const [footnotePropsOpen, setFootnotePropsOpen] = useState(false);
+  // Style editor dialog state
+  const [styleEditorState, setStyleEditorState] = useState<{
+    open: boolean;
+    mode: 'modify' | 'create';
+    styleId?: string;
+  }>({ open: false, mode: 'modify' });
   // Header/footer editing state
   const [hfEditPosition, setHfEditPosition] = useState<'header' | 'footer' | null>(null);
   // Document outline sidebar state
@@ -3684,6 +3695,10 @@ body { background: white; }
                       }
                       numberingMap={numberingMap}
                       canModifyStyles={canModifyStyles}
+                      onModifyStyle={(styleId) =>
+                        setStyleEditorState({ open: true, mode: 'modify', styleId })
+                      }
+                      onCreateStyle={() => setStyleEditorState({ open: true, mode: 'create' })}
                       renderMode={state.renderMode}
                       onToggleRenderMode={() =>
                         setState((prev) => ({
@@ -3983,6 +3998,51 @@ body { background: white; }
               />
             )}
           </Suspense>
+          {/* Style Editor Dialog */}
+          {styleEditorState.open && (
+            <Suspense fallback={null}>
+              <StyleEditorDialog
+                isOpen={styleEditorState.open}
+                mode={styleEditorState.mode}
+                styleId={styleEditorState.styleId}
+                initialData={
+                  styleEditorState.mode === 'modify' && styleEditorState.styleId
+                    ? (() => {
+                        const styleDef = getStyleDef(styleEditorState.styleId!);
+                        if (!styleDef) return {};
+                        return {
+                          name: styleDef.name || styleDef.styleId,
+                          basedOn: styleDef.basedOn || '',
+                          next: styleDef.next || '',
+                          fontFamily: styleDef.rPr?.fontFamily?.ascii || '',
+                          fontSize: styleDef.rPr?.fontSize || 22,
+                          bold: !!styleDef.rPr?.bold,
+                          italic: !!styleDef.rPr?.italic,
+                          color: styleDef.rPr?.color?.rgb || '000000',
+                          alignment:
+                            (styleDef.pPr?.alignment as 'left' | 'center' | 'right' | 'justify') ||
+                            'left',
+                          spaceBefore: styleDef.pPr?.spaceBefore || 0,
+                          spaceAfter: styleDef.pPr?.spaceAfter || 0,
+                          lineSpacing: styleDef.pPr?.lineSpacing || 240,
+                        };
+                      })()
+                    : {}
+                }
+                availableStyles={
+                  crossRefStyleResolverRef.current
+                    ?.getParagraphStyles()
+                    .map((s) => ({ styleId: s.styleId, name: s.name || s.styleId })) ?? []
+                }
+                affectedParagraphCount={0}
+                onSave={() => {
+                  // TODO: apply style changes (Task #45)
+                  setStyleEditorState({ open: false, mode: 'modify' });
+                }}
+                onClose={() => setStyleEditorState({ open: false, mode: 'modify' })}
+              />
+            </Suspense>
+          )}
           {/* InlineHeaderFooterEditor is rendered inside the editor content area (position:relative div) */}
           {/* Hidden file input for image insertion */}
           <input

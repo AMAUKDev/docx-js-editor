@@ -189,6 +189,10 @@ export interface ToolbarProps {
   numberingMap?: NumberingMap | null;
   /** When true, show gear icons on styles + "Create New Style" in dropdown */
   canModifyStyles?: boolean;
+  /** Called when user clicks gear icon on a style */
+  onModifyStyle?: (styleId: string) => void;
+  /** Called when user clicks "Create New Style..." */
+  onCreateStyle?: () => void;
   /** Callback when user wants to insert a shape */
   onInsertShape?: (data: {
     shapeType: string;
@@ -379,6 +383,8 @@ export function Toolbar({
   allowedStyleIds,
   numberingMap,
   canModifyStyles = false,
+  onModifyStyle,
+  onCreateStyle,
   showFontPicker: showFontPickerProp = true,
   showFontSizePicker: showFontSizePickerProp = true,
   showTextColorPicker: showTextColorPickerProp = true,
@@ -907,6 +913,8 @@ export function Toolbar({
             allowedStyleIds={allowedStyleIds}
             numberingMap={numberingMap}
             canModifyStyles={canModifyStyles}
+            onModifyStyle={onModifyStyle}
+            onCreateStyle={onCreateStyle}
           />
         </ToolbarGroup>
       )}
