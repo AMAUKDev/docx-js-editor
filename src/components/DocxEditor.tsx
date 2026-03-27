@@ -4035,20 +4035,42 @@ body { background: white; }
                         };
                       })()
                     : (() => {
-                        // Create mode: pre-fill from current selection formatting
+                        // Create mode: pre-fill from selection formatting.
+                        // selectionFormatting only has EXPLICIT marks — if font comes
+                        // from the paragraph style, we need to resolve it from the style.
                         const sf = state.selectionFormatting;
+                        const styleId = sf.styleId || 'Normal';
+
+                        // Resolve the paragraph style to get inherited font/size/color
+                        const resolved =
+                          crossRefStyleResolverRef.current?.resolveParagraphStyle(styleId);
+                        const styleFont = resolved?.runFormatting?.fontFamily?.ascii || '';
+                        const styleSize = resolved?.runFormatting?.fontSize || 22;
+                        const styleBold = !!resolved?.runFormatting?.bold;
+                        const styleItalic = !!resolved?.runFormatting?.italic;
+                        const styleColor = resolved?.runFormatting?.color?.rgb || '000000';
+                        const styleAlignment = resolved?.paragraphFormatting?.alignment || 'left';
+                        const styleSpaceBefore = resolved?.paragraphFormatting?.spaceBefore || 0;
+                        const styleSpaceAfter = resolved?.paragraphFormatting?.spaceAfter || 0;
+                        const styleLineSpacing = resolved?.paragraphFormatting?.lineSpacing || 240;
+
                         return {
-                          fontFamily: sf.fontFamily || '',
-                          fontSize: sf.fontSize || 22,
-                          bold: !!sf.bold,
-                          italic: !!sf.italic,
+                          // Explicit marks override style-resolved values
+                          fontFamily: sf.fontFamily || styleFont,
+                          fontSize: sf.fontSize || styleSize,
+                          bold: sf.bold != null ? sf.bold : styleBold,
+                          italic: sf.italic != null ? sf.italic : styleItalic,
                           underline: !!sf.underline,
                           strikethrough: !!sf.strike,
-                          color: sf.color?.replace('#', '') || '000000',
+                          color: sf.color?.replace('#', '') || styleColor,
                           alignment:
-                            (sf.alignment as 'left' | 'center' | 'right' | 'justify') || 'left',
-                          lineSpacing: sf.lineSpacing || 240,
-                          basedOn: sf.styleId || 'Normal',
+                            (sf.alignment as 'left' | 'center' | 'right' | 'justify') ||
+                            (styleAlignment as 'left' | 'center' | 'right' | 'justify') ||
+                            'left',
+                          lineSpacing: sf.lineSpacing || styleLineSpacing,
+                          spaceBefore: styleSpaceBefore,
+                          spaceAfter: styleSpaceAfter,
+                          basedOn: styleId,
                         };
                       })()
                 }
