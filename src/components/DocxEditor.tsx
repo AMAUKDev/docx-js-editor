@@ -432,6 +432,21 @@ export interface DocxEditorRef {
   unlockHeadersFooters: () => void;
   /** Update attributes of a context tag node at a given PM position */
   updateContextTagAttrs: (pmPos: number, attrs: Record<string, unknown>) => void;
+  /** Import styles into the document (merges/overwrites existing by styleId) */
+  importStyles: (
+    styles: Array<{
+      styleId: string;
+      name?: string;
+      type?: string;
+      basedOn?: string;
+      next?: string;
+      fontFamily?: string;
+      fontSize?: number;
+      bold?: boolean;
+      italic?: boolean;
+      color?: string;
+    }>
+  ) => void;
   /** Get document-level metadata from the Custom XML Part (template provenance, tocStyle, etc.) */
   getDocumentMeta: () => FPDocumentMeta | undefined;
   /** Set/update document-level metadata (written to Custom XML Part on next save) */
@@ -3166,6 +3181,40 @@ body { background: white; }
           tr.setMeta('allowLockedEdit', true);
           view.dispatch(tr);
         }
+      },
+      importStyles: (styles) => {
+        const doc = history.state;
+        if (!doc?.package?.styles) return;
+        const existingStyles = doc.package.styles.styles;
+        for (const s of styles) {
+          const idx = existingStyles.findIndex((es) => es.styleId === s.styleId);
+          const newStyle = {
+            styleId: s.styleId,
+            type: (s.type || 'paragraph') as 'paragraph',
+            name: s.name || s.styleId,
+            basedOn: s.basedOn || undefined,
+            next: s.next || undefined,
+            qFormat: true,
+            rPr: {
+              fontFamily: s.fontFamily ? { ascii: s.fontFamily, hAnsi: s.fontFamily } : undefined,
+              fontSize: s.fontSize || undefined,
+              bold: s.bold || undefined,
+              italic: s.italic || undefined,
+              color: s.color ? { rgb: s.color } : undefined,
+            },
+            _dirty: true,
+          };
+          if (idx >= 0) {
+            existingStyles[idx] = newStyle;
+          } else {
+            existingStyles.push(newStyle);
+          }
+        }
+        doc.package.stylesDirty = true;
+        doc.package.styles = { ...doc.package.styles, styles: [...existingStyles] };
+        setDocumentStyles(doc.package.styles.styles);
+        // Force document state update so Toolbar + StylePicker re-read styles
+        history.push({ ...doc, package: { ...doc.package } });
       },
       getDocumentMeta: () => {
         return agentRef.current?.getDocument()?.fpDocumentMeta;

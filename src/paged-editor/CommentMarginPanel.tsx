@@ -297,6 +297,10 @@ export const CommentMarginPanel: React.FC<CommentMarginPanelProps> = ({
                   onClick={(e) => {
                     e.stopPropagation();
                     onEdit?.(card.id, editText);
+                    // Update local card text immediately so UI reflects the change
+                    setCards((prev) =>
+                      prev.map((c) => (c.id === card.id ? { ...c, text: editText } : c))
+                    );
                     setEditingId(null);
                   }}
                   style={{

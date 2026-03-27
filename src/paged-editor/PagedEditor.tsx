@@ -1733,6 +1733,9 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
     // Visual line navigation (ArrowUp/ArrowDown with sticky X)
     const { handlePMKeyDown } = useVisualLineNavigation({ pagesContainerRef });
 
+    // Local counter to force CommentMarginPanel re-render after edits/deletes
+    const [commentPanelVersion, setCommentPanelVersion] = useState(0);
+
     // Store callbacks in refs to avoid infinite re-render loops
     // when parent passes unstable callback references
     const onSelectionChangeRef = useRef(onSelectionChange);
@@ -4125,7 +4128,7 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
           {/* Comment margin panel (Word-like) */}
           {showCommentPanel && (
             <CommentMarginPanel
-              key={commentPanelKey}
+              key={`${commentPanelKey}-${commentPanelVersion}`}
               pagesContainer={pagesContainerRef.current}
               view={hiddenPMRef.current?.getView() ?? null}
               comments={(() => {
@@ -4143,19 +4146,28 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
                 // Update the comment text in the Document model
                 const comments = document?.package.document?.comments;
                 if (comments) {
-                  const comment = comments.find((c) => c.id === commentId);
-                  if (comment) {
-                    // Replace comment content with new text
-                    comment.content = [
-                      {
-                        type: 'paragraph',
-                        content: [{ type: 'run', content: [{ type: 'text', text: newText }] }],
-                      },
-                    ] as any;
+                  const idx = comments.findIndex((c) => c.id === commentId);
+                  if (idx >= 0) {
+                    // Replace comment content with new text (create new object for React)
+                    comments[idx] = {
+                      ...comments[idx],
+                      content: [
+                        {
+                          type: 'paragraph',
+                          content: [{ type: 'run', content: [{ type: 'text', text: newText }] }],
+                        },
+                      ] as any,
+                    };
+                    // Create new array reference so React detects the change
+                    if (document?.package.document) {
+                      document.package.document.comments = [...comments];
+                    }
                     // Mark document as having modified comments
                     if (document) {
                       (document as any).commentsModified = true;
                     }
+                    // Force panel re-render to display updated text
+                    setCommentPanelVersion((v) => v + 1);
                   }
                 }
               }}
