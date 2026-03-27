@@ -4139,6 +4139,26 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
               onReply={onCommentAction ? (id) => onCommentAction('reply', id) : undefined}
               onResolve={onCommentAction ? (id) => onCommentAction('resolve', id) : undefined}
               onDelete={onCommentAction ? (id) => onCommentAction('delete', id) : undefined}
+              onEdit={(commentId, newText) => {
+                // Update the comment text in the Document model
+                const comments = document?.package.document?.comments;
+                if (comments) {
+                  const comment = comments.find((c) => c.id === commentId);
+                  if (comment) {
+                    // Replace comment content with new text
+                    comment.content = [
+                      {
+                        type: 'paragraph',
+                        content: [{ type: 'run', content: [{ type: 'text', text: newText }] }],
+                      },
+                    ] as any;
+                    // Mark document as having modified comments
+                    if (document) {
+                      (document as any).commentsModified = true;
+                    }
+                  }
+                }
+              }}
             />
           )}
         </div>

@@ -31,6 +31,8 @@ export interface CommentMarginPanelProps {
   onResolve?: (commentId: number) => void;
   /** Callback when user clicks Delete on a comment */
   onDelete?: (commentId: number) => void;
+  /** Callback when user edits a comment's text */
+  onEdit?: (commentId: number, newText: string) => void;
 }
 
 /**
@@ -59,8 +61,12 @@ export const CommentMarginPanel: React.FC<CommentMarginPanelProps> = ({
   onReply,
   onResolve,
   onDelete,
+  onEdit,
 }) => {
   const [cards, setCards] = useState<CommentCardData[]>([]);
+  // Editing state: which comment ID is being edited, and the draft text
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editText, setEditText] = useState('');
 
   const computePositions = useCallback(() => {
     if (!pagesContainer || !view || !comments || comments.length === 0) {
@@ -234,72 +240,153 @@ export const CommentMarginPanel: React.FC<CommentMarginPanelProps> = ({
             </div>
           )}
 
-          {/* Comment text */}
-          <div style={{ color: '#333', marginBottom: 4 }}>{card.text}</div>
+          {/* Comment text — editable when editing */}
+          {editingId === card.id ? (
+            <div style={{ marginBottom: 4 }}>
+              <textarea
+                value={editText}
+                onChange={(e) => setEditText(e.target.value)}
+                onMouseDown={(e) => e.stopPropagation()}
+                style={{
+                  width: '100%',
+                  minHeight: 40,
+                  fontSize: '11px',
+                  border: '1px solid #ccc',
+                  borderRadius: 3,
+                  padding: '3px 4px',
+                  resize: 'vertical',
+                }}
+              />
+              <div style={{ display: 'flex', gap: 4, marginTop: 3 }}>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onEdit?.(card.id, editText);
+                    setEditingId(null);
+                  }}
+                  style={{
+                    fontSize: '9px',
+                    padding: '1px 5px',
+                    border: '1px solid #28a745',
+                    borderRadius: 3,
+                    background: '#28a745',
+                    color: 'white',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Save
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setEditingId(null);
+                  }}
+                  style={{
+                    fontSize: '9px',
+                    padding: '1px 5px',
+                    border: '1px solid #6c757d',
+                    borderRadius: 3,
+                    background: 'white',
+                    color: '#6c757d',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div style={{ color: '#333', marginBottom: 4 }}>{card.text}</div>
+          )}
 
           {/* Action buttons */}
-          <div style={{ display: 'flex', gap: 4 }}>
-            {!card.done && onResolve && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onResolve(card.id);
-                }}
-                style={{
-                  fontSize: '9px',
-                  padding: '1px 5px',
-                  border: '1px solid #28a745',
-                  borderRadius: 3,
-                  background: 'white',
-                  color: '#28a745',
-                  cursor: 'pointer',
-                }}
-              >
-                Resolve
-              </button>
-            )}
-            {onReply && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onReply(card.id);
-                }}
-                style={{
-                  fontSize: '9px',
-                  padding: '1px 5px',
-                  border: '1px solid #6c757d',
-                  borderRadius: 3,
-                  background: 'white',
-                  color: '#6c757d',
-                  cursor: 'pointer',
-                }}
-              >
-                Reply
-              </button>
-            )}
-            {onDelete && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onDelete(card.id);
-                }}
-                style={{
-                  fontSize: '9px',
-                  padding: '1px 5px',
-                  border: '1px solid #dc3545',
-                  borderRadius: 3,
-                  background: 'white',
-                  color: '#dc3545',
-                  cursor: 'pointer',
-                }}
-              >
-                Delete
-              </button>
-            )}
-          </div>
+          {editingId !== card.id && (
+            <div style={{ display: 'flex', gap: 4 }}>
+              {!card.done && onResolve && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onResolve(card.id);
+                  }}
+                  style={{
+                    fontSize: '9px',
+                    padding: '1px 5px',
+                    border: '1px solid #28a745',
+                    borderRadius: 3,
+                    background: 'white',
+                    color: '#28a745',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Resolve
+                </button>
+              )}
+              {onEdit && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setEditingId(card.id);
+                    setEditText(card.text);
+                  }}
+                  style={{
+                    fontSize: '9px',
+                    padding: '1px 5px',
+                    border: '1px solid #007bff',
+                    borderRadius: 3,
+                    background: 'white',
+                    color: '#007bff',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Edit
+                </button>
+              )}
+              {onReply && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onReply(card.id);
+                  }}
+                  style={{
+                    fontSize: '9px',
+                    padding: '1px 5px',
+                    border: '1px solid #6c757d',
+                    borderRadius: 3,
+                    background: 'white',
+                    color: '#6c757d',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Reply
+                </button>
+              )}
+              {onDelete && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDelete(card.id);
+                  }}
+                  style={{
+                    fontSize: '9px',
+                    padding: '1px 5px',
+                    border: '1px solid #dc3545',
+                    borderRadius: 3,
+                    background: 'white',
+                    color: '#dc3545',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Delete
+                </button>
+              )}
+            </div>
+          )}
         </div>
       ))}
     </div>
