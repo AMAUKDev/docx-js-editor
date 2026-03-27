@@ -1147,15 +1147,45 @@ function computePageFingerprint(page: Page): string {
  * Compute a hash for render options that affect all pages globally.
  * When this changes, all pages need a full re-render.
  */
+/** Extract a short text fingerprint from H/F content for change detection. */
+function hfTextFingerprint(content: HeaderFooterContent | undefined | null): string {
+  if (!content || !content.blocks) return '';
+  let text = '';
+  for (const block of content.blocks) {
+    if (block.kind === 'paragraph') {
+      for (const run of (block as { runs: Array<{ kind: string; text?: string }> }).runs) {
+        if (run.kind === 'text' && run.text) {
+          text += run.text;
+          if (text.length > 80) return text.substring(0, 80);
+        }
+      }
+    }
+  }
+  return text;
+}
+
 function computeOptionsHash(options: RenderPageOptions): string {
   const parts: string[] = [];
 
-  // Header/footer content changes affect all pages
+  // Header/footer content changes affect all pages.
+  // Include text fingerprint so context tag substitutions invalidate the hash.
   if (options.headerContent) {
-    parts.push(`hdr:${options.headerContent.blocks.length},${options.headerContent.height}`);
+    parts.push(
+      `hdr:${options.headerContent.blocks.length},${options.headerContent.height},${hfTextFingerprint(options.headerContent)}`
+    );
   }
   if (options.footerContent) {
-    parts.push(`ftr:${options.footerContent.blocks.length},${options.footerContent.height}`);
+    parts.push(
+      `ftr:${options.footerContent.blocks.length},${options.footerContent.height},${hfTextFingerprint(options.footerContent)}`
+    );
+  }
+  // First-page H/F (separate from default — missing these caused the bug where
+  // office change didn't update the first-page footer)
+  if ((options as any).firstPageHeaderContent) {
+    parts.push(`fphdr:${hfTextFingerprint((options as any).firstPageHeaderContent)}`);
+  }
+  if ((options as any).firstPageFooterContent) {
+    parts.push(`fpftr:${hfTextFingerprint((options as any).firstPageFooterContent)}`);
   }
 
   // Theme changes

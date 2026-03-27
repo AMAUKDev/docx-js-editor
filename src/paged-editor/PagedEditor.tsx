@@ -929,7 +929,10 @@ function convertDocumentRunsToFlowRuns(
         }
         if (formatting.fontFamily) {
           const ff = formatting.fontFamily as Record<string, unknown>;
-          runFormatting.fontFamily = (ff.ascii || ff.hAnsi) as string;
+          const resolvedFont = (ff.ascii || ff.hAnsi) as string | undefined;
+          if (resolvedFont) {
+            runFormatting.fontFamily = resolvedFont;
+          }
         }
       }
 
@@ -1402,10 +1405,25 @@ function convertHeaderFooterToContent(
         }
       }
 
-      // Resolve style defaults for run formatting (font/size/color from paragraph style)
+      // Resolve style defaults for run formatting (font/size/color from paragraph style).
+      // Use the style's OWN rPr if it defines one; otherwise fall back to docDefaults.
+      // This matches Word's behavior: Header/Footer styles that don't define a font
+      // inherit from docDefaults (Calibri), not from basedOn chain (Normal → Times New Roman).
       let styleRunDefaults: RunFormatting | undefined;
       if (styleResolver && formatting?.styleId) {
-        const resolved = styleResolver.resolveParagraphStyle(formatting.styleId as string);
+        // First try the style's own rPr (without basedOn resolution)
+        const ownStyle = styleResolver.getStyle?.(formatting.styleId as string);
+        const hasOwnFont = ownStyle?.rPr?.fontFamily?.ascii || ownStyle?.rPr?.fontFamily?.hAnsi;
+
+        // If style has its own font, use the full cascade. Otherwise use docDefaults only.
+        const resolved = hasOwnFont
+          ? styleResolver.resolveParagraphStyle(formatting.styleId as string)
+          : {
+              runFormatting: styleResolver.getDocDefaults?.()?.rPr,
+              paragraphFormatting: styleResolver.resolveParagraphStyle(formatting.styleId as string)
+                ?.paragraphFormatting,
+            };
+
         const rpr = resolved?.runFormatting;
         if (rpr) {
           styleRunDefaults = {};
