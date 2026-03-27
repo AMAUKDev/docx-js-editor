@@ -101,6 +101,18 @@ function findPositionInSpan(spanEl: HTMLElement, clientX: number, _clientY: numb
     return clientX < midpoint ? pmStart : pmEnd;
   }
 
+  // Special handling for context tag spans — they are atom nodes in PM (size 1)
+  // but render as full text. Clicking left half = before tag, right half = after tag.
+  // This makes drag-select work correctly across context tags.
+  if (
+    spanEl.classList.contains('layout-context-tag') ||
+    spanEl.classList.contains('layout-context-tag-image')
+  ) {
+    const rect = spanEl.getBoundingClientRect();
+    const midpoint = (rect.left + rect.right) / 2;
+    return clientX < midpoint ? pmStart : pmEnd;
+  }
+
   const textNode = spanEl.firstChild;
   if (!textNode || textNode.nodeType !== Node.TEXT_NODE) {
     // No text content - return start position
