@@ -898,7 +898,11 @@ function measureBlocks(blocks: FlowBlock[], contentWidth: number): Measure[] {
  *
  * @param content - Array of ParagraphContent from document
  */
-function convertDocumentRunsToFlowRuns(content: unknown[]): Run[] {
+function convertDocumentRunsToFlowRuns(
+  content: unknown[],
+  /** Default run formatting from the paragraph's style — applied when no explicit formatting */
+  styleDefaults?: RunFormatting
+): Run[] {
   const runs: Run[] = [];
 
   for (const item of content) {
@@ -907,7 +911,8 @@ function convertDocumentRunsToFlowRuns(content: unknown[]): Run[] {
     // Handle Run type (from Document)
     if (itemObj.type === 'run' && Array.isArray(itemObj.content)) {
       const formatting = itemObj.formatting as Record<string, unknown> | undefined;
-      const runFormatting: RunFormatting = {};
+      // Start with style defaults, then override with explicit inline formatting
+      const runFormatting: RunFormatting = styleDefaults ? { ...styleDefaults } : {};
 
       if (formatting) {
         if (formatting.bold) runFormatting.bold = true;
@@ -1308,7 +1313,9 @@ function convertHeaderFooterToContent(
   contentWidth: number,
   styles?: StyleDefinitions | null,
   contextTags?: Record<string, string>,
-  renderMode?: 'rendered' | 'raw'
+  renderMode?: 'rendered' | 'raw',
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  styleResolver?: any
 ): HeaderFooterContent | undefined {
   if (!headerFooter || !headerFooter.content || headerFooter.content.length === 0) {
     return undefined;
@@ -1395,7 +1402,40 @@ function convertHeaderFooterToContent(
         }
       }
 
-      const runs = convertDocumentRunsToFlowRuns(itemObj.content as unknown[]);
+      // Resolve style defaults for run formatting (font/size/color from paragraph style)
+      let styleRunDefaults: RunFormatting | undefined;
+      if (styleResolver && formatting?.styleId) {
+        const resolved = styleResolver.resolveParagraphStyle(formatting.styleId as string);
+        const rpr = resolved?.runFormatting;
+        if (rpr) {
+          styleRunDefaults = {};
+          const ff = rpr.fontFamily as Record<string, unknown> | undefined;
+          if (ff?.ascii) styleRunDefaults.fontFamily = ff.ascii as string;
+          const fs = rpr.fontSize as number | undefined;
+          if (fs) styleRunDefaults.fontSize = fs / 2; // half-points to points
+          if (rpr.bold) styleRunDefaults.bold = true;
+          if (rpr.italic) styleRunDefaults.italic = true;
+          const color = rpr.color as Record<string, unknown> | undefined;
+          if (color?.rgb) styleRunDefaults.color = `#${color.rgb}`;
+          else if (color?.val) styleRunDefaults.color = `#${color.val}`;
+        }
+        // Also resolve paragraph-level spacing from style
+        const ppr = resolved?.paragraphFormatting as Record<string, unknown> | undefined;
+        if (ppr) {
+          if (!attrs.spacing) attrs.spacing = {};
+          if (ppr.spaceBefore != null && !formatting.spaceBefore) {
+            (attrs.spacing as Record<string, unknown>).before = ppr.spaceBefore;
+          }
+          if (ppr.spaceAfter != null && !formatting.spaceAfter) {
+            (attrs.spacing as Record<string, unknown>).after = ppr.spaceAfter;
+          }
+          if (ppr.lineSpacing != null && !formatting.lineSpacing) {
+            (attrs.spacing as Record<string, unknown>).line = ppr.lineSpacing;
+          }
+        }
+      }
+
+      const runs = convertDocumentRunsToFlowRuns(itemObj.content as unknown[], styleRunDefaults);
 
       // Only add paragraph if it has content
       if (runs.length > 0) {
@@ -1837,33 +1877,40 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
 
           // Step 2.75: Prepare header/footer content for rendering (needed before layout
           // to compute effective margins when header content exceeds available space)
+          // Create a StyleResolver so header/footer text gets style-resolved formatting
+          // (font, size, color from paragraph styles — not just explicit inline formatting).
+          const hfStyleResolver = styles ? createStyleResolver(styles) : null;
           const headerContentForRender = convertHeaderFooterToContent(
             headerContent,
             contentWidth,
             styles,
             contextTags,
-            renderMode
+            renderMode,
+            hfStyleResolver
           );
           const footerContentForRender = convertHeaderFooterToContent(
             footerContent,
             contentWidth,
             styles,
             contextTags,
-            renderMode
+            renderMode,
+            hfStyleResolver
           );
           const firstPageHeaderForRender = convertHeaderFooterToContent(
             firstPageHeaderContent ?? null,
             contentWidth,
             styles,
             contextTags,
-            renderMode
+            renderMode,
+            hfStyleResolver
           );
           const firstPageFooterForRender = convertHeaderFooterToContent(
             firstPageFooterContent ?? null,
             contentWidth,
             styles,
             contextTags,
-            renderMode
+            renderMode,
+            hfStyleResolver
           );
 
           // Adjust margins if header/footer content exceeds available space
