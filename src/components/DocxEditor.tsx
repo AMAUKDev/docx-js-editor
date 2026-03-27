@@ -3381,25 +3381,27 @@ body { background: white; }
     // to ensure React dependency tracking works correctly.
     const tags = contextTags ?? {};
     const hasCtx = Object.keys(tags).length > 0;
+    // In raw mode, skip tag substitution — show raw {tag.path} patterns in H/F
+    const shouldSubstitute = hasCtx && state.renderMode !== 'raw';
     return {
       headerContent:
-        hasCtx && defaultHeader
+        shouldSubstitute && defaultHeader
           ? replaceContextTagsInHf(defaultHeader, tags, 'keep')
           : defaultHeader,
       footerContent:
-        hasCtx && defaultFooter
+        shouldSubstitute && defaultFooter
           ? replaceContextTagsInHf(defaultFooter, tags, 'keep')
           : defaultFooter,
       firstPageHeaderContent:
-        hasCtx && firstPageHeader
+        shouldSubstitute && firstPageHeader
           ? replaceContextTagsInHf(firstPageHeader, tags, 'keep')
           : firstPageHeader,
       firstPageFooterContent:
-        hasCtx && firstPageFooter
+        shouldSubstitute && firstPageFooter
           ? replaceContextTagsInHf(firstPageFooter, tags, 'keep')
           : firstPageFooter,
     };
-  }, [history.state, contextTags]);
+  }, [history.state, contextTags, state.renderMode]);
 
   // Handle header/footer double-click — open editing overlay
   // If no header/footer exists, create an empty one so the user can add content
