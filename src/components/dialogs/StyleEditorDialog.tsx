@@ -35,6 +35,18 @@ export interface StyleEditorData {
   indentLeft: number;
   indentRight: number;
   indentFirstLine: number;
+  /** Numbering reference — null or absent means no numbering */
+  numPr?: { numId: number; ilvl: number } | null;
+}
+
+/** Numbering definition info for the dropdown */
+export interface NumberingOption {
+  /** Value for the select option (numId as string, or 'none') */
+  value: string;
+  /** Display name */
+  name: string;
+  /** Format preview (e.g., "1. / 1.1. / 1.1.1.") */
+  preview: string;
 }
 
 export interface StyleEditorProps {
@@ -48,6 +60,8 @@ export interface StyleEditorProps {
   availableStyles?: Array<{ styleId: string; name: string }>;
   /** Number of paragraphs that will be affected */
   affectedParagraphCount?: number;
+  /** Available numbering definitions for the numbering dropdown */
+  numberingOptions?: NumberingOption[];
   onSave: (data: StyleEditorData) => void;
   onClose: () => void;
 }
@@ -74,6 +88,7 @@ const DEFAULT_DATA: StyleEditorData = {
   indentLeft: 0,
   indentRight: 0,
   indentFirstLine: 0,
+  numPr: null,
 };
 
 // ============================================================================
@@ -228,6 +243,7 @@ export function StyleEditorDialog({
   styleId,
   availableStyles = [],
   affectedParagraphCount = 0,
+  numberingOptions = [],
   onSave,
   onClose,
 }: StyleEditorProps) {
@@ -502,6 +518,65 @@ export function StyleEditorDialog({
                 </div>
               </div>
             </div>
+
+            {/* Numbering section */}
+            {numberingOptions.length > 0 && (
+              <div style={sectionStyle} data-testid="style-numbering-section">
+                <label style={{ ...labelStyle, marginBottom: '8px' }}>Numbering</label>
+                <div style={rowStyle}>
+                  <div style={{ flex: 2 }}>
+                    <label style={{ ...labelStyle, fontSize: '11px' }}>Definition</label>
+                    <select
+                      style={selectStyle}
+                      data-testid="style-numbering-dropdown"
+                      value={data.numPr ? String(data.numPr.numId) : 'none'}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val === 'none') {
+                          handleChange('numPr', null);
+                        } else {
+                          const numId = parseInt(val, 10);
+                          handleChange('numPr', {
+                            numId,
+                            ilvl: data.numPr?.ilvl ?? 0,
+                          });
+                        }
+                      }}
+                    >
+                      <option value="none">None</option>
+                      {numberingOptions.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.name} — {opt.preview}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ ...labelStyle, fontSize: '11px' }}>Level</label>
+                    <select
+                      style={selectStyle}
+                      data-testid="style-numbering-level"
+                      disabled={!data.numPr}
+                      value={data.numPr?.ilvl ?? 0}
+                      onChange={(e) => {
+                        if (data.numPr) {
+                          handleChange('numPr', {
+                            ...data.numPr,
+                            ilvl: parseInt(e.target.value, 10),
+                          });
+                        }
+                      }}
+                    >
+                      {[0, 1, 2, 3, 4, 5, 6, 7, 8].map((lvl) => (
+                        <option key={lvl} value={lvl}>
+                          Level {lvl}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Right column: preview + paragraph count */}

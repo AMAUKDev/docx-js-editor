@@ -4025,6 +4025,13 @@ body { background: white; }
                           spaceBefore: styleDef.pPr?.spaceBefore || 0,
                           spaceAfter: styleDef.pPr?.spaceAfter || 0,
                           lineSpacing: styleDef.pPr?.lineSpacing || 240,
+                          numPr:
+                            styleDef.pPr?.numPr?.numId != null
+                              ? {
+                                  numId: styleDef.pPr.numPr.numId,
+                                  ilvl: styleDef.pPr.numPr.ilvl ?? 0,
+                                }
+                              : null,
                         };
                       })()
                     : {}
@@ -4035,6 +4042,27 @@ body { background: white; }
                     .map((s) => ({ styleId: s.styleId, name: s.name || s.styleId })) ?? []
                 }
                 affectedParagraphCount={0}
+                numberingOptions={(() => {
+                  const numbering = agentRef.current?.getDocument()?.package.numbering;
+                  if (!numbering) return [];
+                  const opts: Array<{ value: string; name: string; preview: string }> = [];
+                  const seen = new Set<number>();
+                  for (const num of numbering.nums || []) {
+                    if (seen.has(num.numId)) continue;
+                    seen.add(num.numId);
+                    const abstract = (numbering.abstractNums || []).find(
+                      (a) => a.abstractNumId === num.abstractNumId
+                    );
+                    if (!abstract) continue;
+                    const name = abstract.name || `Numbering #${num.numId}`;
+                    const preview = (abstract.levels || [])
+                      .slice(0, 4)
+                      .map((l) => l.lvlText || '?')
+                      .join(' / ');
+                    opts.push({ value: String(num.numId), name, preview });
+                  }
+                  return opts;
+                })()}
                 onSave={(formData) => {
                   const doc = agentRef.current?.getDocument();
                   if (doc?.package.styles) {
@@ -4062,6 +4090,7 @@ body { background: white; }
                           spaceBefore: formData.spaceBefore,
                           spaceAfter: formData.spaceAfter,
                           lineSpacing: formData.lineSpacing,
+                          numPr: formData.numPr || undefined,
                         };
                         if (formData.basedOn) existing.basedOn = formData.basedOn;
                         if (formData.next) existing.next = formData.next;
@@ -4091,6 +4120,7 @@ body { background: white; }
                           spaceBefore: formData.spaceBefore,
                           spaceAfter: formData.spaceAfter,
                           lineSpacing: formData.lineSpacing,
+                          numPr: formData.numPr || undefined,
                         },
                         _dirty: true,
                       });

@@ -56,6 +56,13 @@ export function serializeStyle(style: Style): string {
       if (pPr.indentFirstLine != null) indAttrs.push(`w:firstLine="${pPr.indentFirstLine}"`);
       parts.push(`<w:ind ${indAttrs.join(' ')}/>`);
     }
+    // Numbering reference
+    if (pPr.numPr && pPr.numPr.numId != null) {
+      parts.push('<w:numPr>');
+      if (pPr.numPr.ilvl != null) parts.push(`<w:ilvl w:val="${pPr.numPr.ilvl}"/>`);
+      parts.push(`<w:numId w:val="${pPr.numPr.numId}"/>`);
+      parts.push('</w:numPr>');
+    }
     parts.push('</w:pPr>');
   }
 
