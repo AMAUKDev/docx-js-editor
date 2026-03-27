@@ -84,8 +84,9 @@ function serializeCommentsXml(comments: Comment[]): string {
         .join('') ||
       '';
     const dateAttr = comment.date ? ` w:date="${escapeXml(comment.date)}"` : '';
+    const parentAttr = comment.parentId != null ? ` w15:paraIdParent="${comment.parentId}"` : '';
     parts.push(
-      `<w:comment w:id="${comment.id}" w:author="${escapeXml(comment.author || 'Unknown')}" w:initials="${escapeXml(initials)}"${dateAttr}>`
+      `<w:comment w:id="${comment.id}" w:author="${escapeXml(comment.author || 'Unknown')}" w:initials="${escapeXml(initials)}"${dateAttr}${parentAttr}>`
     );
 
     // Serialize comment content as paragraphs

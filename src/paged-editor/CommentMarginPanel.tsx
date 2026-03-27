@@ -14,6 +14,8 @@ export interface CommentCardData {
   anchorText: string;
   top: number; // Y position relative to pages container
   done?: boolean;
+  parentId?: number; // For reply threading — replies display indented beneath parent
+  isReply?: boolean; // Convenience flag for rendering
 }
 
 export interface CommentMarginPanelProps {
@@ -113,7 +115,18 @@ export const CommentMarginPanel: React.FC<CommentMarginPanelProps> = ({
     const spans = pagesContainer.querySelectorAll('span[data-pm-start][data-pm-end]');
     const results: CommentCardData[] = [];
 
-    for (const comment of comments) {
+    // Separate top-level comments from replies
+    const topLevel = comments.filter((c) => !c.parentId);
+    const replies = comments.filter((c) => c.parentId);
+    const repliesByParent = new Map<number, Comment[]>();
+    for (const reply of replies) {
+      const list = repliesByParent.get(reply.parentId!) || [];
+      list.push(reply);
+      repliesByParent.set(reply.parentId!, list);
+    }
+
+    // Process top-level comments with their replies
+    for (const comment of topLevel) {
       const range = commentRanges.get(comment.id);
       if (!range) continue;
 
@@ -134,7 +147,7 @@ export const CommentMarginPanel: React.FC<CommentMarginPanelProps> = ({
         top = rect.top - containerRect.top + scrollTop;
       }
 
-      // Prevent overlapping: ensure minimum spacing
+      // Prevent overlapping: ensure minimum spacing from ALL previous cards
       if (results.length > 0) {
         const prevBottom = results[results.length - 1].top + 70;
         if (top < prevBottom) top = prevBottom;
@@ -149,6 +162,25 @@ export const CommentMarginPanel: React.FC<CommentMarginPanelProps> = ({
         top,
         done: comment.done,
       });
+
+      // Add replies indented beneath parent
+      const childReplies = repliesByParent.get(comment.id) || [];
+      for (const reply of childReplies) {
+        const lastCard = results[results.length - 1];
+        const replyTop = lastCard.top + 70; // stack beneath parent/prev reply
+
+        results.push({
+          id: reply.id,
+          author: reply.author || 'Unknown',
+          date: reply.date,
+          text: getCommentText(reply),
+          anchorText: '', // replies don't need anchor text
+          top: replyTop,
+          done: reply.done,
+          parentId: reply.parentId,
+          isReply: true,
+        });
+      }
     }
 
     setCards(results);
@@ -196,14 +228,16 @@ export const CommentMarginPanel: React.FC<CommentMarginPanelProps> = ({
       {cards.map((card) => (
         <div
           key={card.id}
+          data-testid="comment-card"
           style={{
             position: 'absolute',
             top: card.top,
-            left: 0,
-            width: 220,
+            left: card.isReply ? 16 : 0,
+            width: card.isReply ? 204 : 220,
             padding: '6px 8px',
-            background: card.done ? '#e8e8e8' : '#fffde7',
-            border: '1px solid #e0d68a',
+            background: card.done ? '#e8e8e8' : card.isReply ? '#fff8e1' : '#fffde7',
+            border: card.isReply ? '1px solid #e8d87a' : '1px solid #e0d68a',
+            borderLeft: card.isReply ? '3px solid #ffc107' : '1px solid #e0d68a',
             borderRadius: 4,
             fontSize: '11px',
             lineHeight: '1.3',

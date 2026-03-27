@@ -120,12 +120,21 @@ export function parseComments(
       }
     }
 
+    // Reply threading: w15:parentId or w:parentId
+    const rawParentId =
+      getAttribute(child, 'w15', 'paraIdParent') ??
+      getAttribute(child, 'w15', 'parentId') ??
+      getAttribute(child, 'w', 'parentId') ??
+      child.attributes?.['w15:paraIdParent'];
+    const parentId = rawParentId ? parseInt(String(rawParentId), 10) : undefined;
+
     comments.push({
       id,
       author,
       initials,
       date,
       content: paragraphs,
+      parentId: parentId && !isNaN(parentId) ? parentId : undefined,
     });
   }
 
