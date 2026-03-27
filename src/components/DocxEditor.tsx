@@ -4034,7 +4034,23 @@ body { background: white; }
                               : null,
                         };
                       })()
-                    : {}
+                    : (() => {
+                        // Create mode: pre-fill from current selection formatting
+                        const sf = state.selectionFormatting;
+                        return {
+                          fontFamily: sf.fontFamily || '',
+                          fontSize: sf.fontSize || 22,
+                          bold: !!sf.bold,
+                          italic: !!sf.italic,
+                          underline: !!sf.underline,
+                          strikethrough: !!sf.strike,
+                          color: sf.color?.replace('#', '') || '000000',
+                          alignment:
+                            (sf.alignment as 'left' | 'center' | 'right' | 'justify') || 'left',
+                          lineSpacing: sf.lineSpacing || 240,
+                          basedOn: sf.styleId || 'Normal',
+                        };
+                      })()
                 }
                 availableStyles={
                   crossRefStyleResolverRef.current
