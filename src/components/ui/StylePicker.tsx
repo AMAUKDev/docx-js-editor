@@ -261,8 +261,18 @@ export function StylePicker({
           };
         });
 
-      // Sort by priority
-      options = docStyles.sort((a, b) => (a.priority ?? 99) - (b.priority ?? 99));
+      // Sort: AMA-prefixed styles first, then by priority within each group
+      options = docStyles.sort((a, b) => {
+        const aIsAma =
+          a.styleId.toLowerCase().startsWith('ama') ||
+          (a.name ?? '').toLowerCase().startsWith('ama');
+        const bIsAma =
+          b.styleId.toLowerCase().startsWith('ama') ||
+          (b.name ?? '').toLowerCase().startsWith('ama');
+        if (aIsAma && !bIsAma) return -1;
+        if (!aIsAma && bIsAma) return 1;
+        return (a.priority ?? 99) - (b.priority ?? 99);
+      });
     }
 
     // Filter to allowed style IDs if provided.
