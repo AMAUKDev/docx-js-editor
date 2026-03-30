@@ -2698,16 +2698,30 @@ body { background: white; }
 
         // Generate a new comment ID (avoid collision with existing)
         const existingIds = new Set<number>();
+        const commentsById = new Map<number, import('../types/content').Comment>();
         if (doc.package.document.comments) {
           for (const c of doc.package.document.comments) {
             existingIds.add(c.id);
+            commentsById.set(c.id, c);
           }
         }
         for (const c of addedCommentsRef.current) {
           existingIds.add(c.id);
+          commentsById.set(c.id, c);
         }
         let newId = 1;
         while (existingIds.has(newId)) newId++;
+
+        // Word only supports 2 levels (parent + replies). If replying to a reply,
+        // walk up to the root ancestor so the DOCX always has flat threading.
+        let rootParentId = parentCommentId;
+        let visited = 0;
+        while (visited < 100) {
+          const parent = commentsById.get(rootParentId);
+          if (!parent || parent.parentId == null) break;
+          rootParentId = parent.parentId;
+          visited++;
+        }
 
         const replyComment: import('../types/content').Comment = {
           id: newId,
@@ -2720,7 +2734,7 @@ body { background: white; }
               formatting: {},
             },
           ],
-          parentId: parentCommentId,
+          parentId: rootParentId,
         };
 
         if (!doc.package.document.comments) {

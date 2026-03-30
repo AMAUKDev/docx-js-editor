@@ -88,7 +88,7 @@ describe('buildCommentTree', () => {
       expect(tree[0].children[0].depth).toBe(1);
     });
 
-    test('replies to replies nest recursively', () => {
+    test('replies to replies are flattened to root parent (Word only supports 2 levels)', () => {
       const comments = [
         makeComment(1, 'Alice', 'Top level'),
         makeComment(2, 'Bob', 'Reply', { parentId: 1 }),
@@ -99,16 +99,17 @@ describe('buildCommentTree', () => {
 
       const tree = buildCommentTree(comments, commentRanges, new Set());
 
+      // All replies should be flattened as children of the root (comment 1)
       expect(tree).toHaveLength(1);
-      expect(tree[0].children).toHaveLength(1);
-      expect(tree[0].children[0].children).toHaveLength(1);
-      expect(tree[0].children[0].children[0].children).toHaveLength(1);
+      expect(tree[0].children).toHaveLength(3); // 2, 3, 4 all under 1
+      expect(tree[0].children.map((c) => c.comment.id)).toEqual([2, 3, 4]);
 
-      // Check depths
+      // All replies at depth 1
       expect(tree[0].depth).toBe(0);
-      expect(tree[0].children[0].depth).toBe(1);
-      expect(tree[0].children[0].children[0].depth).toBe(2);
-      expect(tree[0].children[0].children[0].children[0].depth).toBe(3);
+      for (const child of tree[0].children) {
+        expect(child.depth).toBe(1);
+        expect(child.children).toHaveLength(0); // no grandchildren
+      }
     });
 
     test('replies within same level are sorted by date (oldest first)', () => {
@@ -151,20 +152,24 @@ describe('buildCommentTree', () => {
   });
 
   describe('descendant count', () => {
-    test('childCount includes all descendants, not just direct children', () => {
+    test('childCount counts all flat replies', () => {
       const comments = [
         makeComment(1, 'Alice', 'Root'),
         makeComment(2, 'Bob', 'Child', { parentId: 1 }),
-        makeComment(3, 'Carol', 'Grandchild', { parentId: 2 }),
+        makeComment(3, 'Carol', 'Grandchild (flattened to child)', { parentId: 2 }),
         makeComment(4, 'Dave', 'Another child', { parentId: 1 }),
       ];
       const commentRanges = new Map([[1, { from: 10, to: 20 }]]);
 
       const tree = buildCommentTree(comments, commentRanges, new Set());
 
-      expect(tree[0].childCount).toBe(3); // 2 + 3 + 4
-      expect(tree[0].children[0].childCount).toBe(1); // just 3
-      expect(tree[0].children[1].childCount).toBe(0); // leaf
+      // All 3 replies flattened under root
+      expect(tree[0].childCount).toBe(3);
+      expect(tree[0].children).toHaveLength(3);
+      // All children are leaves (no grandchildren)
+      for (const child of tree[0].children) {
+        expect(child.childCount).toBe(0);
+      }
     });
   });
 
@@ -187,22 +192,21 @@ describe('buildCommentTree', () => {
       expect(flat[0].collapsed).toBe(true);
     });
 
-    test('collapsing a mid-level node hides only its descendants', () => {
+    test('collapsing root hides all replies (flat model)', () => {
       const comments = [
         makeComment(1, 'Alice', 'Root'),
         makeComment(2, 'Bob', 'Reply', { parentId: 1 }),
-        makeComment(3, 'Carol', 'Reply to reply', { parentId: 2 }),
-        makeComment(4, 'Dave', 'Another reply', { parentId: 1 }),
+        makeComment(3, 'Carol', 'Another reply', { parentId: 1 }),
       ];
       const commentRanges = new Map([[1, { from: 10, to: 20 }]]);
-      const collapsed = new Set([2]); // collapse mid-level
+      const collapsed = new Set([1]); // collapse root
 
       const tree = buildCommentTree(comments, commentRanges, collapsed);
       const flat = flattenTree(tree, collapsed);
 
-      // Root, Reply (collapsed), Another reply — but NOT Reply to reply
-      expect(flat.map((n) => n.comment.id)).toEqual([1, 2, 4]);
-      expect(flat[1].collapsed).toBe(true);
+      // Only root visible (collapsed), replies hidden
+      expect(flat.map((n) => n.comment.id)).toEqual([1]);
+      expect(flat[0].collapsed).toBe(true);
     });
 
     test('expanding shows all descendants again', () => {

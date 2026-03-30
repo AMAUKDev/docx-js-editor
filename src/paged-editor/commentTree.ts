@@ -32,18 +32,36 @@ export function buildCommentTree(
   const byId = new Map<number, Comment>();
   for (const c of comments) byId.set(c.id, c);
 
-  // Group children by parentId
+  // Resolve each comment's root ancestor (Word only supports 2 levels: parent + replies).
+  // Any reply-to-reply gets reparented to the root ancestor for flat threading.
+  function getRootParentId(commentId: number): number | undefined {
+    let current = byId.get(commentId);
+    let visited = 0;
+    while (current?.parentId != null && visited < 100) {
+      const parent = byId.get(current.parentId);
+      if (!parent || parent.parentId == null) return current.parentId;
+      current = parent;
+      visited++;
+    }
+    return current?.parentId;
+  }
+
+  // Group children by their ROOT parent (flattened to max 2 levels)
   const childrenOf = new Map<number, Comment[]>();
   const topLevel: Comment[] = [];
 
   for (const c of comments) {
-    if (c.parentId != null && byId.has(c.parentId)) {
-      // Valid parent exists — this is a reply
+    const rootParent = c.parentId != null ? getRootParentId(c.id) : undefined;
+    if (rootParent != null && byId.has(rootParent)) {
+      const siblings = childrenOf.get(rootParent) || [];
+      siblings.push(c);
+      childrenOf.set(rootParent, siblings);
+    } else if (c.parentId != null && byId.has(c.parentId)) {
+      // Direct parent exists and IS top-level
       const siblings = childrenOf.get(c.parentId) || [];
       siblings.push(c);
       childrenOf.set(c.parentId, siblings);
     } else {
-      // No parent, or parent not found — treat as top-level
       topLevel.push(c);
     }
   }
