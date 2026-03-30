@@ -1065,6 +1065,12 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
 
     setState((prev) => ({ ...prev, isLoading: true, parseError: null }));
 
+    // Clear comment mutation refs when loading a new document —
+    // prevents stale adds/edits/deletes from a previous session being re-applied.
+    addedCommentsRef.current = [];
+    deletedCommentIdsRef.current = new Set();
+    editedCommentsRef.current = new Map();
+
     const parseDocument = async () => {
       try {
         const doc = await parseDocx(documentBuffer);
