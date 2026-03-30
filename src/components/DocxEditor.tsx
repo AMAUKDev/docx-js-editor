@@ -377,6 +377,8 @@ export interface DocxEditorRef {
   getSelectionRange: () => { from: number; to: number } | null;
   /** Add an inline comment wrapping the current selection */
   addComment: (author: string, text: string, from?: number, to?: number) => number | null;
+  /** Add a reply comment to an existing comment (no range marker needed) */
+  addReplyComment: (parentCommentId: number, author: string, text: string) => number | null;
   /** Remove an inline comment by ID (removes highlight + Comment object) */
   removeComment: (commentId: number) => void;
   /** Get all document comments */
@@ -2643,6 +2645,46 @@ body { background: white; }
           doc.commentsModified = true;
         }
         addedCommentsRef.current = [...addedCommentsRef.current, newComment];
+
+        return newId;
+      },
+      addReplyComment: (parentCommentId: number, author: string, text: string) => {
+        const doc = historyStateRef.current;
+        if (!doc?.package.document) return null;
+
+        // Generate a new comment ID (avoid collision with existing)
+        const existingIds = new Set<number>();
+        if (doc.package.document.comments) {
+          for (const c of doc.package.document.comments) {
+            existingIds.add(c.id);
+          }
+        }
+        for (const c of addedCommentsRef.current) {
+          existingIds.add(c.id);
+        }
+        let newId = 1;
+        while (existingIds.has(newId)) newId++;
+
+        const replyComment: import('../types/content').Comment = {
+          id: newId,
+          author,
+          date: new Date().toISOString(),
+          content: [
+            {
+              type: 'paragraph' as const,
+              content: [{ type: 'run' as const, content: [{ type: 'text' as const, text }] }],
+              formatting: {},
+            },
+          ],
+          parentId: parentCommentId,
+        };
+
+        if (!doc.package.document.comments) {
+          doc.package.document.comments = [];
+        }
+        doc.package.document.comments.push(replyComment);
+        doc.commentsModified = true;
+        addedCommentsRef.current = [...addedCommentsRef.current, replyComment];
 
         return newId;
       },

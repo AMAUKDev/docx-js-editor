@@ -125,7 +125,46 @@ export const CommentMarginPanel: React.FC<CommentMarginPanelProps> = ({
       repliesByParent.set(reply.parentId!, list);
     }
 
-    // Process top-level comments with their replies
+    // Helper: add a comment card + its replies to results
+    const addCommentWithReplies = (comment: Comment, baseTop: number, anchor: string) => {
+      let top = baseTop;
+      // Prevent overlapping: ensure minimum spacing from ALL previous cards
+      if (results.length > 0) {
+        const prevBottom = results[results.length - 1].top + 70;
+        if (top < prevBottom) top = prevBottom;
+      }
+
+      results.push({
+        id: comment.id,
+        author: comment.author || 'Unknown',
+        date: comment.date,
+        text: getCommentText(comment),
+        anchorText: anchor,
+        top,
+        done: comment.done,
+      });
+
+      // Add replies indented beneath parent
+      const childReplies = repliesByParent.get(comment.id) || [];
+      for (const reply of childReplies) {
+        const lastCard = results[results.length - 1];
+        const replyTop = lastCard.top + 70; // stack beneath parent/prev reply
+
+        results.push({
+          id: reply.id,
+          author: reply.author || 'Unknown',
+          date: reply.date,
+          text: getCommentText(reply),
+          anchorText: '', // replies don't need anchor text
+          top: replyTop,
+          done: reply.done,
+          parentId: reply.parentId,
+          isReply: true,
+        });
+      }
+    };
+
+    // Process top-level comments that have range markers (anchored in document)
     for (const comment of topLevel) {
       const range = commentRanges.get(comment.id);
       if (!range) continue;
@@ -147,34 +186,32 @@ export const CommentMarginPanel: React.FC<CommentMarginPanelProps> = ({
         top = rect.top - containerRect.top + scrollTop;
       }
 
-      // Prevent overlapping: ensure minimum spacing from ALL previous cards
-      if (results.length > 0) {
-        const prevBottom = results[results.length - 1].top + 70;
-        if (top < prevBottom) top = prevBottom;
-      }
+      addCommentWithReplies(comment, top, (anchorMap.get(comment.id) || '').slice(0, 60));
+    }
 
-      results.push({
-        id: comment.id,
-        author: comment.author || 'Unknown',
-        date: comment.date,
-        text: getCommentText(comment),
-        anchorText: (anchorMap.get(comment.id) || '').slice(0, 60),
-        top,
-        done: comment.done,
-      });
+    // Process top-level comments WITHOUT range markers (e.g. imported from Word
+    // where the range was lost). Stack them after the last positioned card.
+    for (const comment of topLevel) {
+      const range = commentRanges.get(comment.id);
+      if (range) continue; // already processed above
+      const fallbackTop = results.length > 0 ? results[results.length - 1].top + 70 : 0;
+      addCommentWithReplies(comment, fallbackTop, '');
+    }
 
-      // Add replies indented beneath parent
-      const childReplies = repliesByParent.get(comment.id) || [];
+    // Process orphan replies whose parent wasn't in topLevel (e.g. parentId
+    // refers to a comment ID that doesn't exist in the current document).
+    const processedParents = new Set(topLevel.map((c) => c.id));
+    for (const [parentId, childReplies] of repliesByParent) {
+      if (processedParents.has(parentId)) continue;
       for (const reply of childReplies) {
         const lastCard = results[results.length - 1];
-        const replyTop = lastCard.top + 70; // stack beneath parent/prev reply
-
+        const replyTop = lastCard ? lastCard.top + 70 : 0;
         results.push({
           id: reply.id,
           author: reply.author || 'Unknown',
           date: reply.date,
           text: getCommentText(reply),
-          anchorText: '', // replies don't need anchor text
+          anchorText: '',
           top: replyTop,
           done: reply.done,
           parentId: reply.parentId,
