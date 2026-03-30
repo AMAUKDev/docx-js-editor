@@ -167,9 +167,11 @@ function injectCommentMarkersIntoXml(xml: string, doc: Document): string {
 
   if (paragraphs.length === 0) return xml;
 
-  // Filter comments that need marker injection (skip those already present)
+  // Filter comments that need marker injection:
+  // - Skip replies (they only exist in comments.xml, not anchored in document body)
+  // - Skip comments that already have markers
   const commentsToInject = comments.filter((comment) => {
-    // Check if commentRangeStart with this ID already exists in the XML
+    if (comment.parentId != null) return false; // replies don't get range markers
     const markerPattern = `<w:commentRangeStart w:id="${comment.id}"`;
     return !xml.includes(markerPattern);
   });
