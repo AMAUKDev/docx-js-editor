@@ -5,7 +5,7 @@
  * Uses buildCommentTree for sorting by document position and recursive
  * reply threading. Supports collapse/expand of reply threads.
  */
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef, useLayoutEffect } from 'react';
 import type { Comment } from '../types/content';
 import type { EditorView } from 'prosemirror-view';
 import { buildCommentTree, type CommentTreeNode } from './commentTree';
@@ -110,6 +110,7 @@ export const CommentMarginPanel: React.FC<CommentMarginPanelProps> = ({
 }) => {
   const [cards, setCards] = useState<CommentCardData[]>([]);
   const [collapsedIds, setCollapsedIds] = useState<Set<number>>(new Set());
+  const panelRef = useRef<HTMLDivElement>(null);
 
   const toggleCollapse = useCallback((commentId: number) => {
     setCollapsedIds((prev) => {
@@ -221,6 +222,32 @@ export const CommentMarginPanel: React.FC<CommentMarginPanelProps> = ({
     };
   }, [visible, comments, computePositions, view]);
 
+  // After render: measure actual card heights and reflow to prevent overlap
+  useLayoutEffect(() => {
+    if (!panelRef.current || cards.length === 0) return;
+    const cardEls = panelRef.current.querySelectorAll<HTMLElement>('[data-testid="comment-card"]');
+    if (cardEls.length !== cards.length) return;
+
+    const GAP = 6; // px between cards
+    let needsUpdate = false;
+    const newCards = [...cards];
+
+    for (let i = 1; i < newCards.length; i++) {
+      const prevEl = cardEls[i - 1];
+      const prevHeight = prevEl.offsetHeight;
+      const prevBottom = newCards[i - 1].top + prevHeight + GAP;
+
+      if (newCards[i].top < prevBottom) {
+        newCards[i] = { ...newCards[i], top: prevBottom };
+        needsUpdate = true;
+      }
+    }
+
+    if (needsUpdate) {
+      setCards(newCards);
+    }
+  }, [cards]);
+
   // Recompute on scroll
   useEffect(() => {
     if (!visible || !pagesContainer) return;
@@ -237,6 +264,7 @@ export const CommentMarginPanel: React.FC<CommentMarginPanelProps> = ({
 
   return (
     <div
+      ref={panelRef}
       className="comment-margin-panel"
       style={{
         position: 'absolute',
