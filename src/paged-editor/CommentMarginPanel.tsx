@@ -1,10 +1,14 @@
 /**
  * CommentMarginPanel — renders comment cards alongside pages at the Y-position
  * of their anchored text, similar to Microsoft Word's comment margin.
+ *
+ * Uses buildCommentTree for sorting by document position and recursive
+ * reply threading. Supports collapse/expand of reply threads.
  */
 import React, { useEffect, useState, useCallback } from 'react';
 import type { Comment } from '../types/content';
 import type { EditorView } from 'prosemirror-view';
+import { buildCommentTree, type CommentTreeNode } from './commentTree';
 
 export interface CommentCardData {
   id: number;
@@ -14,8 +18,11 @@ export interface CommentCardData {
   anchorText: string;
   top: number; // Y position relative to pages container
   done?: boolean;
-  parentId?: number; // For reply threading — replies display indented beneath parent
-  isReply?: boolean; // Convenience flag for rendering
+  parentId?: number;
+  isReply?: boolean;
+  depth: number;
+  childCount: number; // total descendants
+  collapsed: boolean; // whether this node's children are hidden
 }
 
 export interface CommentMarginPanelProps {
@@ -55,6 +62,42 @@ function getCommentText(comment: Comment): string {
   return parts.join('');
 }
 
+/**
+ * Flatten a comment tree into a list of cards, respecting collapsed state.
+ */
+function flattenTreeToCards(
+  tree: CommentTreeNode[],
+  collapsed: Set<number>,
+  anchorMap: Map<number, string>
+): Omit<CommentCardData, 'top'>[] {
+  const result: Omit<CommentCardData, 'top'>[] = [];
+
+  function walk(nodes: CommentTreeNode[]) {
+    for (const node of nodes) {
+      const isCollapsed = collapsed.has(node.comment.id) && node.children.length > 0;
+      result.push({
+        id: node.comment.id,
+        author: node.comment.author || 'Unknown',
+        date: node.comment.date,
+        text: getCommentText(node.comment),
+        anchorText: node.depth === 0 ? (anchorMap.get(node.comment.id) || '').slice(0, 60) : '',
+        done: node.comment.done,
+        parentId: node.comment.parentId,
+        isReply: node.depth > 0,
+        depth: node.depth,
+        childCount: node.childCount,
+        collapsed: isCollapsed,
+      });
+      if (!isCollapsed) {
+        walk(node.children);
+      }
+    }
+  }
+
+  walk(tree);
+  return result;
+}
+
 export const CommentMarginPanel: React.FC<CommentMarginPanelProps> = ({
   pagesContainer,
   view,
@@ -66,9 +109,21 @@ export const CommentMarginPanel: React.FC<CommentMarginPanelProps> = ({
   onEdit,
 }) => {
   const [cards, setCards] = useState<CommentCardData[]>([]);
-  // Editing state: which comment ID is being edited, and the draft text
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editText, setEditText] = useState('');
+  const [collapsedIds, setCollapsedIds] = useState<Set<number>>(new Set());
+
+  const toggleCollapse = useCallback((commentId: number) => {
+    setCollapsedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(commentId)) {
+        next.delete(commentId);
+      } else {
+        next.add(commentId);
+      }
+      return next;
+    });
+  }, []);
 
   const computePositions = useCallback(() => {
     if (!pagesContainer || !view || !comments || comments.length === 0) {
@@ -76,7 +131,6 @@ export const CommentMarginPanel: React.FC<CommentMarginPanelProps> = ({
       return;
     }
 
-    // Use the scroll parent (the .paged-editor div) as coordinate reference
     const scrollParent = pagesContainer.closest('.paged-editor') as HTMLElement;
     const containerRect = scrollParent
       ? scrollParent.getBoundingClientRect()
@@ -111,122 +165,54 @@ export const CommentMarginPanel: React.FC<CommentMarginPanelProps> = ({
       }
     });
 
-    // Step 3: Find visible spans matching comment ranges
+    // Step 3: Build sorted tree and flatten
+    const tree = buildCommentTree(comments, commentRanges, collapsedIds);
+    const flatCards = flattenTreeToCards(tree, collapsedIds, anchorMap);
+
+    // Step 4: Assign Y positions
     const spans = pagesContainer.querySelectorAll('span[data-pm-start][data-pm-end]');
     const results: CommentCardData[] = [];
 
-    // Separate top-level comments from replies
-    const topLevel = comments.filter((c) => !c.parentId);
-    const replies = comments.filter((c) => c.parentId);
-    const repliesByParent = new Map<number, Comment[]>();
-    for (const reply of replies) {
-      const list = repliesByParent.get(reply.parentId!) || [];
-      list.push(reply);
-      repliesByParent.set(reply.parentId!, list);
-    }
+    for (const card of flatCards) {
+      let top = results.length * 80; // fallback
 
-    // Helper: add a comment card + its replies to results
-    const addCommentWithReplies = (comment: Comment, baseTop: number, anchor: string) => {
-      let top = baseTop;
-      // Prevent overlapping: ensure minimum spacing from ALL previous cards
+      if (card.depth === 0) {
+        // Top-level: position at the anchored text
+        const range = commentRanges.get(card.id);
+        if (range) {
+          for (const span of Array.from(spans)) {
+            const pmStart = Number((span as HTMLElement).dataset.pmStart);
+            const pmEnd = Number((span as HTMLElement).dataset.pmEnd);
+            if (pmStart < range.to && pmEnd > range.from) {
+              const rect = (span as HTMLElement).getBoundingClientRect();
+              const scrollTop = scrollParent ? scrollParent.scrollTop : 0;
+              top = rect.top - containerRect.top + scrollTop;
+              break;
+            }
+          }
+        }
+      } else {
+        // Reply: stack beneath previous card
+        if (results.length > 0) {
+          top = results[results.length - 1].top + 70;
+        }
+      }
+
+      // Prevent overlapping
       if (results.length > 0) {
         const prevBottom = results[results.length - 1].top + 70;
         if (top < prevBottom) top = prevBottom;
       }
 
-      results.push({
-        id: comment.id,
-        author: comment.author || 'Unknown',
-        date: comment.date,
-        text: getCommentText(comment),
-        anchorText: anchor,
-        top,
-        done: comment.done,
-      });
-
-      // Add replies indented beneath parent
-      const childReplies = repliesByParent.get(comment.id) || [];
-      for (const reply of childReplies) {
-        const lastCard = results[results.length - 1];
-        const replyTop = lastCard.top + 70; // stack beneath parent/prev reply
-
-        results.push({
-          id: reply.id,
-          author: reply.author || 'Unknown',
-          date: reply.date,
-          text: getCommentText(reply),
-          anchorText: '', // replies don't need anchor text
-          top: replyTop,
-          done: reply.done,
-          parentId: reply.parentId,
-          isReply: true,
-        });
-      }
-    };
-
-    // Process top-level comments that have range markers (anchored in document)
-    for (const comment of topLevel) {
-      const range = commentRanges.get(comment.id);
-      if (!range) continue;
-
-      let bestEl: HTMLElement | null = null;
-      for (const span of Array.from(spans)) {
-        const pmStart = Number((span as HTMLElement).dataset.pmStart);
-        const pmEnd = Number((span as HTMLElement).dataset.pmEnd);
-        if (pmStart < range.to && pmEnd > range.from) {
-          bestEl = span as HTMLElement;
-          break;
-        }
-      }
-
-      let top = results.length * 80; // fallback: stack vertically
-      if (bestEl) {
-        const rect = bestEl.getBoundingClientRect();
-        const scrollTop = scrollParent ? scrollParent.scrollTop : 0;
-        top = rect.top - containerRect.top + scrollTop;
-      }
-
-      addCommentWithReplies(comment, top, (anchorMap.get(comment.id) || '').slice(0, 60));
-    }
-
-    // Process top-level comments WITHOUT range markers (e.g. imported from Word
-    // where the range was lost). Stack them after the last positioned card.
-    for (const comment of topLevel) {
-      const range = commentRanges.get(comment.id);
-      if (range) continue; // already processed above
-      const fallbackTop = results.length > 0 ? results[results.length - 1].top + 70 : 0;
-      addCommentWithReplies(comment, fallbackTop, '');
-    }
-
-    // Process orphan replies whose parent wasn't in topLevel (e.g. parentId
-    // refers to a comment ID that doesn't exist in the current document).
-    const processedParents = new Set(topLevel.map((c) => c.id));
-    for (const [parentId, childReplies] of repliesByParent) {
-      if (processedParents.has(parentId)) continue;
-      for (const reply of childReplies) {
-        const lastCard = results[results.length - 1];
-        const replyTop = lastCard ? lastCard.top + 70 : 0;
-        results.push({
-          id: reply.id,
-          author: reply.author || 'Unknown',
-          date: reply.date,
-          text: getCommentText(reply),
-          anchorText: '',
-          top: replyTop,
-          done: reply.done,
-          parentId: reply.parentId,
-          isReply: true,
-        });
-      }
+      results.push({ ...card, top });
     }
 
     setCards(results);
-  }, [pagesContainer, view, comments]);
+  }, [pagesContainer, view, comments, collapsedIds]);
 
   // Recompute positions when comments change or panel becomes visible
   useEffect(() => {
     if (!visible) return;
-    // Multiple attempts: layout may not be ready immediately
     const t1 = setTimeout(computePositions, 200);
     const t2 = setTimeout(computePositions, 800);
     const t3 = setTimeout(computePositions, 2000);
@@ -237,18 +223,19 @@ export const CommentMarginPanel: React.FC<CommentMarginPanelProps> = ({
     };
   }, [visible, comments, computePositions, view]);
 
-  // Also recompute on scroll (comments move with pages but positions are absolute)
+  // Recompute on scroll
   useEffect(() => {
     if (!visible || !pagesContainer) return;
     const scrollParent = pagesContainer.closest('.paged-editor') as HTMLElement;
     if (!scrollParent) return;
-
     const onScroll = () => computePositions();
     scrollParent.addEventListener('scroll', onScroll, { passive: true });
     return () => scrollParent.removeEventListener('scroll', onScroll);
   }, [visible, pagesContainer, computePositions]);
 
   if (!visible || cards.length === 0) return null;
+
+  const INDENT_PER_DEPTH = 16;
 
   return (
     <div
@@ -262,208 +249,260 @@ export const CommentMarginPanel: React.FC<CommentMarginPanelProps> = ({
         zIndex: 20,
       }}
     >
-      {cards.map((card) => (
-        <div
-          key={card.id}
-          data-testid="comment-card"
-          style={{
-            position: 'absolute',
-            top: card.top,
-            left: card.isReply ? 16 : 0,
-            width: card.isReply ? 204 : 220,
-            padding: '6px 8px',
-            background: card.done ? '#e8e8e8' : card.isReply ? '#fff8e1' : '#fffde7',
-            border: card.isReply ? '1px solid #e8d87a' : '1px solid #e0d68a',
-            borderLeft: card.isReply ? '3px solid #ffc107' : '1px solid #e0d68a',
-            borderRadius: 4,
-            fontSize: '11px',
-            lineHeight: '1.3',
-            boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
-            opacity: card.done ? 0.6 : 1,
-          }}
-        >
-          {/* Author + date */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2 }}>
-            <strong style={{ fontSize: '10px', color: '#333' }}>{card.author}</strong>
-            {card.date && (
-              <span style={{ fontSize: '9px', color: '#999' }}>
-                {new Date(card.date).toLocaleDateString()}
-              </span>
-            )}
-          </div>
+      {cards.map((card) => {
+        const indent = card.depth * INDENT_PER_DEPTH;
+        const cardWidth = 220 - indent;
 
-          {/* Anchor text */}
-          {card.anchorText && (
+        return (
+          <div
+            key={card.id}
+            data-testid="comment-card"
+            data-depth={card.depth}
+            style={{
+              position: 'absolute',
+              top: card.top,
+              left: indent,
+              width: cardWidth,
+              padding: '6px 8px',
+              background: card.done ? '#e8e8e8' : card.depth > 0 ? '#fff8e1' : '#fffde7',
+              border: card.depth > 0 ? '1px solid #e8d87a' : '1px solid #e0d68a',
+              borderLeft: card.depth > 0 ? '3px solid #ffc107' : '1px solid #e0d68a',
+              borderRadius: 4,
+              fontSize: '11px',
+              lineHeight: '1.3',
+              boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+              opacity: card.done ? 0.6 : 1,
+            }}
+          >
+            {/* Author + date + collapse toggle */}
             <div
               style={{
-                borderLeft: '2px solid #ffd700',
-                paddingLeft: 4,
-                fontSize: '10px',
-                color: '#666',
-                fontStyle: 'italic',
-                marginBottom: 3,
-                whiteSpace: 'nowrap',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                marginBottom: 2,
               }}
             >
-              &ldquo;{card.anchorText}&rdquo;
-            </div>
-          )}
-
-          {/* Comment text — editable when editing */}
-          {editingId === card.id ? (
-            <div style={{ marginBottom: 4 }}>
-              <textarea
-                value={editText}
-                onChange={(e) => setEditText(e.target.value)}
-                onMouseDown={(e) => e.stopPropagation()}
-                style={{
-                  width: '100%',
-                  minHeight: 40,
-                  fontSize: '11px',
-                  border: '1px solid #ccc',
-                  borderRadius: 3,
-                  padding: '3px 4px',
-                  resize: 'vertical',
-                }}
-              />
-              <div style={{ display: 'flex', gap: 4, marginTop: 3 }}>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onEdit?.(card.id, editText);
-                    // Update local card text immediately so UI reflects the change
-                    setCards((prev) =>
-                      prev.map((c) => (c.id === card.id ? { ...c, text: editText } : c))
-                    );
-                    setEditingId(null);
-                  }}
-                  style={{
-                    fontSize: '9px',
-                    padding: '1px 5px',
-                    border: '1px solid #28a745',
-                    borderRadius: 3,
-                    background: '#28a745',
-                    color: 'white',
-                    cursor: 'pointer',
-                  }}
-                >
-                  Save
-                </button>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setEditingId(null);
-                  }}
-                  style={{
-                    fontSize: '9px',
-                    padding: '1px 5px',
-                    border: '1px solid #6c757d',
-                    borderRadius: 3,
-                    background: 'white',
-                    color: '#6c757d',
-                    cursor: 'pointer',
-                  }}
-                >
-                  Cancel
-                </button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                {card.childCount > 0 && (
+                  <button
+                    type="button"
+                    data-testid="collapse-toggle"
+                    aria-label={card.collapsed ? 'expand replies' : 'collapse replies'}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleCollapse(card.id);
+                    }}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      cursor: 'pointer',
+                      fontSize: '10px',
+                      padding: 0,
+                      lineHeight: 1,
+                      color: '#666',
+                    }}
+                  >
+                    {card.collapsed ? '▶' : '▼'}
+                  </button>
+                )}
+                <strong style={{ fontSize: '10px', color: '#333' }}>{card.author}</strong>
               </div>
+              {card.date && (
+                <span style={{ fontSize: '9px', color: '#999' }}>
+                  {new Date(card.date).toLocaleDateString()}
+                </span>
+              )}
             </div>
-          ) : (
-            <div style={{ color: '#333', marginBottom: 4 }}>{card.text}</div>
-          )}
 
-          {/* Action buttons */}
-          {editingId !== card.id && (
-            <div style={{ display: 'flex', gap: 4 }}>
-              {!card.done && onResolve && (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onResolve(card.id);
-                  }}
+            {/* Reply count badge when collapsed */}
+            {card.collapsed && card.childCount > 0 && (
+              <div
+                data-testid="reply-count"
+                className="reply-count-badge"
+                style={{
+                  fontSize: '9px',
+                  color: '#888',
+                  fontStyle: 'italic',
+                  marginBottom: 3,
+                }}
+              >
+                {card.childCount} {card.childCount === 1 ? 'reply' : 'replies'}
+              </div>
+            )}
+
+            {/* Anchor text */}
+            {card.anchorText && (
+              <div
+                style={{
+                  borderLeft: '2px solid #ffd700',
+                  paddingLeft: 4,
+                  fontSize: '10px',
+                  color: '#666',
+                  fontStyle: 'italic',
+                  marginBottom: 3,
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                }}
+              >
+                &ldquo;{card.anchorText}&rdquo;
+              </div>
+            )}
+
+            {/* Comment text — editable when editing */}
+            {editingId === card.id ? (
+              <div style={{ marginBottom: 4 }}>
+                <textarea
+                  value={editText}
+                  onChange={(e) => setEditText(e.target.value)}
+                  onMouseDown={(e) => e.stopPropagation()}
                   style={{
-                    fontSize: '9px',
-                    padding: '1px 5px',
-                    border: '1px solid #28a745',
+                    width: '100%',
+                    minHeight: 40,
+                    fontSize: '11px',
+                    border: '1px solid #ccc',
                     borderRadius: 3,
-                    background: 'white',
-                    color: '#28a745',
-                    cursor: 'pointer',
+                    padding: '3px 4px',
+                    resize: 'vertical',
                   }}
-                >
-                  Resolve
-                </button>
-              )}
-              {onEdit && (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setEditingId(card.id);
-                    setEditText(card.text);
-                  }}
-                  style={{
-                    fontSize: '9px',
-                    padding: '1px 5px',
-                    border: '1px solid #007bff',
-                    borderRadius: 3,
-                    background: 'white',
-                    color: '#007bff',
-                    cursor: 'pointer',
-                  }}
-                >
-                  Edit
-                </button>
-              )}
-              {onReply && (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onReply(card.id);
-                  }}
-                  style={{
-                    fontSize: '9px',
-                    padding: '1px 5px',
-                    border: '1px solid #6c757d',
-                    borderRadius: 3,
-                    background: 'white',
-                    color: '#6c757d',
-                    cursor: 'pointer',
-                  }}
-                >
-                  Reply
-                </button>
-              )}
-              {onDelete && (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onDelete(card.id);
-                  }}
-                  style={{
-                    fontSize: '9px',
-                    padding: '1px 5px',
-                    border: '1px solid #dc3545',
-                    borderRadius: 3,
-                    background: 'white',
-                    color: '#dc3545',
-                    cursor: 'pointer',
-                  }}
-                >
-                  Delete
-                </button>
-              )}
-            </div>
-          )}
-        </div>
-      ))}
+                />
+                <div style={{ display: 'flex', gap: 4, marginTop: 3 }}>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onEdit?.(card.id, editText);
+                      setCards((prev) =>
+                        prev.map((c) => (c.id === card.id ? { ...c, text: editText } : c))
+                      );
+                      setEditingId(null);
+                    }}
+                    style={{
+                      fontSize: '9px',
+                      padding: '1px 5px',
+                      border: '1px solid #28a745',
+                      borderRadius: 3,
+                      background: '#28a745',
+                      color: 'white',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Save
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setEditingId(null);
+                    }}
+                    style={{
+                      fontSize: '9px',
+                      padding: '1px 5px',
+                      border: '1px solid #6c757d',
+                      borderRadius: 3,
+                      background: 'white',
+                      color: '#6c757d',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div style={{ color: '#333', marginBottom: 4 }}>{card.text}</div>
+            )}
+
+            {/* Action buttons */}
+            {editingId !== card.id && (
+              <div style={{ display: 'flex', gap: 4 }}>
+                {!card.done && onResolve && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onResolve(card.id);
+                    }}
+                    style={{
+                      fontSize: '9px',
+                      padding: '1px 5px',
+                      border: '1px solid #28a745',
+                      borderRadius: 3,
+                      background: 'white',
+                      color: '#28a745',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Resolve
+                  </button>
+                )}
+                {onEdit && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setEditingId(card.id);
+                      setEditText(card.text);
+                    }}
+                    style={{
+                      fontSize: '9px',
+                      padding: '1px 5px',
+                      border: '1px solid #007bff',
+                      borderRadius: 3,
+                      background: 'white',
+                      color: '#007bff',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Edit
+                  </button>
+                )}
+                {onReply && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onReply(card.id);
+                    }}
+                    style={{
+                      fontSize: '9px',
+                      padding: '1px 5px',
+                      border: '1px solid #6c757d',
+                      borderRadius: 3,
+                      background: 'white',
+                      color: '#6c757d',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Reply
+                  </button>
+                )}
+                {onDelete && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDelete(card.id);
+                    }}
+                    style={{
+                      fontSize: '9px',
+                      padding: '1px 5px',
+                      border: '1px solid #dc3545',
+                      borderRadius: 3,
+                      background: 'white',
+                      color: '#dc3545',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Delete
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 };
