@@ -72,7 +72,9 @@ function serializeCommentsXml(comments: Comment[]): string {
       'xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" ' +
       'xmlns:w10="urn:schemas-microsoft-com:office:word" ' +
       'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" ' +
-      'xmlns:wne="http://schemas.microsoft.com/office/word/2006/wordml">',
+      'xmlns:wne="http://schemas.microsoft.com/office/word/2006/wordml" ' +
+      'xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" ' +
+      'xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml">',
   ];
 
   for (const comment of comments) {
