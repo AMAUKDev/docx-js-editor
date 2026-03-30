@@ -260,7 +260,7 @@ export interface DocxEditorProps {
   /** Show inline comment margin panel alongside pages */
   showCommentPanel?: boolean;
   /** Callback when comment action occurs in the margin panel */
-  onCommentAction?: (action: 'reply' | 'resolve' | 'delete', commentId: number) => void;
+  onCommentAction?: (action: 'reply' | 'resolve' | 'delete' | 'edit', commentId: number) => void;
   /** Bump to force comment margin panel refresh */
   commentPanelKey?: number;
   /** Additional CSS class name */
@@ -379,6 +379,8 @@ export interface DocxEditorRef {
   addComment: (author: string, text: string, from?: number, to?: number) => number | null;
   /** Add a reply comment to an existing comment (no range marker needed) */
   addReplyComment: (parentCommentId: number, author: string, text: string) => number | null;
+  /** Update an existing comment's text */
+  editComment: (commentId: number, newText: string) => void;
   /** Remove an inline comment by ID (removes highlight + Comment object) */
   removeComment: (commentId: number) => void;
   /** Get all document comments */
@@ -2687,6 +2689,47 @@ body { background: white; }
         addedCommentsRef.current = [...addedCommentsRef.current, replyComment];
 
         return newId;
+      },
+      editComment: (commentId: number, newText: string) => {
+        const doc = historyStateRef.current;
+        if (!doc?.package.document?.comments) return;
+
+        const comments = doc.package.document.comments;
+        const idx = comments.findIndex((c) => c.id === commentId);
+        if (idx < 0) return;
+
+        comments[idx] = {
+          ...comments[idx],
+          content: [
+            {
+              type: 'paragraph' as const,
+              content: [
+                { type: 'run' as const, content: [{ type: 'text' as const, text: newText }] },
+              ],
+              formatting: {},
+            },
+          ],
+        };
+        doc.package.document.comments = [...comments];
+        doc.commentsModified = true;
+
+        // Also update addedCommentsRef if the comment is there
+        addedCommentsRef.current = addedCommentsRef.current.map((c) =>
+          c.id === commentId
+            ? {
+                ...c,
+                content: [
+                  {
+                    type: 'paragraph' as const,
+                    content: [
+                      { type: 'run' as const, content: [{ type: 'text' as const, text: newText }] },
+                    ],
+                    formatting: {},
+                  },
+                ],
+              }
+            : c
+        );
       },
       removeComment: (commentId: number) => {
         const view = pagedEditorRef.current?.getView();

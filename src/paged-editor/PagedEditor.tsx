@@ -195,7 +195,7 @@ export interface PagedEditorProps {
   /** Show inline comment margin panel alongside pages. */
   showCommentPanel?: boolean;
   /** Callback when comment action occurs (reply, resolve, delete). */
-  onCommentAction?: (action: 'reply' | 'resolve' | 'delete', commentId: number) => void;
+  onCommentAction?: (action: 'reply' | 'resolve' | 'delete' | 'edit', commentId: number) => void;
   /** Bump to force comment panel refresh. */
   commentPanelKey?: number;
   /** Extra comments from addedCommentsRef (not yet in document model). */
@@ -1733,8 +1733,7 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
     // Visual line navigation (ArrowUp/ArrowDown with sticky X)
     const { handlePMKeyDown } = useVisualLineNavigation({ pagesContainerRef });
 
-    // Local counter to force CommentMarginPanel re-render after edits/deletes
-    const [commentPanelVersion, setCommentPanelVersion] = useState(0);
+    // (commentPanelKey from props handles re-render forcing)
 
     // Store callbacks in refs to avoid infinite re-render loops
     // when parent passes unstable callback references
@@ -4128,7 +4127,7 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
           {/* Comment margin panel (Word-like) */}
           {showCommentPanel && (
             <CommentMarginPanel
-              key={`${commentPanelKey}-${commentPanelVersion}`}
+              key={commentPanelKey}
               pagesContainer={pagesContainerRef.current}
               view={hiddenPMRef.current?.getView() ?? null}
               comments={(() => {
@@ -4142,35 +4141,7 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
               onReply={onCommentAction ? (id) => onCommentAction('reply', id) : undefined}
               onResolve={onCommentAction ? (id) => onCommentAction('resolve', id) : undefined}
               onDelete={onCommentAction ? (id) => onCommentAction('delete', id) : undefined}
-              onEdit={(commentId, newText) => {
-                // Update the comment text in the Document model
-                const comments = document?.package.document?.comments;
-                if (comments) {
-                  const idx = comments.findIndex((c) => c.id === commentId);
-                  if (idx >= 0) {
-                    // Replace comment content with new text (create new object for React)
-                    comments[idx] = {
-                      ...comments[idx],
-                      content: [
-                        {
-                          type: 'paragraph',
-                          content: [{ type: 'run', content: [{ type: 'text', text: newText }] }],
-                        },
-                      ] as any,
-                    };
-                    // Create new array reference so React detects the change
-                    if (document?.package.document) {
-                      document.package.document.comments = [...comments];
-                    }
-                    // Mark document as having modified comments
-                    if (document) {
-                      (document as any).commentsModified = true;
-                    }
-                    // Force panel re-render to display updated text
-                    setCommentPanelVersion((v) => v + 1);
-                  }
-                }
-              }}
+              onEdit={onCommentAction ? (id) => onCommentAction('edit', id) : undefined}
             />
           )}
         </div>

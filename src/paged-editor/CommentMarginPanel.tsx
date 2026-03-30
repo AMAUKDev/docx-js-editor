@@ -40,8 +40,8 @@ export interface CommentMarginPanelProps {
   onResolve?: (commentId: number) => void;
   /** Callback when user clicks Delete on a comment */
   onDelete?: (commentId: number) => void;
-  /** Callback when user edits a comment's text */
-  onEdit?: (commentId: number, newText: string) => void;
+  /** Callback when user clicks Edit on a comment */
+  onEdit?: (commentId: number) => void;
 }
 
 /**
@@ -109,8 +109,6 @@ export const CommentMarginPanel: React.FC<CommentMarginPanelProps> = ({
   onEdit,
 }) => {
   const [cards, setCards] = useState<CommentCardData[]>([]);
-  const [editingId, setEditingId] = useState<number | null>(null);
-  const [editText, setEditText] = useState('');
   const [collapsedIds, setCollapsedIds] = useState<Set<number>>(new Set());
 
   const toggleCollapse = useCallback((commentId: number) => {
@@ -270,10 +268,8 @@ export const CommentMarginPanel: React.FC<CommentMarginPanelProps> = ({
               borderRadius: 4,
               fontSize: '11px',
               lineHeight: '1.3',
-              boxShadow:
-                editingId === card.id ? '0 2px 8px rgba(0,0,0,0.25)' : '0 1px 3px rgba(0,0,0,0.1)',
+              boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
               opacity: card.done ? 0.6 : 1,
-              zIndex: editingId === card.id ? 10 : undefined,
             }}
           >
             {/* Author + date + collapse toggle */}
@@ -352,72 +348,11 @@ export const CommentMarginPanel: React.FC<CommentMarginPanelProps> = ({
               </div>
             )}
 
-            {/* Comment text — editable when editing */}
-            {editingId === card.id ? (
-              <div style={{ marginBottom: 4 }}>
-                <textarea
-                  value={editText}
-                  onChange={(e) => setEditText(e.target.value)}
-                  onMouseDown={(e) => e.stopPropagation()}
-                  style={{
-                    width: '100%',
-                    minHeight: 40,
-                    fontSize: '11px',
-                    border: '1px solid #ccc',
-                    borderRadius: 3,
-                    padding: '3px 4px',
-                    resize: 'vertical',
-                  }}
-                />
-                <div style={{ display: 'flex', gap: 4, marginTop: 3 }}>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onEdit?.(card.id, editText);
-                      setCards((prev) =>
-                        prev.map((c) => (c.id === card.id ? { ...c, text: editText } : c))
-                      );
-                      setEditingId(null);
-                    }}
-                    style={{
-                      fontSize: '9px',
-                      padding: '1px 5px',
-                      border: '1px solid #28a745',
-                      borderRadius: 3,
-                      background: '#28a745',
-                      color: 'white',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    Save
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setEditingId(null);
-                    }}
-                    style={{
-                      fontSize: '9px',
-                      padding: '1px 5px',
-                      border: '1px solid #6c757d',
-                      borderRadius: 3,
-                      background: 'white',
-                      color: '#6c757d',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div style={{ color: '#333', marginBottom: 4 }}>{card.text}</div>
-            )}
+            {/* Comment text */}
+            <div style={{ color: '#333', marginBottom: 4 }}>{card.text}</div>
 
             {/* Action buttons */}
-            {editingId !== card.id && (
+            {
               <div style={{ display: 'flex', gap: 4 }}>
                 {!card.done && onResolve && (
                   <button
@@ -444,8 +379,7 @@ export const CommentMarginPanel: React.FC<CommentMarginPanelProps> = ({
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
-                      setEditingId(card.id);
-                      setEditText(card.text);
+                      onEdit(card.id);
                     }}
                     style={{
                       fontSize: '9px',
@@ -501,7 +435,7 @@ export const CommentMarginPanel: React.FC<CommentMarginPanelProps> = ({
                   </button>
                 )}
               </div>
-            )}
+            }
           </div>
         );
       })}
