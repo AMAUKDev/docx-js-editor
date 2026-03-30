@@ -200,6 +200,8 @@ export interface PagedEditorProps {
   commentPanelKey?: number;
   /** Extra comments from addedCommentsRef (not yet in document model). */
   additionalComments?: import('../types/content').Comment[];
+  /** Comment IDs that have been deleted this session (filter from display). */
+  deletedCommentIds?: Set<number>;
   /** Custom class name. */
   className?: string;
   /** Custom styles. */
@@ -1720,6 +1722,7 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
       onCommentAction,
       commentPanelKey,
       additionalComments,
+      deletedCommentIds,
       className,
       style,
     } = props;
@@ -4131,7 +4134,11 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
               pagesContainer={pagesContainerRef.current}
               view={hiddenPMRef.current?.getView() ?? null}
               comments={(() => {
-                const docComments = document?.package.document?.comments || [];
+                let docComments = document?.package.document?.comments || [];
+                // Filter out deleted comments
+                if (deletedCommentIds && deletedCommentIds.size > 0) {
+                  docComments = docComments.filter((c) => !deletedCommentIds.has(c.id));
+                }
                 const extra = additionalComments;
                 if (!extra || extra.length === 0) return docComments;
                 const ids = new Set(docComments.map((c) => c.id));

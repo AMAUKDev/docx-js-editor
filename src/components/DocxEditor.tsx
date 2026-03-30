@@ -4005,6 +4005,7 @@ body { background: white; }
                       onCommentAction={onCommentAction}
                       commentPanelKey={commentPanelKey}
                       additionalComments={addedCommentsRef.current}
+                      deletedCommentIds={deletedCommentIdsRef.current}
                       onPageCountChange={(pageCount) => {
                         setState((prev) => {
                           if (prev.totalPages !== pageCount) {
