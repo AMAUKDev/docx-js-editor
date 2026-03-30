@@ -270,8 +270,10 @@ export const CommentMarginPanel: React.FC<CommentMarginPanelProps> = ({
               borderRadius: 4,
               fontSize: '11px',
               lineHeight: '1.3',
-              boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+              boxShadow:
+                editingId === card.id ? '0 2px 8px rgba(0,0,0,0.25)' : '0 1px 3px rgba(0,0,0,0.1)',
               opacity: card.done ? 0.6 : 1,
+              zIndex: editingId === card.id ? 10 : undefined,
             }}
           >
             {/* Author + date + collapse toggle */}
