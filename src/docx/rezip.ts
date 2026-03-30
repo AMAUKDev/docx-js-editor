@@ -62,12 +62,11 @@ function escapeXml(text: string): string {
  */
 /**
  * Generate a random 8-hex-char paraId (like Word does).
+ * Must be positive when interpreted as signed int32 — Word ignores negative paraIds.
+ * So the value must be in range 0x00000001..0x7FFFFFFF (high bit always 0).
  */
 function generateParaId(): string {
-  return Math.floor(Math.random() * 0xffffffff)
-    .toString(16)
-    .toUpperCase()
-    .padStart(8, '0');
+  return (Math.floor(Math.random() * 0x7ffffffe) + 1).toString(16).toUpperCase().padStart(8, '0');
 }
 
 /**
@@ -76,6 +75,7 @@ function generateParaId(): string {
 interface SerializedComments {
   commentsXml: string;
   commentsExtendedXml: string;
+  commentsIdsXml: string;
   /** Map from comment ID to paraId (for cross-referencing) */
   paraIds: Map<number, string>;
 }
@@ -123,8 +123,15 @@ function serializeComments(comments: Comment[]): SerializedComments {
       let firstPara = true;
       for (const para of comment.content) {
         const paraIdAttr = firstPara ? ` w14:paraId="${paraId}" w14:textId="77777777"` : '';
-        firstPara = false;
         parts.push(`<w:p${paraIdAttr}>`);
+        // First paragraph: add CommentText style and annotationRef (Word requires these)
+        if (firstPara) {
+          parts.push('<w:pPr><w:pStyle w:val="CommentText"/></w:pPr>');
+          parts.push(
+            '<w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr><w:annotationRef/></w:r>'
+          );
+        }
+        firstPara = false;
         for (const item of para.content || []) {
           if ('content' in item) {
             const run = item as { content: Array<{ type: string; text?: string }> };
@@ -150,15 +157,29 @@ function serializeComments(comments: Comment[]): SerializedComments {
   const commentsXml = parts.join('');
 
   // --- commentsExtended.xml (w15:commentsEx) ---
-  // This is where Word stores reply threading via paraIdParent
+  // This is where Word stores reply threading via paraIdParent.
+  // Word requires the full set of namespace declarations + mc:Ignorable to parse this.
   const extParts: string[] = [
     '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
     '<w15:commentsEx ' +
+      'xmlns:wpc="http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas" ' +
       'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" ' +
+      'xmlns:o="urn:schemas-microsoft-com:office:office" ' +
+      'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" ' +
+      'xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math" ' +
+      'xmlns:v="urn:schemas-microsoft-com:vml" ' +
+      'xmlns:wp14="http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing" ' +
+      'xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" ' +
+      'xmlns:w10="urn:schemas-microsoft-com:office:word" ' +
       'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" ' +
       'xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" ' +
       'xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml" ' +
-      'mc:Ignorable="w14 w15">',
+      'xmlns:w16cex="http://schemas.microsoft.com/office/word/2018/wordml/cex" ' +
+      'xmlns:w16cid="http://schemas.microsoft.com/office/word/2016/wordml/cid" ' +
+      'xmlns:w16="http://schemas.microsoft.com/office/word/2018/wordml" ' +
+      'xmlns:w16se="http://schemas.microsoft.com/office/word/2015/wordml/symex" ' +
+      'xmlns:wne="http://schemas.microsoft.com/office/word/2006/wordml" ' +
+      'mc:Ignorable="w14 w15 w16se w16cid w16 w16cex wp14">',
   ];
 
   for (const comment of comments) {
@@ -177,7 +198,24 @@ function serializeComments(comments: Comment[]): SerializedComments {
   extParts.push('</w15:commentsEx>');
   const commentsExtendedXml = extParts.join('');
 
-  return { commentsXml, commentsExtendedXml, paraIds };
+  // --- commentsIds.xml (w16cid:commentsIds) ---
+  // Maps paraId → durableId. Must stay in sync with comments.xml paraIds.
+  const idsParts: string[] = [
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+    '<w16cid:commentsIds ' +
+      'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" ' +
+      'xmlns:w16cid="http://schemas.microsoft.com/office/word/2016/wordml/cid" ' +
+      'mc:Ignorable="w16cid">',
+  ];
+  for (const comment of comments) {
+    const paraId = paraIds.get(comment.id)!;
+    const durableId = generateParaId(); // unique durable ID
+    idsParts.push(`<w16cid:commentId w16cid:paraId="${paraId}" w16cid:durableId="${durableId}"/>`);
+  }
+  idsParts.push('</w16cid:commentsIds>');
+  const commentsIdsXml = idsParts.join('');
+
+  return { commentsXml, commentsExtendedXml, commentsIdsXml, paraIds };
 }
 
 // ============================================================================
@@ -237,14 +275,57 @@ function injectCommentMarkersIntoXml(xml: string, doc: Document): string {
 
   if (commentsToInject.length === 0) return xml;
 
-  // Distribute comments across available paragraphs (round-robin)
-  // This avoids piling all comment markers onto the first paragraph.
-  // Group by target paragraph index.
+  // Build a map of existing comment markers → paragraph index (for anchoring replies)
+  const existingMarkerPara = new Map<number, number>();
+  for (let pi = 0; pi < paragraphs.length; pi++) {
+    const paraXml = xml.slice(paragraphs[pi].pStart, paragraphs[pi].pEnd + 6);
+    const markerIds = [...paraXml.matchAll(/commentRangeStart\s+w:id="(\d+)"/g)].map((m) =>
+      parseInt(m[1], 10)
+    );
+    for (const mid of markerIds) {
+      existingMarkerPara.set(mid, pi);
+    }
+  }
+
+  // Build a set of comment IDs that are replies (have a parent), using both
+  // the Comment object's parentId and the commentsExtended paraId relationships.
+  const replyCommentIds = new Set<number>();
+  for (const c of comments) {
+    if (c.parentId != null) replyCommentIds.add(c.id);
+  }
+
+  // Distribute comments:
+  // - Replies anchor to the SAME paragraph as their parent (Word requires this)
+  // - Top-level comments use round-robin across paragraphs
   const injections: Map<number, typeof commentsToInject> = new Map();
-  for (let i = 0; i < commentsToInject.length; i++) {
-    const paraIdx = Math.min(i, paragraphs.length - 1);
+  let nextTopLevelPara = 0;
+
+  // First pass: place top-level comments
+  for (const comment of commentsToInject) {
+    if (replyCommentIds.has(comment.id)) continue; // handle replies in second pass
+    const paraIdx = Math.min(nextTopLevelPara, paragraphs.length - 1);
     if (!injections.has(paraIdx)) injections.set(paraIdx, []);
-    injections.get(paraIdx)!.push(commentsToInject[i]);
+    injections.get(paraIdx)!.push(comment);
+    existingMarkerPara.set(comment.id, paraIdx);
+    nextTopLevelPara++;
+  }
+
+  // Second pass: place replies next to their parent
+  for (const comment of commentsToInject) {
+    if (!replyCommentIds.has(comment.id)) continue;
+    let paraIdx: number;
+    if (comment.parentId != null) {
+      const parentPara = existingMarkerPara.get(comment.parentId);
+      paraIdx = parentPara ?? 0;
+    } else {
+      // parentId not resolved by parser — find first paragraph with any marker
+      const firstMarkerPara = existingMarkerPara.values().next().value;
+      paraIdx = firstMarkerPara ?? 0;
+    }
+    if (!injections.has(paraIdx)) injections.set(paraIdx, []);
+    injections.get(paraIdx)!.push(comment);
+    // Track this comment's paragraph so nested replies can find it
+    existingMarkerPara.set(comment.id, paraIdx);
   }
 
   // Apply injections in reverse paragraph order so earlier offsets remain valid
@@ -531,9 +612,10 @@ export async function repackDocx(doc: Document, options: RepackOptions = {}): Pr
   // produces a degraded file that Word may reject as corrupt.
   if (!shouldReserializeDocument(doc) && doc.originalDocumentXml) {
     // No edits made — keep the original document.xml.
-    // If comments were added, inject comment markers into the original XML.
+    // Always inject comment markers: replies saved in prior sessions may be
+    // missing their range markers (the old code didn't add them for replies).
     let origXml = doc.originalDocumentXml;
-    if (doc.commentsModified && doc.package.document?.comments) {
+    if (doc.package.document?.comments && doc.package.document.comments.length > 0) {
       origXml = injectCommentMarkersIntoXml(origXml, doc);
     }
     newZip.file('word/document.xml', origXml, {
@@ -545,7 +627,12 @@ export async function repackDocx(doc: Document, options: RepackOptions = {}): Pr
     const newImages = collectNewImages(doc.package.document.content, existingRIds);
     await processNewImages(newImages, newZip, compressionLevel);
 
-    const documentXml = serializeDocument(doc);
+    let documentXml = serializeDocument(doc);
+    // After re-serialization, inject markers for any comments missing them
+    // (e.g. reply comments which have no PM mark and weren't serialized).
+    if (doc.package.document?.comments && doc.package.document.comments.length > 0) {
+      documentXml = injectCommentMarkersIntoXml(documentXml, doc);
+    }
     newZip.file('word/document.xml', documentXml, {
       compression: 'DEFLATE',
       compressionOptions: { level: compressionLevel },
@@ -683,14 +770,21 @@ export async function repackDocx(doc: Document, options: RepackOptions = {}): Pr
         newZip.remove('word/comments.xml');
       }
     }
-    if (doc.commentsModified && comments.length > 0) {
-      const { commentsXml, commentsExtendedXml } = serializeComments(comments);
+    // Always re-serialize comments when any exist — ensures comments.xml and
+    // commentsExtended.xml stay in sync with matching paraIds.
+    if (comments.length > 0) {
+      const { commentsXml, commentsExtendedXml, commentsIdsXml } = serializeComments(comments);
       newZip.file('word/comments.xml', commentsXml, {
         compression: 'DEFLATE',
         compressionOptions: { level: compressionLevel },
       });
       // Write commentsExtended.xml (reply threading + done state)
       newZip.file('word/commentsExtended.xml', commentsExtendedXml, {
+        compression: 'DEFLATE',
+        compressionOptions: { level: compressionLevel },
+      });
+      // Write commentsIds.xml (paraId ↔ durableId mapping — must match paraIds)
+      newZip.file('word/commentsIds.xml', commentsIdsXml, {
         compression: 'DEFLATE',
         compressionOptions: { level: compressionLevel },
       });
@@ -962,7 +1056,7 @@ export async function repackDocxFromRaw(
     });
   } else {
     let origXml = doc.originalDocumentXml;
-    if (doc.commentsModified && doc.package.document?.comments) {
+    if (doc.package.document?.comments && doc.package.document.comments.length > 0) {
       origXml = injectCommentMarkersIntoXml(origXml, doc);
     }
     newZip.file('word/document.xml', origXml, {
