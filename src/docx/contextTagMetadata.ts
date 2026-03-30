@@ -236,11 +236,14 @@ export function collectContextTagMetadata(doc: {
       const metaId = node.attrs.metaId as string;
       const tagKey = node.attrs.tagKey as string;
       if (metaId && tagKey) {
-        result[metaId] = {
+        const meta: ContextTagMeta = {
           tagKey,
           removeIfEmpty: !!node.attrs.removeIfEmpty,
           removeTableRow: !!node.attrs.removeTableRow,
         };
+        if (node.attrs.imageWidth) meta.imageWidth = node.attrs.imageWidth as number;
+        if (node.attrs.alwaysShow) meta.alwaysShow = true;
+        result[metaId] = meta;
       }
     }
   });

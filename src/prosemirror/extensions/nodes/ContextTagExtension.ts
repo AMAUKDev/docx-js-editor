@@ -65,6 +65,12 @@ export const ContextTagExtension = createNodeExtension({
       removeTableRow: { default: false },
       /** Unique identifier for this tag instance — links to Custom XML Part metadata */
       metaId: { default: '' },
+      /** Preview URL for image-type context tags (rendered as <img> in the editor) */
+      imageUrl: { default: '' },
+      /** Display width in points for image-type context tags (0 = auto) */
+      imageWidth: { default: 0 },
+      /** If true, tag placeholder is preserved even when downloading with "Remove unknown tags" */
+      alwaysShow: { default: false },
     },
     parseDOM: [
       {

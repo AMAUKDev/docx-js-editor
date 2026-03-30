@@ -430,36 +430,61 @@ function paragraphToRuns(node: PMNode, startPos: number, _options: ToFlowBlocksO
       };
       runs.push(run);
     } else if (child.type.name === 'contextTag') {
-      // Context tag — render as plain text showing the tag label or key.
-      // Context tags carry the same marks as surrounding text.
+      // Context tag — render as plain text or as an image (if imageUrl is set).
       const tagKey = child.attrs.tagKey as string;
       const label = child.attrs.label as string;
+      const imageUrl = child.attrs.imageUrl as string;
+      const imageWidth = child.attrs.imageWidth as number;
       const renderMode = _options.renderMode;
-      const displayText = renderMode === 'raw' ? `{${tagKey}}` : label || `{${tagKey}}`;
-      const formatting = extractRunFormatting(child.marks, theme);
 
-      // Split multi-line values into separate text runs with line breaks between them
-      // so the layout engine correctly measures the height of each line.
-      const lines = displayText.split('\n');
-      for (let li = 0; li < lines.length; li++) {
-        if (li > 0) {
-          const br: LineBreakRun = {
-            kind: 'lineBreak',
-            pmStart: childPos,
-            pmEnd: childPos + child.nodeSize,
-          };
-          runs.push(br);
-        }
-        const run: TextRun = {
-          kind: 'text',
-          text: lines[li],
-          ...formatting,
-          isAtomicNode: true,
+      if (imageUrl && renderMode !== 'raw') {
+        // Image-type context tag — create an ImageRun so the layout engine
+        // properly allocates height and the image participates in paragraph flow.
+        const pageW = _options.pageContentWidth || 450;
+        const w = imageWidth || pageW;
+        // Estimate height at 2:3 ratio if we don't know the actual dimensions
+        const h = imageWidth ? Math.round(imageWidth * 0.67) : Math.round(pageW * 0.67);
+        const constrained = constrainImageToPage(w, h, _options.pageContentHeight);
+        const run: ImageRun = {
+          kind: 'image',
+          src: imageUrl,
+          width: constrained.width,
+          height: constrained.height,
+          alt: label || tagKey,
+          displayMode: 'block',
+          wrapType: 'topAndBottom',
           contextTagKey: tagKey,
           pmStart: childPos,
           pmEnd: childPos + child.nodeSize,
         };
         runs.push(run);
+      } else {
+        // Text-type context tag — render as plain text.
+        const displayText = renderMode === 'raw' ? `{${tagKey}}` : label || `{${tagKey}}`;
+        const formatting = extractRunFormatting(child.marks, theme);
+
+        // Split multi-line values into separate text runs with line breaks
+        const lines = displayText.split('\n');
+        for (let li = 0; li < lines.length; li++) {
+          if (li > 0) {
+            const br: LineBreakRun = {
+              kind: 'lineBreak',
+              pmStart: childPos,
+              pmEnd: childPos + child.nodeSize,
+            };
+            runs.push(br);
+          }
+          const run: TextRun = {
+            kind: 'text',
+            text: lines[li],
+            ...formatting,
+            isAtomicNode: true,
+            contextTagKey: tagKey,
+            pmStart: childPos,
+            pmEnd: childPos + child.nodeSize,
+          };
+          runs.push(run);
+        }
       }
     } else if (child.type.name === 'shape') {
       // Shape node — render as an inline SVG image

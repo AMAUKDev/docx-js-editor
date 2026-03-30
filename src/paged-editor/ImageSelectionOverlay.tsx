@@ -50,6 +50,8 @@ export interface ImageSelectionOverlayProps {
   onDragEnd?: () => void;
   /** Callback when "Add Caption" is clicked for the selected image */
   onAddCaption?: (pmPos: number) => void;
+  /** Callback when the overlay is right-clicked (for context tag images) */
+  onContextMenu?: (e: React.MouseEvent) => void;
   /** Whether the editor is read-only */
   readOnly?: boolean;
 }
@@ -180,6 +182,7 @@ export function ImageSelectionOverlay({
   onDragStart,
   onDragEnd,
   onAddCaption,
+  onContextMenu,
   readOnly,
 }: ImageSelectionOverlayProps): React.ReactElement | null {
   const [isResizing, setIsResizing] = useState(false);
@@ -464,6 +467,7 @@ export function ImageSelectionOverlay({
           zIndex: 15,
         }}
         onMouseDown={handleBodyMouseDown}
+        onContextMenu={onContextMenu}
       />
 
       {/* Corner resize handles */}

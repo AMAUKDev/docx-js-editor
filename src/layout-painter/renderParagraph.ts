@@ -332,6 +332,12 @@ function renderInlineImageRun(run: ImageRun, doc: Document): HTMLElement {
 
   applyPmPositions(img, run.pmStart, run.pmEnd);
 
+  // Context tag image identification
+  if (run.contextTagKey) {
+    img.dataset.tagKey = run.contextTagKey;
+    img.classList.add('layout-context-tag-image');
+  }
+
   return img;
 }
 
@@ -363,6 +369,13 @@ function renderBlockImage(run: ImageRun, doc: Document): HTMLElement {
   }
 
   applyPmPositions(container, run.pmStart, run.pmEnd);
+
+  // Context tag image identification — for selection overlay and right-click
+  if (run.contextTagKey) {
+    container.dataset.tagKey = run.contextTagKey;
+    container.classList.add('layout-context-tag-image');
+  }
+
   container.appendChild(img);
 
   return container;

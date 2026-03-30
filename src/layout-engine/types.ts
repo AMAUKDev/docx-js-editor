@@ -122,6 +122,8 @@ export type ImageRun = {
   distRight?: number;
   pmStart?: number;
   pmEnd?: number;
+  /** Context tag key — set when this image represents a context tag (e.g. "vessel_photo"). */
+  contextTagKey?: string;
 };
 
 /**
