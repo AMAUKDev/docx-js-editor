@@ -60,7 +60,34 @@ function escapeXml(text: string): string {
 /**
  * Serialize Comment objects to OOXML comments.xml format.
  */
-function serializeCommentsXml(comments: Comment[]): string {
+/**
+ * Generate a random 8-hex-char paraId (like Word does).
+ */
+function generateParaId(): string {
+  return Math.floor(Math.random() * 0xffffffff)
+    .toString(16)
+    .toUpperCase()
+    .padStart(8, '0');
+}
+
+/**
+ * Serialized comments result: comments.xml + commentsExtended.xml.
+ */
+interface SerializedComments {
+  commentsXml: string;
+  commentsExtendedXml: string;
+  /** Map from comment ID to paraId (for cross-referencing) */
+  paraIds: Map<number, string>;
+}
+
+function serializeComments(comments: Comment[]): SerializedComments {
+  // Assign a unique paraId to each comment's first paragraph
+  const paraIds = new Map<number, string>();
+  for (const c of comments) {
+    paraIds.set(c.id, generateParaId());
+  }
+
+  // --- comments.xml ---
   const parts: string[] = [
     '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
     '<w:comments xmlns:wpc="http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas" ' +
@@ -86,15 +113,18 @@ function serializeCommentsXml(comments: Comment[]): string {
         .join('') ||
       '';
     const dateAttr = comment.date ? ` w:date="${escapeXml(comment.date)}"` : '';
-    const parentAttr = comment.parentId != null ? ` w15:paraIdParent="${comment.parentId}"` : '';
+    const paraId = paraIds.get(comment.id)!;
     parts.push(
-      `<w:comment w:id="${comment.id}" w:author="${escapeXml(comment.author || 'Unknown')}" w:initials="${escapeXml(initials)}"${dateAttr}${parentAttr}>`
+      `<w:comment w:id="${comment.id}" w:author="${escapeXml(comment.author || 'Unknown')}" w:initials="${escapeXml(initials)}"${dateAttr}>`
     );
 
-    // Serialize comment content as paragraphs
+    // Serialize comment content as paragraphs (first paragraph gets the paraId)
     if (comment.content && comment.content.length > 0) {
+      let firstPara = true;
       for (const para of comment.content) {
-        parts.push('<w:p>');
+        const paraIdAttr = firstPara ? ` w14:paraId="${paraId}" w14:textId="77777777"` : '';
+        firstPara = false;
+        parts.push(`<w:p${paraIdAttr}>`);
         for (const item of para.content || []) {
           if ('content' in item) {
             const run = item as { content: Array<{ type: string; text?: string }> };
@@ -110,14 +140,44 @@ function serializeCommentsXml(comments: Comment[]): string {
         parts.push('</w:p>');
       }
     } else {
-      parts.push('<w:p><w:r><w:t></w:t></w:r></w:p>');
+      parts.push(`<w:p w14:paraId="${paraId}" w14:textId="77777777"><w:r><w:t></w:t></w:r></w:p>`);
     }
 
     parts.push('</w:comment>');
   }
 
   parts.push('</w:comments>');
-  return parts.join('');
+  const commentsXml = parts.join('');
+
+  // --- commentsExtended.xml (w15:commentsEx) ---
+  // This is where Word stores reply threading via paraIdParent
+  const extParts: string[] = [
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+    '<w15:commentsEx ' +
+      'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" ' +
+      'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" ' +
+      'xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" ' +
+      'xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml" ' +
+      'mc:Ignorable="w14 w15">',
+  ];
+
+  for (const comment of comments) {
+    const paraId = paraIds.get(comment.id)!;
+    let parentAttr = '';
+    if (comment.parentId != null) {
+      const parentParaId = paraIds.get(comment.parentId);
+      if (parentParaId) {
+        parentAttr = ` w15:paraIdParent="${parentParaId}"`;
+      }
+    }
+    const doneAttr = comment.done ? ' w15:done="1"' : ' w15:done="0"';
+    extParts.push(`<w15:commentEx w15:paraId="${paraId}"${parentAttr}${doneAttr}/>`);
+  }
+
+  extParts.push('</w15:commentsEx>');
+  const commentsExtendedXml = extParts.join('');
+
+  return { commentsXml, commentsExtendedXml, paraIds };
 }
 
 // ============================================================================
@@ -625,12 +685,17 @@ export async function repackDocx(doc: Document, options: RepackOptions = {}): Pr
       }
     }
     if (doc.commentsModified && comments.length > 0) {
-      const commentsXml = serializeCommentsXml(comments);
+      const { commentsXml, commentsExtendedXml } = serializeComments(comments);
       newZip.file('word/comments.xml', commentsXml, {
         compression: 'DEFLATE',
         compressionOptions: { level: compressionLevel },
       });
-      // Ensure [Content_Types].xml has comments entry
+      // Write commentsExtended.xml (reply threading + done state)
+      newZip.file('word/commentsExtended.xml', commentsExtendedXml, {
+        compression: 'DEFLATE',
+        compressionOptions: { level: compressionLevel },
+      });
+      // Ensure [Content_Types].xml has entries for both comment files
       const ctFile = newZip.file('[Content_Types].xml');
       if (ctFile) {
         let ctXml = await ctFile.async('text');
@@ -639,30 +704,41 @@ export async function repackDocx(doc: Document, options: RepackOptions = {}): Pr
             '</Types>',
             '<Override PartName="/word/comments.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml"/></Types>'
           );
-          newZip.file('[Content_Types].xml', ctXml, {
-            compression: 'DEFLATE',
-            compressionOptions: { level: compressionLevel },
-          });
         }
+        if (!ctXml.includes('word/commentsExtended.xml')) {
+          ctXml = ctXml.replace(
+            '</Types>',
+            '<Override PartName="/word/commentsExtended.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.commentsExtended+xml"/></Types>'
+          );
+        }
+        newZip.file('[Content_Types].xml', ctXml, {
+          compression: 'DEFLATE',
+          compressionOptions: { level: compressionLevel },
+        });
       }
-      // Ensure document.xml.rels has comments relationship
+      // Ensure document.xml.rels has relationships for both comment files
       const docRelsFile = newZip.file('word/_rels/document.xml.rels');
       if (docRelsFile) {
         let docRels = await docRelsFile.async('text');
-        if (!docRels.includes('comments.xml')) {
-          const existingIds = [...docRels.matchAll(/Id="rId(\d+)"/g)].map((m) =>
-            parseInt(m[1], 10)
-          );
-          const nextId = existingIds.length > 0 ? Math.max(...existingIds) + 1 : 100;
+        const existingIds = [...docRels.matchAll(/Id="rId(\d+)"/g)].map((m) => parseInt(m[1], 10));
+        let nextId = existingIds.length > 0 ? Math.max(...existingIds) + 1 : 100;
+        if (!docRels.includes('comments.xml"')) {
           docRels = docRels.replace(
             '</Relationships>',
             `<Relationship Id="rId${nextId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments" Target="comments.xml"/></Relationships>`
           );
-          newZip.file('word/_rels/document.xml.rels', docRels, {
-            compression: 'DEFLATE',
-            compressionOptions: { level: compressionLevel },
-          });
+          nextId++;
         }
+        if (!docRels.includes('commentsExtended.xml')) {
+          docRels = docRels.replace(
+            '</Relationships>',
+            `<Relationship Id="rId${nextId}" Type="http://schemas.microsoft.com/office/2011/relationships/commentsExtended" Target="commentsExtended.xml"/></Relationships>`
+          );
+        }
+        newZip.file('word/_rels/document.xml.rels', docRels, {
+          compression: 'DEFLATE',
+          compressionOptions: { level: compressionLevel },
+        });
       }
     }
   }

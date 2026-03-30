@@ -67,27 +67,61 @@ function parseCommentsExtensible(xml: string): Map<string, string> {
  * If commentsExtensibleXml is provided, UTC timestamps are cross-referenced
  * via paraId and preferred over the ambiguous w:date local time.
  */
+/**
+ * Parse commentsExtended.xml (w15:commentsEx) to build reply threading map.
+ * Returns a map from paraId → parentParaId (for replies).
+ */
+function parseCommentsExtended(xml: string): Map<string, string> {
+  const parentMap = new Map<string, string>();
+  const root = parseXml(xml);
+  if (!root) return parentMap;
+
+  const container = findChild(root, 'w15', 'commentsEx') ?? root;
+  for (const child of getChildElements(container)) {
+    const localName = child.name?.replace(/^.*:/, '') ?? '';
+    if (localName !== 'commentEx') continue;
+
+    const paraId = getAttribute(child, 'w15', 'paraId') ?? child.attributes?.['w15:paraId'];
+    const parentParaId =
+      getAttribute(child, 'w15', 'paraIdParent') ?? child.attributes?.['w15:paraIdParent'];
+
+    if (paraId && parentParaId) {
+      parentMap.set(String(paraId).toUpperCase(), String(parentParaId).toUpperCase());
+    }
+  }
+  return parentMap;
+}
+
 export function parseComments(
   commentsXml: string | null,
   styles: StyleMap | null,
   theme: Theme | null,
   rels: RelationshipMap,
   media: Map<string, MediaFile>,
-  commentsExtensibleXml?: string | null
+  commentsExtensibleXml?: string | null,
+  commentsExtendedXml?: string | null
 ): Comment[] {
   if (!commentsXml) return [];
 
   const root = parseXml(commentsXml);
   if (!root) return [];
 
-  // Build UTC date lookup from extended comments (if available)
+  // Build UTC date lookup from commentsExtensible.xml (if available)
   const dateUtcByParaId = commentsExtensibleXml
     ? parseCommentsExtensible(commentsExtensibleXml)
+    : new Map<string, string>();
+
+  // Build reply threading from commentsExtended.xml (paraId → parentParaId)
+  const threadingByParaId = commentsExtendedXml
+    ? parseCommentsExtended(commentsExtendedXml)
     : new Map<string, string>();
 
   const commentsEl = findChild(root, 'w', 'comments') ?? root;
   const children = getChildElements(commentsEl);
   const comments: Comment[] = [];
+
+  // First pass: collect paraId → comment ID mapping
+  const paraIdToCommentId = new Map<string, number>();
 
   for (const child of children) {
     const localName = child.name?.replace(/^.*:/, '') ?? '';
@@ -100,14 +134,31 @@ export function parseComments(
     const rawDate = getAttribute(child, 'w', 'date');
     const localDate = rawDate != null ? String(rawDate) : undefined;
 
+    // Get paraId from the comment's first paragraph (for cross-referencing)
+    let commentParaId: string | undefined;
+    for (const contentChild of getChildElements(child)) {
+      const contentName = contentChild.name?.replace(/^.*:/, '') ?? '';
+      if (contentName === 'p') {
+        const pid =
+          getAttribute(contentChild, 'w14', 'paraId') ?? contentChild.attributes?.['w14:paraId'];
+        if (pid) {
+          commentParaId = String(pid).toUpperCase();
+          paraIdToCommentId.set(commentParaId, id);
+          break;
+        }
+      }
+    }
+
     // Try to find the UTC date from commentsExtensible.xml via paraId
     const paraId =
       getAttribute(child, 'w14', 'paraId') ??
       child.attributes?.['w14:paraId'] ??
       getAttribute(child, 'w', 'paraId');
-    const dateUtc = paraId ? dateUtcByParaId.get(String(paraId).toUpperCase()) : undefined;
+    const dateUtc =
+      paraId || commentParaId
+        ? dateUtcByParaId.get(String(paraId || commentParaId).toUpperCase())
+        : undefined;
 
-    // Prefer UTC date over ambiguous local date
     const date = dateUtc ?? localDate;
 
     // Parse comment content (paragraphs)
@@ -120,13 +171,23 @@ export function parseComments(
       }
     }
 
-    // Reply threading: w15:parentId or w:parentId
-    const rawParentId =
-      getAttribute(child, 'w15', 'paraIdParent') ??
-      getAttribute(child, 'w15', 'parentId') ??
-      getAttribute(child, 'w', 'parentId') ??
-      child.attributes?.['w15:paraIdParent'];
-    const parentId = rawParentId ? parseInt(String(rawParentId), 10) : undefined;
+    // Reply threading: check commentsExtended.xml first, then fallback to
+    // w15:paraIdParent on the comment element (legacy/our old format)
+    let parentId: number | undefined;
+    if (commentParaId && threadingByParaId.has(commentParaId)) {
+      const parentParaId = threadingByParaId.get(commentParaId)!;
+      const pid = paraIdToCommentId.get(parentParaId);
+      if (pid != null) parentId = pid;
+    }
+    if (parentId == null) {
+      // Fallback: w15:paraIdParent on the comment element (our old format)
+      const rawParentId =
+        getAttribute(child, 'w15', 'paraIdParent') ??
+        getAttribute(child, 'w15', 'parentId') ??
+        getAttribute(child, 'w', 'parentId') ??
+        child.attributes?.['w15:paraIdParent'];
+      parentId = rawParentId ? parseInt(String(rawParentId), 10) : undefined;
+    }
 
     comments.push({
       id,
@@ -136,6 +197,25 @@ export function parseComments(
       content: paragraphs,
       parentId: parentId && !isNaN(parentId) ? parentId : undefined,
     });
+  }
+
+  // Second pass: resolve any threadingByParaId entries where the parent
+  // was parsed AFTER the child (forward references)
+  if (threadingByParaId.size > 0) {
+    for (const comment of comments) {
+      if (comment.parentId != null) continue; // already resolved
+      // Find this comment's paraId
+      for (const [paraId, commentId] of paraIdToCommentId) {
+        if (commentId === comment.id) {
+          const parentParaId = threadingByParaId.get(paraId);
+          if (parentParaId) {
+            const pid = paraIdToCommentId.get(parentParaId);
+            if (pid != null) comment.parentId = pid;
+          }
+          break;
+        }
+      }
+    }
   }
 
   return comments;
