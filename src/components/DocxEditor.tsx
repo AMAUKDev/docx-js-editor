@@ -2298,23 +2298,16 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
           Object.keys(ctMeta).length > 0 ? ctMeta : undefined;
       }
 
-      // If comments were added/removed during this session, ensure the
-      // commentsModified flag is set on the current agent document and
-      // the comments array is up-to-date. The flag may have been lost
-      // when ProseMirror state changed and a new agent was created.
-      if (addedCommentsRef.current.length > 0) {
-        const doc = agentRef.current.getDocument();
-        doc.commentsModified = true;
-        if (doc.package.document) {
-          if (!doc.package.document.comments) {
-            doc.package.document.comments = [];
-          }
-          const existingIds = new Set(doc.package.document.comments.map((c) => c.id));
-          for (const c of addedCommentsRef.current) {
-            if (!existingIds.has(c.id)) {
-              doc.package.document.comments.push(c);
-            }
-          }
+      // Sync comments from historyState to agent document (handles adds, edits, deletes).
+      // The agent document may have stale comments if the agent was recreated.
+      const histDoc = historyStateRef.current;
+      if (histDoc?.commentsModified && histDoc.package.document) {
+        const agentDoc = agentRef.current.getDocument();
+        if (agentDoc.package.document) {
+          agentDoc.package.document.comments = histDoc.package.document.comments
+            ? [...histDoc.package.document.comments]
+            : [];
+          agentDoc.commentsModified = true;
         }
       }
 
@@ -2713,23 +2706,31 @@ body { background: white; }
         doc.package.document.comments = [...comments];
         doc.commentsModified = true;
 
-        // Also update addedCommentsRef if the comment is there
+        // Also update addedCommentsRef and agent document
+        const newContent = [
+          {
+            type: 'paragraph' as const,
+            content: [
+              { type: 'run' as const, content: [{ type: 'text' as const, text: newText }] },
+            ],
+            formatting: {},
+          },
+        ];
         addedCommentsRef.current = addedCommentsRef.current.map((c) =>
-          c.id === commentId
-            ? {
-                ...c,
-                content: [
-                  {
-                    type: 'paragraph' as const,
-                    content: [
-                      { type: 'run' as const, content: [{ type: 'text' as const, text: newText }] },
-                    ],
-                    formatting: {},
-                  },
-                ],
-              }
-            : c
+          c.id === commentId ? { ...c, content: newContent } : c
         );
+        if (agentRef.current) {
+          const agentDoc = agentRef.current.getDocument();
+          if (agentDoc?.package.document?.comments) {
+            const agentComments = agentDoc.package.document.comments;
+            const agentIdx = agentComments.findIndex((c: { id: number }) => c.id === commentId);
+            if (agentIdx >= 0) {
+              agentComments[agentIdx] = { ...agentComments[agentIdx], content: newContent as any };
+              agentDoc.package.document.comments = [...agentComments];
+              agentDoc.commentsModified = true;
+            }
+          }
+        }
       },
       removeComment: (commentId: number) => {
         const view = pagedEditorRef.current?.getView();
@@ -2744,13 +2745,23 @@ body { background: white; }
         const docSize = view.state.doc.content.size;
         view.dispatch(tr.removeMark(0, docSize, mark));
 
-        // Remove Comment object from document model and addedComments ref
+        // Remove Comment object from document model, agent, and addedComments ref
         const doc = historyStateRef.current;
         if (doc?.package.document?.comments) {
           doc.package.document.comments = doc.package.document.comments.filter(
             (c) => c.id !== commentId
           );
           doc.commentsModified = true;
+        }
+        // Also remove from the agent document (used by renderToBuffer/save)
+        if (agentRef.current) {
+          const agentDoc = agentRef.current.getDocument();
+          if (agentDoc?.package.document?.comments) {
+            agentDoc.package.document.comments = agentDoc.package.document.comments.filter(
+              (c: { id: number }) => c.id !== commentId
+            );
+            agentDoc.commentsModified = true;
+          }
         }
         addedCommentsRef.current = addedCommentsRef.current.filter((c) => c.id !== commentId);
       },
@@ -3140,16 +3151,14 @@ body { background: white; }
           if (agentRef.current && ctMeta) {
             agentRef.current.getDocument().contextTagMetadata = ctMeta;
           }
-          // Sync added comments to agent document (may have been lost on agent recreation)
-          if (agentRef.current && addedCommentsRef.current.length > 0) {
+          // Sync comments from historyState to agent document (handles adds, edits, deletes)
+          if (agentRef.current && baseDoc?.package.document) {
             const d = agentRef.current.getDocument();
-            d.commentsModified = true;
-            if (d.package.document) {
-              if (!d.package.document.comments) d.package.document.comments = [];
-              const ids = new Set(d.package.document.comments.map((c) => c.id));
-              for (const c of addedCommentsRef.current) {
-                if (!ids.has(c.id)) d.package.document.comments.push(c);
-              }
+            if (d.package.document && baseDoc.commentsModified) {
+              d.package.document.comments = baseDoc.package.document.comments
+                ? [...baseDoc.package.document.comments]
+                : [];
+              d.commentsModified = true;
             }
           }
           return agentRef.current?.toBuffer() ?? null;
