@@ -24,6 +24,7 @@ import type { CSSProperties, ReactNode } from 'react';
 import type { Document, Theme, HeaderFooter } from '../types/document';
 import type { Run } from '../types/content';
 import { setDocumentStyles, getStyleDef } from '../prosemirror/styles/styleStore';
+import { parseImportedStyleXml } from '../utils/parseImportedStyleXml';
 
 import { Toolbar, type SelectionFormatting, type FormattingAction } from './Toolbar';
 import { pointsToHalfPoints } from './ui/FontSizePicker';
@@ -740,60 +741,6 @@ interface EditorState {
 /**
  * DocxEditor - Complete DOCX editor component
  */
-/**
- * Parse a raw <w:style> XML string to extract rPr and pPr for live rendering.
- * Used by importStyles to provide both _originalXml (for saving) AND
- * parsed formatting properties (for the editor to apply styles).
- */
-function parseImportedStyleXml(xml: string): Record<string, any> {
-  const result: Record<string, any> = {};
-
-  // Extract rPr (run properties = font, size, bold, etc.)
-  const rPr: Record<string, any> = {};
-  // Parse w:rFonts — may have ascii, hAnsi, asciiTheme, hAnsiTheme
-  const rFontsMatch = xml.match(/<w:rFonts\b([^/]*?)\/?>/);
-  if (rFontsMatch) {
-    const attrs = rFontsMatch[1];
-    const fm: Record<string, string> = {};
-    const ascii = attrs.match(/w:ascii="([^"]*)"/);
-    const hAnsi = attrs.match(/w:hAnsi="([^"]*)"/);
-    const asciiTheme = attrs.match(/w:asciiTheme="([^"]*)"/);
-    const hAnsiTheme = attrs.match(/w:hAnsiTheme="([^"]*)"/);
-    if (ascii) fm.ascii = ascii[1];
-    if (hAnsi) fm.hAnsi = hAnsi[1];
-    if (asciiTheme) fm.asciiTheme = asciiTheme[1];
-    if (hAnsiTheme) fm.hAnsiTheme = hAnsiTheme[1];
-    if (Object.keys(fm).length > 0) rPr.fontFamily = fm;
-  }
-  const sizeMatch = xml.match(/<w:sz w:val="(\d+)"/);
-  if (sizeMatch) rPr.fontSize = parseInt(sizeMatch[1], 10);
-  if (/<w:b\s*\/>|<w:b\s/.test(xml)) rPr.bold = true;
-  if (/<w:i\s*\/>|<w:i\s/.test(xml)) rPr.italic = true;
-  const colorMatch = xml.match(/<w:color w:val="([^"]+)"/);
-  if (colorMatch) rPr.color = { rgb: colorMatch[1] };
-  if (Object.keys(rPr).length > 0) result.rPr = rPr;
-
-  // Extract pPr (paragraph properties = spacing, alignment)
-  const pPr: Record<string, any> = {};
-  const spacingMatch = xml.match(/<w:spacing\b([^/]*?)\/?>/);
-  if (spacingMatch) {
-    const attrs = spacingMatch[1];
-    const spacing: Record<string, number> = {};
-    const before = attrs.match(/w:before="(\d+)"/);
-    const after = attrs.match(/w:after="(\d+)"/);
-    const line = attrs.match(/w:line="(\d+)"/);
-    if (before) spacing.before = parseInt(before[1], 10);
-    if (after) spacing.after = parseInt(after[1], 10);
-    if (line) spacing.line = parseInt(line[1], 10);
-    if (Object.keys(spacing).length > 0) pPr.spacing = spacing;
-  }
-  const jcMatch = xml.match(/<w:jc w:val="([^"]+)"/);
-  if (jcMatch) pPr.alignment = jcMatch[1];
-  if (Object.keys(pPr).length > 0) result.pPr = pPr;
-
-  return result;
-}
-
 export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function DocxEditor(
   {
     documentBuffer,
@@ -3472,6 +3419,76 @@ body { background: white; }
           } else {
             existingStyles.push(newStyle);
           }
+        }
+
+        // ── Import numbering definitions referenced by imported styles ──
+        // Store imported numbering entries on the Document for injection during repack.
+        // Remap IDs to avoid collisions with existing numbering in the target.
+        const importedNumbering: Array<{
+          abstractNumXml: string;
+          numXml: string;
+          oldNumId: number;
+          newNumId: number;
+        }> = [];
+        const existingNums = doc.package.numbering?.nums || [];
+        const existingAbstracts = doc.package.numbering?.abstractNums || [];
+        let nextNumId =
+          existingNums.length > 0 ? Math.max(...existingNums.map((n: any) => n.numId)) + 1 : 100;
+        let nextAbsId =
+          existingAbstracts.length > 0
+            ? Math.max(...existingAbstracts.map((a: any) => a.abstractNumId)) + 1
+            : 100;
+        const absIdRemap = new Map<number, number>();
+        const numIdRemap = new Map<number, number>();
+
+        for (const styleId of toImport) {
+          const s = sourceById.get(styleId);
+          if (!s?._abstractNumXml || !s?._numXml) continue;
+          const oldAbsId = s._abstractNumId as number;
+          const oldNumId = s._numId as number;
+          if (numIdRemap.has(oldNumId)) continue;
+
+          let newAbsId: number;
+          if (absIdRemap.has(oldAbsId)) {
+            newAbsId = absIdRemap.get(oldAbsId)!;
+          } else {
+            newAbsId = nextAbsId++;
+            absIdRemap.set(oldAbsId, newAbsId);
+          }
+
+          const newNumId = nextNumId++;
+          numIdRemap.set(oldNumId, newNumId);
+
+          const absXml = (s._abstractNumXml as string).replace(
+            `w:abstractNumId="${oldAbsId}"`,
+            `w:abstractNumId="${newAbsId}"`
+          );
+          const nXml = (s._numXml as string)
+            .replace(`w:numId="${oldNumId}"`, `w:numId="${newNumId}"`)
+            .replace(`w:abstractNumId="${oldAbsId}"`, `w:abstractNumId="${newAbsId}"`);
+
+          importedNumbering.push({ abstractNumXml: absXml, numXml: nXml, oldNumId, newNumId });
+        }
+
+        // Update numId references in imported styles' _originalXml
+        if (numIdRemap.size > 0) {
+          for (const styleId of toImport) {
+            const s = sourceById.get(styleId);
+            if (!s?._numId || !numIdRemap.has(s._numId)) continue;
+            const newNumId = numIdRemap.get(s._numId)!;
+            const idx = existingStyles.findIndex((es) => es.styleId === styleId);
+            if (idx >= 0 && existingStyles[idx]._originalXml) {
+              existingStyles[idx]._originalXml = existingStyles[idx]._originalXml.replace(
+                `<w:numId w:val="${s._numId}"/>`,
+                `<w:numId w:val="${newNumId}"/>`
+              );
+            }
+          }
+          // Store on document for rezip to inject into numbering.xml
+          (doc as any).importedNumberingEntries = [
+            ...((doc as any).importedNumberingEntries || []),
+            ...importedNumbering,
+          ];
         }
 
         doc.package.stylesDirty = true;

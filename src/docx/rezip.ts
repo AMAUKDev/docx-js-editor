@@ -649,6 +649,32 @@ export async function repackDocx(doc: Document, options: RepackOptions = {}): Pr
     });
   }
 
+  // Inject imported numbering definitions into numbering.xml
+  const importedNumbering = (doc as any).importedNumberingEntries as
+    | Array<{ abstractNumXml: string; numXml: string }>
+    | undefined;
+  if (importedNumbering && importedNumbering.length > 0) {
+    const numFile = newZip.file('word/numbering.xml');
+    if (numFile) {
+      let numXml = await numFile.async('text');
+      for (const entry of importedNumbering) {
+        // Insert abstractNum before the first <w:num> (abstractNums must come first)
+        const firstNumIdx = numXml.indexOf('<w:num ');
+        if (firstNumIdx >= 0) {
+          numXml = numXml.slice(0, firstNumIdx) + entry.abstractNumXml + numXml.slice(firstNumIdx);
+        } else {
+          numXml = numXml.replace('</w:numbering>', entry.abstractNumXml + '</w:numbering>');
+        }
+        // Insert num before </w:numbering>
+        numXml = numXml.replace('</w:numbering>', entry.numXml + '</w:numbering>');
+      }
+      newZip.file('word/numbering.xml', numXml, {
+        compression: 'DEFLATE',
+        compressionOptions: { level: compressionLevel },
+      });
+    }
+  }
+
   // NOTE: We do NOT re-serialize headers/footers (lossy — drops mc:AlternateContent/VML).
   // Instead, we do text-level replacement of context tags directly in the original XML.
   if (doc.contextTagReplacements) {
