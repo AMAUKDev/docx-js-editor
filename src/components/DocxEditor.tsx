@@ -740,6 +740,60 @@ interface EditorState {
 /**
  * DocxEditor - Complete DOCX editor component
  */
+/**
+ * Parse a raw <w:style> XML string to extract rPr and pPr for live rendering.
+ * Used by importStyles to provide both _originalXml (for saving) AND
+ * parsed formatting properties (for the editor to apply styles).
+ */
+function parseImportedStyleXml(xml: string): Record<string, any> {
+  const result: Record<string, any> = {};
+
+  // Extract rPr (run properties = font, size, bold, etc.)
+  const rPr: Record<string, any> = {};
+  // Parse w:rFonts — may have ascii, hAnsi, asciiTheme, hAnsiTheme
+  const rFontsMatch = xml.match(/<w:rFonts\b([^/]*?)\/?>/);
+  if (rFontsMatch) {
+    const attrs = rFontsMatch[1];
+    const fm: Record<string, string> = {};
+    const ascii = attrs.match(/w:ascii="([^"]*)"/);
+    const hAnsi = attrs.match(/w:hAnsi="([^"]*)"/);
+    const asciiTheme = attrs.match(/w:asciiTheme="([^"]*)"/);
+    const hAnsiTheme = attrs.match(/w:hAnsiTheme="([^"]*)"/);
+    if (ascii) fm.ascii = ascii[1];
+    if (hAnsi) fm.hAnsi = hAnsi[1];
+    if (asciiTheme) fm.asciiTheme = asciiTheme[1];
+    if (hAnsiTheme) fm.hAnsiTheme = hAnsiTheme[1];
+    if (Object.keys(fm).length > 0) rPr.fontFamily = fm;
+  }
+  const sizeMatch = xml.match(/<w:sz w:val="(\d+)"/);
+  if (sizeMatch) rPr.fontSize = parseInt(sizeMatch[1], 10);
+  if (/<w:b\s*\/>|<w:b\s/.test(xml)) rPr.bold = true;
+  if (/<w:i\s*\/>|<w:i\s/.test(xml)) rPr.italic = true;
+  const colorMatch = xml.match(/<w:color w:val="([^"]+)"/);
+  if (colorMatch) rPr.color = { rgb: colorMatch[1] };
+  if (Object.keys(rPr).length > 0) result.rPr = rPr;
+
+  // Extract pPr (paragraph properties = spacing, alignment)
+  const pPr: Record<string, any> = {};
+  const spacingMatch = xml.match(/<w:spacing\b([^/]*?)\/?>/);
+  if (spacingMatch) {
+    const attrs = spacingMatch[1];
+    const spacing: Record<string, number> = {};
+    const before = attrs.match(/w:before="(\d+)"/);
+    const after = attrs.match(/w:after="(\d+)"/);
+    const line = attrs.match(/w:line="(\d+)"/);
+    if (before) spacing.before = parseInt(before[1], 10);
+    if (after) spacing.after = parseInt(after[1], 10);
+    if (line) spacing.line = parseInt(line[1], 10);
+    if (Object.keys(spacing).length > 0) pPr.spacing = spacing;
+  }
+  const jcMatch = xml.match(/<w:jc w:val="([^"]+)"/);
+  if (jcMatch) pPr.alignment = jcMatch[1];
+  if (Object.keys(pPr).length > 0) result.pPr = pPr;
+
+  return result;
+}
+
 export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function DocxEditor(
   {
     documentBuffer,
@@ -3378,8 +3432,11 @@ body { background: white; }
 
           let newStyle: any;
           if (s._originalXml) {
-            // Use verbatim XML from source — preserves theme fonts, full formatting
+            // Parse the _originalXml to extract rPr/pPr for live rendering,
+            // while preserving the raw XML for lossless serialization.
+            const parsed = parseImportedStyleXml(s._originalXml);
             newStyle = {
+              ...parsed,
               styleId: s.styleId,
               type: (s.type || 'paragraph') as 'paragraph',
               name: s.name || s.styleId,

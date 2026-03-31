@@ -376,16 +376,16 @@ function makeApplyStyle(schema: Schema) {
         }
       }
 
-      // Marks split into two categories for style reapplication:
-      // "Style-level" marks are always reset to the style definition (font, size, color).
-      // "Emphasis" marks (bold, italic, underline, strike) are preserved on existing
-      // text — they represent deliberate user formatting, not style overrides.
+      // Style-level marks (font, size, color) are always reset to the new style.
       const styleResetMarks = [
         schema.marks.fontSize,
         schema.marks.fontFamily,
         schema.marks.textColor,
       ].filter(Boolean);
-      const emphasisMarks = [
+      // Emphasis marks (bold, italic, etc.) are only removed if they span the
+      // ENTIRE paragraph (meaning they came from the previous style, not from
+      // the user manually formatting a word). Sub-range emphasis is preserved.
+      const emphasisMarkTypes = [
         schema.marks.bold,
         schema.marks.italic,
         schema.marks.underline,
@@ -444,23 +444,29 @@ function makeApplyStyle(schema: Schema) {
             const paragraphEnd = pos + node.nodeSize - 1;
 
             if (paragraphEnd > paragraphStart) {
-              // Always reset style-level marks (font, size, color) to the style definition
+              // Always reset style-level marks (font, size, color)
               for (const markType of styleResetMarks) {
                 tr = tr.removeMark(paragraphStart, paragraphEnd, markType);
               }
-              // Add back the style's font/size/color marks
-              for (const mark of styleMarks) {
-                if (styleResetMarks.some((mt) => mt === mark.type)) {
-                  tr = tr.addMark(paragraphStart, paragraphEnd, mark);
+
+              // For emphasis marks: only remove if they span the ENTIRE paragraph
+              // (meaning they came from the previous style). Sub-range emphasis
+              // (user manually bolded a word) is preserved.
+              for (const markType of emphasisMarkTypes) {
+                let coversAll = true;
+                node.descendants((child) => {
+                  if (child.isText && !child.marks.some((m) => m.type === markType)) {
+                    coversAll = false;
+                  }
+                });
+                if (coversAll && node.content.size > 0) {
+                  tr = tr.removeMark(paragraphStart, paragraphEnd, markType);
                 }
               }
-              // For emphasis marks (bold/italic/underline/strike):
-              // Only ADD them paragraph-wide if the style defines them.
-              // Don't REMOVE existing ones — they're deliberate user formatting.
+
+              // Add back the marks defined by the new style
               for (const mark of styleMarks) {
-                if (emphasisMarks.some((mt) => mt === mark.type)) {
-                  tr = tr.addMark(paragraphStart, paragraphEnd, mark);
-                }
+                tr = tr.addMark(paragraphStart, paragraphEnd, mark);
               }
             }
           }
