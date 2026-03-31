@@ -3345,30 +3345,78 @@ body { background: white; }
         const doc = history.state;
         if (!doc?.package?.styles) return;
         const existingStyles = doc.package.styles.styles;
+
+        // Build a lookup of all available source styles for dependency resolution
+        const sourceById = new Map<string, any>();
         for (const s of styles) {
+          sourceById.set(s.styleId, s);
+        }
+
+        // Collect the full dependency tree: basedOn, link, next chains
+        // TODO: Also import numbering definitions (w:numId) referenced by styles.
+        // Numbering lives in word/numbering.xml and needs separate ID remapping logic.
+        const toImport = new Set<string>();
+        function collectDeps(styleId: string) {
+          if (toImport.has(styleId)) return;
+          const s = sourceById.get(styleId);
+          if (!s) return;
+          toImport.add(styleId);
+          if (s.basedOn) collectDeps(s.basedOn);
+          if (s.link) collectDeps(s.link);
+          if (s.next) collectDeps(s.next);
+        }
+        for (const s of styles) {
+          collectDeps(s.styleId);
+        }
+
+        // Import each style, preserving _originalXml when available
+        for (const styleId of toImport) {
+          const s = sourceById.get(styleId);
+          if (!s) continue;
+
           const idx = existingStyles.findIndex((es) => es.styleId === s.styleId);
-          const newStyle = {
-            styleId: s.styleId,
-            type: (s.type || 'paragraph') as 'paragraph',
-            name: s.name || s.styleId,
-            basedOn: s.basedOn || undefined,
-            next: s.next || undefined,
-            qFormat: true,
-            rPr: {
-              fontFamily: s.fontFamily ? { ascii: s.fontFamily, hAnsi: s.fontFamily } : undefined,
-              fontSize: s.fontSize || undefined,
-              bold: s.bold || undefined,
-              italic: s.italic || undefined,
-              color: s.color ? { rgb: s.color } : undefined,
-            },
-            _dirty: true,
-          };
+
+          let newStyle: any;
+          if (s._originalXml) {
+            // Use verbatim XML from source — preserves theme fonts, full formatting
+            newStyle = {
+              styleId: s.styleId,
+              type: (s.type || 'paragraph') as 'paragraph',
+              name: s.name || s.styleId,
+              basedOn: s.basedOn || undefined,
+              next: s.next || undefined,
+              link: s.link || undefined,
+              qFormat: true,
+              _originalXml: s._originalXml,
+              _dirty: false, // use _originalXml verbatim during serialization
+            };
+          } else {
+            // Fallback: construct from simplified data (old API without _originalXml)
+            newStyle = {
+              styleId: s.styleId,
+              type: (s.type || 'paragraph') as 'paragraph',
+              name: s.name || s.styleId,
+              basedOn: s.basedOn || undefined,
+              next: s.next || undefined,
+              qFormat: true,
+              rPr: {
+                fontFamily: s.fontFamily ? { ascii: s.fontFamily, hAnsi: s.fontFamily } : undefined,
+                fontSize: s.fontSize || undefined,
+                bold: s.bold || undefined,
+                italic: s.italic || undefined,
+                color: s.color ? { rgb: s.color } : undefined,
+              },
+              _dirty: true,
+            };
+          }
+
           if (idx >= 0) {
             existingStyles[idx] = newStyle;
           } else {
             existingStyles.push(newStyle);
           }
         }
+
         doc.package.stylesDirty = true;
         doc.package.styles = { ...doc.package.styles, styles: [...existingStyles] };
         setDocumentStyles(doc.package.styles.styles);
