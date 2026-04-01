@@ -70,6 +70,8 @@ export interface ParseOptions {
   parseNotes?: boolean;
   /** Whether to detect template variables (default: true) */
   detectVariables?: boolean;
+  /** Whether to restore context tags from bookmarks (default: true). Set false for example reports. */
+  enableContextTags?: boolean;
 }
 
 // ============================================================================
@@ -93,6 +95,7 @@ export async function parseDocx(input: DocxInput, options: ParseOptions = {}): P
     parseHeadersFooters = true,
     parseNotes = true,
     detectVariables = true,
+    enableContextTags = true,
   } = options;
 
   const warnings: string[] = [];
@@ -310,7 +313,10 @@ export async function parseDocx(input: DocxInput, options: ParseOptions = {}): P
     // Restore context tags from FP bookmarks (rendered tag preservation).
     // Converts _FP_ctx_ bookmarked text back to {{ tagKey }} patterns so
     // toProseDoc's splitContextTags can create contextTag atoms.
-    restoreContextTagsFromBookmarks(document);
+    // Skip when enableContextTags is false (example report preview — show as-is).
+    if (enableContextTags) {
+      restoreContextTagsFromBookmarks(document);
+    }
 
     // Restore loop blocks from FP bookmarks (expanded loop round-trip).
     // Detects _FP_loop_ bookmarked tables, diffs against manifest, and

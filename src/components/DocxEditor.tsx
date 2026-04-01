@@ -308,6 +308,8 @@ export interface DocxEditorProps {
   styleGalleryMode?: boolean;
   /** Style IDs shown in the gallery when restrictedMode or styleGalleryMode is true */
   allowedStyleIds?: string[];
+  /** When false, disables context tag parsing entirely — document text shown as-is */
+  enableContextTags?: boolean;
   /** Context tags available for insertion (key → resolved value) */
   contextTags?: Record<string, string>;
   /** Called when document is loaded/parsed with the set of tagKeys found in the doc */
@@ -785,6 +787,7 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     restrictedMode = false,
     styleGalleryMode,
     allowedStyleIds: allowedStyleIdsProp,
+    enableContextTags = true,
     contextTags,
     onContextTagsDiscovered,
     onLoopDiffsDetected,
@@ -859,11 +862,13 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
 
   // Extension manager — built once, provides schema + plugins + commands
   const extensionManager = useMemo(() => {
-    const mgr = new ExtensionManager(createStarterKit());
+    const disable = enableContextTags ? [] : ['contextTag'];
+    const mgr = new ExtensionManager(createStarterKit({ disable }));
     mgr.buildSchema();
     mgr.initializeRuntime();
     return mgr;
-  }, []);
+     
+  }, [enableContextTags]);
 
   // Resolve allowed style IDs for restricted mode
   const allowedStyleIds = allowedStyleIdsProp ?? DEFAULT_ALLOWED_STYLE_IDS;
@@ -1074,7 +1079,7 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
 
     const parseDocument = async () => {
       try {
-        const doc = await parseDocx(documentBuffer);
+        const doc = await parseDocx(documentBuffer, { enableContextTags });
 
         // Report loop diffs if present (from re-uploaded expanded loops)
         if (doc.loopDiffReports && doc.loopDiffReports.length > 0) {
@@ -3527,6 +3532,7 @@ body { background: white; }
   onContextTagsDiscoveredRef.current = onContextTagsDiscovered;
 
   useEffect(() => {
+    if (!enableContextTags) return; // Skip all tag processing when disabled
     let cancelled = false;
     let attempts = 0;
 
@@ -4502,6 +4508,127 @@ body { background: white; }
                     setDocumentStyles(doc.package.styles.styles);
                     // Force document state update so Toolbar re-reads styles
                     history.push({ ...doc, package: { ...doc.package } });
+
+                    // Reapply modified style formatting to all paragraphs using it.
+                    // ProseMirror stores formatting as marks on text nodes, not as
+                    // live references to style definitions. We must update the marks
+                    // to reflect the changed style definition.
+                    //
+                    // Strategy: for each mark type, check if it spans the ENTIRE
+                    // paragraph text (= style-level formatting). If so, replace it.
+                    // If a mark only covers part of the paragraph, it's a user-applied
+                    // emphasis override — leave it alone.
+                    if (styleEditorState.mode === 'modify' && styleEditorState.styleId) {
+                      const view = pagedEditorRef.current?.getView();
+                      if (view) {
+                        const { state, dispatch } = view;
+                        const { schema } = state;
+                        const tr = state.tr;
+                        let changed = false;
+
+                        // Map of mark type name → { enabled, create attrs }
+                        const styleMarks: Record<
+                          string,
+                          {
+                            enabled: boolean;
+                            create: () => ReturnType<typeof schema.marks.bold.create> | null;
+                          }
+                        > = {
+                          bold: {
+                            enabled: !!formData.bold,
+                            create: () => schema.marks.bold?.create() ?? null,
+                          },
+                          italic: {
+                            enabled: !!formData.italic,
+                            create: () => schema.marks.italic?.create() ?? null,
+                          },
+                          strike: {
+                            enabled: !!formData.strikethrough,
+                            create: () => schema.marks.strike?.create() ?? null,
+                          },
+                          underline: {
+                            enabled: !!formData.underline,
+                            create: () =>
+                              schema.marks.underline?.create({ style: 'single' }) ?? null,
+                          },
+                          fontSize: {
+                            enabled: !!formData.fontSize,
+                            create: () =>
+                              schema.marks.fontSize?.create({ size: formData.fontSize }) ?? null,
+                          },
+                          fontFamily: {
+                            enabled: !!formData.fontFamily,
+                            create: () =>
+                              schema.marks.fontFamily?.create({
+                                ascii: formData.fontFamily,
+                                hAnsi: formData.fontFamily,
+                              }) ?? null,
+                          },
+                          textColor: {
+                            enabled: !!formData.color,
+                            create: () =>
+                              schema.marks.textColor?.create({ rgb: formData.color }) ?? null,
+                          },
+                        };
+
+                        state.doc.descendants((node, pos) => {
+                          if (
+                            node.type.name !== 'paragraph' ||
+                            node.attrs.styleId !== styleEditorState.styleId
+                          )
+                            return;
+
+                          const paraStart = pos + 1;
+                          const paraEnd = pos + node.nodeSize - 1;
+                          const paraTextLen = paraEnd - paraStart;
+                          if (paraTextLen <= 0) return;
+
+                          for (const [markName, def] of Object.entries(styleMarks)) {
+                            const markType = schema.marks[markName];
+                            if (!markType) continue;
+
+                            // Check if this mark spans the entire paragraph
+                            let coveredLen = 0;
+                            node.forEach((child) => {
+                              if (
+                                child.marks.some(
+                                  (m: { type: { name: string } }) => m.type.name === markName
+                                )
+                              ) {
+                                coveredLen += child.nodeSize;
+                              }
+                            });
+                            const isFullParagraph = coveredLen === paraTextLen;
+                            const isPartial = coveredLen > 0 && coveredLen < paraTextLen;
+
+                            // Only touch full-paragraph marks (style-level).
+                            // Partial marks are user emphasis — leave them alone.
+                            if (isPartial) continue;
+
+                            if (isFullParagraph && !def.enabled) {
+                              // Style no longer has this formatting — remove it
+                              tr.removeMark(paraStart, paraEnd, markType);
+                              changed = true;
+                            } else if (isFullParagraph && def.enabled) {
+                              // Style still has it — update to new value (e.g. new fontSize)
+                              tr.removeMark(paraStart, paraEnd, markType);
+                              const mark = def.create();
+                              if (mark) tr.addMark(paraStart, paraEnd, mark);
+                              changed = true;
+                            } else if (!isFullParagraph && def.enabled) {
+                              // Style adds new formatting — apply to entire paragraph
+                              const mark = def.create();
+                              if (mark) tr.addMark(paraStart, paraEnd, mark);
+                              changed = true;
+                            }
+                          }
+                        });
+
+                        if (changed) {
+                          dispatch(tr);
+                        }
+                      }
+                    }
                   }
                   setStyleEditorState({ open: false, mode: 'modify' });
                 }}
