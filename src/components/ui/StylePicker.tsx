@@ -13,6 +13,8 @@ import { cn } from '../../lib/utils';
 import type { Style, StyleType, Theme } from '../../types/document';
 import type { NumberingMap } from '../../docx/numberingParser';
 import { formatNumberedMarker } from '../../layout-bridge/toFlowBlocks';
+import { resolveColor } from '../../utils/colorResolver';
+import { resolveThemeFontRef } from '../../docx/themeParser';
 
 // ============================================================================
 // TYPES
@@ -126,9 +128,6 @@ const DEFAULT_STYLES: StyleOption[] = [
 // COMPONENT
 // ============================================================================
 
-/** Google Docs heading color */
-const HEADING_COLOR = '#4a6c8c';
-
 /**
  * Get inline styles for a style option's visual preview.
  * Derives clamped font size from the style's actual fontSize,
@@ -155,11 +154,9 @@ function getStylePreviewCSS(style: StyleOption): React.CSSProperties {
     css.fontStyle = 'italic';
   }
 
-  // Use explicit color if provided, otherwise apply heading color for heading styles
+  // Use explicit color if provided
   if (style.color) {
     css.color = `#${style.color}`;
-  } else if (style.styleId.startsWith('Heading')) {
-    css.color = HEADING_COLOR;
   }
 
   return css;
@@ -169,6 +166,7 @@ export function StylePicker({
   value,
   onChange,
   styles,
+  theme,
   disabled = false,
   className,
   width = 120,
@@ -241,8 +239,20 @@ export function StylePicker({
             }
           }
 
-          // Extract font family from rPr
-          const fontFamily = s.rPr?.fontFamily?.ascii || undefined;
+          // Extract font family from rPr — resolve theme fonts to actual names
+          const fontFamily =
+            s.rPr?.fontFamily?.ascii ||
+            (s.rPr?.fontFamily?.asciiTheme
+              ? resolveThemeFontRef(theme, s.rPr.fontFamily.asciiTheme)
+              : undefined);
+
+          // Resolve color — handles theme colors (accent1 etc.) with tint/shade
+          let color: string | undefined = defaultStyle?.color;
+          if (s.rPr?.color) {
+            const resolved = resolveColor(s.rPr.color, theme);
+            // resolveColor returns "#RRGGBB" — strip the # for our hex format
+            color = resolved.replace('#', '');
+          }
 
           return {
             styleId: s.styleId,
@@ -255,7 +265,7 @@ export function StylePicker({
             fontSize: s.rPr?.fontSize ?? defaultStyle?.fontSize,
             bold: s.rPr?.bold ?? defaultStyle?.bold,
             italic: s.rPr?.italic ?? defaultStyle?.italic,
-            color: s.rPr?.color?.rgb ?? defaultStyle?.color,
+            color,
             fontFamily,
             numberPrefix,
           };
@@ -287,7 +297,7 @@ export function StylePicker({
     }
 
     return options;
-  }, [styles, allowedStyleIds, numberingMap]);
+  }, [styles, theme, allowedStyleIds, numberingMap]);
 
   // Key to force remount after selection — allows re-applying the same style.
   // After each selection the key increments AND we briefly set a sentinel value
