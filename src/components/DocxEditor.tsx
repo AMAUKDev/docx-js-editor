@@ -150,20 +150,9 @@ import {
   insertPageBreak,
   // Table of Contents command
   generateTOC,
-  // Table commands
+  // Table commands (getTableContext is used directly; other commands come
+  // from per-instance extensionManager to avoid schema mismatch)
   getTableContext,
-  addRowAbove,
-  addRowBelow,
-  deleteRow as pmDeleteRow,
-  addColumnLeft,
-  addColumnRight,
-  deleteColumn as pmDeleteColumn,
-  deleteTable as pmDeleteTable,
-  selectTable as pmSelectTable,
-  selectRow as pmSelectRow,
-  selectColumn as pmSelectColumn,
-  mergeCells as pmMergeCells,
-  splitCell as pmSplitCell,
   setCellBorder,
   setCellVerticalAlign,
   setCellMargins,
@@ -867,7 +856,6 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     mgr.buildSchema();
     mgr.initializeRuntime();
     return mgr;
-     
   }, [enableContextTags]);
 
   // Resolve allowed style IDs for restricted mode
@@ -1304,7 +1292,7 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
                 });
                 if (totalCells > 0 && selectedCells >= totalCells) {
                   e.preventDefault();
-                  pmDeleteTable(view.state, view.dispatch);
+                  extensionManager.getCommands().deleteTable()(view.state, view.dispatch);
                   return;
                 }
               }
@@ -1754,48 +1742,52 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     [history]
   );
 
-  // Handle table action from Toolbar - use ProseMirror commands
+  // Handle table action from Toolbar - use commands from the per-instance
+  // extensionManager (NOT the module-level singleton) so that the schema
+  // used to create new nodes matches the editor's own schema.
   const handleTableAction = useCallback(
     (action: TableAction) => {
       const view = getActiveEditorView();
       if (!view) return;
+      // Get commands from the editor's own extension manager
+      const cmds = extensionManager.getCommands();
 
       switch (action) {
         case 'addRowAbove':
-          addRowAbove(view.state, view.dispatch);
+          cmds.addRowAbove()(view.state, view.dispatch);
           break;
         case 'addRowBelow':
-          addRowBelow(view.state, view.dispatch);
+          cmds.addRowBelow()(view.state, view.dispatch);
           break;
         case 'addColumnLeft':
-          addColumnLeft(view.state, view.dispatch);
+          cmds.addColumnLeft()(view.state, view.dispatch);
           break;
         case 'addColumnRight':
-          addColumnRight(view.state, view.dispatch);
+          cmds.addColumnRight()(view.state, view.dispatch);
           break;
         case 'deleteRow':
-          pmDeleteRow(view.state, view.dispatch);
+          cmds.deleteRow()(view.state, view.dispatch);
           break;
         case 'deleteColumn':
-          pmDeleteColumn(view.state, view.dispatch);
+          cmds.deleteColumn()(view.state, view.dispatch);
           break;
         case 'deleteTable':
-          pmDeleteTable(view.state, view.dispatch);
+          cmds.deleteTable()(view.state, view.dispatch);
           break;
         case 'selectTable':
-          pmSelectTable(view.state, view.dispatch);
+          cmds.selectTable()(view.state, view.dispatch);
           break;
         case 'selectRow':
-          pmSelectRow(view.state, view.dispatch);
+          cmds.selectRow()(view.state, view.dispatch);
           break;
         case 'selectColumn':
-          pmSelectColumn(view.state, view.dispatch);
+          cmds.selectColumn()(view.state, view.dispatch);
           break;
         case 'mergeCells':
-          pmMergeCells(view.state, view.dispatch);
+          cmds.mergeCells()(view.state, view.dispatch);
           break;
         case 'splitCell':
-          pmSplitCell(view.state, view.dispatch);
+          cmds.splitCell()(view.state, view.dispatch);
           break;
         // Border actions — use current border spec from toolbar
         case 'borderAll':

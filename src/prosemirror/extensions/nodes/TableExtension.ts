@@ -795,7 +795,10 @@ export const TablePluginExtension = createExtension({
         rowNode.forEach((cell) => {
           const paragraph = schema.nodes.paragraph.create();
           const cellAttrs = buildCellAttrsFromTemplate(cell);
-          cells.push(schema.nodes.tableCell.create(cellAttrs, paragraph));
+          // Use same cell type as template (tableHeader or tableCell)
+          const cellType =
+            cell.type.name === 'tableHeader' ? schema.nodes.tableHeader : schema.nodes.tableCell;
+          cells.push(cellType.create(cellAttrs, paragraph));
         });
         const newRow = schema.nodes.tableRow.create(
           {
@@ -833,7 +836,10 @@ export const TablePluginExtension = createExtension({
         rowNode.forEach((cell) => {
           const paragraph = schema.nodes.paragraph.create();
           const cellAttrs = buildCellAttrsFromTemplate(cell);
-          cells.push(schema.nodes.tableCell.create(cellAttrs, paragraph));
+          // Use same cell type as template (tableHeader or tableCell)
+          const cellType =
+            cell.type.name === 'tableHeader' ? schema.nodes.tableHeader : schema.nodes.tableCell;
+          cells.push(cellType.create(cellAttrs, paragraph));
         });
         const newRow = schema.nodes.tableRow.create(
           {
