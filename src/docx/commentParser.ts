@@ -148,12 +148,17 @@ export function parseComments(
     const rawDone = getAttribute(child, 'w', 'done') ?? child.attributes?.['w:done'];
     let done = rawDone === '1' || rawDone === 'true' ? true : undefined;
 
-    // Parse parent comment ID for replies (w16cid:parentId on w:comment)
+    // Parse parent comment ID for replies.
+    // Priority: w16cid:parentId (modern) → w:parentId (legacy) → w15:paraIdParent on
+    // the comment element itself (used by some editors and our test fixtures when
+    // commentsExtended.xml is absent — value is the parent comment's integer ID).
     const rawParentId =
       getAttribute(child, 'w16cid', 'parentId') ??
       getAttribute(child, 'w', 'parentId') ??
+      getAttribute(child, 'w15', 'paraIdParent') ??
       child.attributes?.['w16cid:parentId'] ??
-      child.attributes?.['w:parentId'];
+      child.attributes?.['w:parentId'] ??
+      child.attributes?.['w15:paraIdParent'];
     const parentId = rawParentId != null ? parseInt(String(rawParentId), 10) : undefined;
 
     // Parse comment content (paragraphs) and track the last paragraph's paraId
