@@ -68,13 +68,18 @@ function parseCommentsExtensible(xml: string): Map<string, string> {
  * via paraId and preferred over the ambiguous w:date local time.
  */
 /**
- * Parse commentsExtended.xml (w15:commentsEx) to build reply threading map.
- * Returns a map from paraId → parentParaId (for replies).
+ * Parse commentsExtended.xml (w15:commentsEx) for reply threading and resolved state.
+ * Returns maps of paraId → parentParaId and paraId → done.
  */
-function parseCommentsExtended(xml: string): Map<string, string> {
-  const parentMap = new Map<string, string>();
+function parseCommentsExtended(xml: string): {
+  parentByParaId: Map<string, string>;
+  doneByParaId: Map<string, boolean>;
+} {
+  const parentByParaId = new Map<string, string>();
+  const doneByParaId = new Map<string, boolean>();
+
   const root = parseXml(xml);
-  if (!root) return parentMap;
+  if (!root) return { parentByParaId, doneByParaId };
 
   const container = findChild(root, 'w15', 'commentsEx') ?? root;
   for (const child of getChildElements(container)) {
@@ -82,14 +87,22 @@ function parseCommentsExtended(xml: string): Map<string, string> {
     if (localName !== 'commentEx') continue;
 
     const paraId = getAttribute(child, 'w15', 'paraId') ?? child.attributes?.['w15:paraId'];
-    const parentParaId =
+    const paraIdParent =
       getAttribute(child, 'w15', 'paraIdParent') ?? child.attributes?.['w15:paraIdParent'];
+    const done = getAttribute(child, 'w15', 'done') ?? child.attributes?.['w15:done'];
 
-    if (paraId && parentParaId) {
-      parentMap.set(String(paraId).toUpperCase(), String(parentParaId).toUpperCase());
+    if (paraId) {
+      const pid = String(paraId).toUpperCase();
+      if (paraIdParent) {
+        parentByParaId.set(pid, String(paraIdParent).toUpperCase());
+      }
+      if (done === '1') {
+        doneByParaId.set(pid, true);
+      }
     }
   }
-  return parentMap;
+
+  return { parentByParaId, doneByParaId };
 }
 
 export function parseComments(
@@ -111,17 +124,14 @@ export function parseComments(
     ? parseCommentsExtensible(commentsExtensibleXml)
     : new Map<string, string>();
 
-  // Build reply threading from commentsExtended.xml (paraId → parentParaId)
-  const threadingByParaId = commentsExtendedXml
-    ? parseCommentsExtended(commentsExtendedXml)
-    : new Map<string, string>();
+  // Build threading lookup from commentsExtended.xml (if available)
+  const extended = commentsExtendedXml ? parseCommentsExtended(commentsExtendedXml) : null;
 
   const commentsEl = findChild(root, 'w', 'comments') ?? root;
   const children = getChildElements(commentsEl);
   const comments: Comment[] = [];
-
-  // First pass: collect paraId → comment ID mapping
-  const paraIdToCommentId = new Map<string, number>();
+  // Track each comment's last paragraph paraId for threading resolution
+  const lastParaIdByCommentIdx: string[] = [];
 
   for (const child of children) {
     const localName = child.name?.replace(/^.*:/, '') ?? '';
@@ -134,86 +144,76 @@ export function parseComments(
     const rawDate = getAttribute(child, 'w', 'date');
     const localDate = rawDate != null ? String(rawDate) : undefined;
 
-    // Get paraId from the comment's first paragraph (for cross-referencing)
-    let commentParaId: string | undefined;
-    for (const contentChild of getChildElements(child)) {
-      const contentName = contentChild.name?.replace(/^.*:/, '') ?? '';
-      if (contentName === 'p') {
-        const pid =
-          getAttribute(contentChild, 'w14', 'paraId') ?? contentChild.attributes?.['w14:paraId'];
-        if (pid) {
-          commentParaId = String(pid).toUpperCase();
-          paraIdToCommentId.set(commentParaId, id);
-          break;
-        }
-      }
-    }
+    // Parse w:done attribute (resolved/done state)
+    const rawDone = getAttribute(child, 'w', 'done') ?? child.attributes?.['w:done'];
+    let done = rawDone === '1' || rawDone === 'true' ? true : undefined;
 
-    // Try to find the UTC date from commentsExtensible.xml via paraId
-    const paraId =
-      getAttribute(child, 'w14', 'paraId') ??
-      child.attributes?.['w14:paraId'] ??
-      getAttribute(child, 'w', 'paraId');
-    const dateUtc =
-      paraId || commentParaId
-        ? dateUtcByParaId.get(String(paraId || commentParaId).toUpperCase())
-        : undefined;
+    // Parse parent comment ID for replies (w16cid:parentId on w:comment)
+    const rawParentId =
+      getAttribute(child, 'w16cid', 'parentId') ??
+      getAttribute(child, 'w', 'parentId') ??
+      child.attributes?.['w16cid:parentId'] ??
+      child.attributes?.['w:parentId'];
+    const parentId = rawParentId != null ? parseInt(String(rawParentId), 10) : undefined;
 
-    const date = dateUtc ?? localDate;
-
-    // Parse comment content (paragraphs)
+    // Parse comment content (paragraphs) and track the last paragraph's paraId
+    // (Word uses the last paragraph's w14:paraId for commentsExtended cross-refs)
     const paragraphs: Paragraph[] = [];
+    let lastParagraphParaId = '';
     for (const contentChild of getChildElements(child)) {
       const contentName = contentChild.name?.replace(/^.*:/, '') ?? '';
       if (contentName === 'p') {
         const paragraph = parseParagraph(contentChild, styles, theme, null, rels, media);
         paragraphs.push(paragraph);
+        // Get w14:paraId from the paragraph element
+        const pParaId =
+          getAttribute(contentChild, 'w14', 'paraId') ?? contentChild.attributes?.['w14:paraId'];
+        if (pParaId) lastParagraphParaId = String(pParaId).toUpperCase();
       }
     }
 
-    // Reply threading: check commentsExtended.xml first, then fallback to
-    // w15:paraIdParent on the comment element (legacy/our old format)
-    let parentId: number | undefined;
-    if (commentParaId && threadingByParaId.has(commentParaId)) {
-      const parentParaId = threadingByParaId.get(commentParaId)!;
-      const pid = paraIdToCommentId.get(parentParaId);
-      if (pid != null) parentId = pid;
+    // Try to find the UTC date from commentsExtensible.xml via paraId
+    const dateUtc = lastParagraphParaId ? dateUtcByParaId.get(lastParagraphParaId) : undefined;
+    const date = dateUtc ?? localDate;
+
+    // Cross-reference done state from commentsExtended.xml
+    if (done == null && extended && lastParagraphParaId) {
+      const extDone = extended.doneByParaId.get(lastParagraphParaId);
+      if (extDone) done = true;
     }
-    if (parentId == null) {
-      // Fallback: w15:paraIdParent on the comment element (our old format)
-      const rawParentId =
-        getAttribute(child, 'w15', 'paraIdParent') ??
-        getAttribute(child, 'w15', 'parentId') ??
-        getAttribute(child, 'w', 'parentId') ??
-        child.attributes?.['w15:paraIdParent'];
-      parentId = rawParentId ? parseInt(String(rawParentId), 10) : undefined;
-    }
+
+    lastParaIdByCommentIdx.push(lastParagraphParaId);
 
     comments.push({
       id,
       author,
       initials,
       date,
+      done,
       content: paragraphs,
       parentId: parentId && !isNaN(parentId) ? parentId : undefined,
     });
   }
 
-  // Second pass: resolve any threadingByParaId entries where the parent
-  // was parsed AFTER the child (forward references)
-  if (threadingByParaId.size > 0) {
-    for (const comment of comments) {
-      if (comment.parentId != null) continue; // already resolved
-      // Find this comment's paraId
-      for (const [paraId, commentId] of paraIdToCommentId) {
-        if (commentId === comment.id) {
-          const parentParaId = threadingByParaId.get(paraId);
-          if (parentParaId) {
-            const pid = paraIdToCommentId.get(parentParaId);
-            if (pid != null) comment.parentId = pid;
-          }
-          break;
-        }
+  // Resolve reply threading from commentsExtended.xml (w15:paraIdParent)
+  // Word stores threading here, not as w16cid:parentId on w:comment
+  if (extended && extended.parentByParaId.size > 0) {
+    // Build reverse lookup: paraId → comment id
+    const commentIdByParaId = new Map<string, number>();
+    for (let i = 0; i < comments.length; i++) {
+      const pid = lastParaIdByCommentIdx[i];
+      if (pid) commentIdByParaId.set(pid, comments[i].id);
+    }
+
+    for (let i = 0; i < comments.length; i++) {
+      if (comments[i].parentId != null) continue; // already has parentId
+      const pid = lastParaIdByCommentIdx[i];
+      if (!pid) continue;
+      const parentParaId = extended.parentByParaId.get(pid);
+      if (!parentParaId) continue;
+      const parentCommentId = commentIdByParaId.get(parentParaId);
+      if (parentCommentId != null) {
+        comments[i] = { ...comments[i], parentId: parentCommentId };
       }
     }
   }

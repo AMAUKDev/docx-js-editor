@@ -3749,11 +3749,20 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
     /**
      * Handle focus on container - redirect to hidden PM.
      */
-    const handleContainerFocus = useCallback(() => {
-      if (readOnly) return;
-      hiddenPMRef.current?.focus();
-      setIsFocused(true);
-    }, [readOnly]);
+    const handleContainerFocus = useCallback(
+      (e: React.FocusEvent) => {
+        if (readOnly) return;
+        // Don't redirect focus away from comment panel inputs/textareas
+        if (
+          (e.target as HTMLElement).closest('.comment-margin-panel') ||
+          (e.target as HTMLElement).closest('.docx-unified-sidebar')
+        )
+          return;
+        hiddenPMRef.current?.focus();
+        setIsFocused(true);
+      },
+      [readOnly]
+    );
 
     /**
      * Handle blur from container.
@@ -4080,14 +4089,21 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
     /**
      * Handle mousedown on container (outside pages).
      */
-    const handleContainerMouseDown = useCallback(() => {
-      if (readOnly) return;
-      // Focus hidden PM if clicking outside pages area
-      if (!hiddenPMRef.current?.isFocused()) {
-        hiddenPMRef.current?.focus();
-        setIsFocused(true);
-      }
-    }, [readOnly]);
+    const handleContainerMouseDown = useCallback(
+      (e: React.MouseEvent) => {
+        if (readOnly) return;
+        // Don't steal focus from comment panel inputs/textareas
+        const target = e.target as HTMLElement;
+        if (target.closest('.comment-margin-panel') || target.closest('.docx-unified-sidebar'))
+          return;
+        // Focus hidden PM if clicking outside pages area
+        if (!hiddenPMRef.current?.isFocused()) {
+          hiddenPMRef.current?.focus();
+          setIsFocused(true);
+        }
+      },
+      [readOnly]
+    );
 
     // =========================================================================
     // Initial Layout
