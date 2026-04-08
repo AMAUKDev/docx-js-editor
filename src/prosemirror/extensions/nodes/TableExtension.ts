@@ -19,9 +19,6 @@ import {
   columnResizing,
   tableEditing,
   deleteRow as pmDeleteRow,
-  addColumnBefore as pmAddColumnBefore,
-  addColumnAfter as pmAddColumnAfter,
-  deleteColumn as pmDeleteColumn,
   mergeCells as pmMergeCells,
   splitCell as pmSplitCell,
   CellSelection,
@@ -705,6 +702,218 @@ export const TablePluginExtension = createExtension({
           dispatch(tr);
         }
         return true;
+      };
+    }
+
+    /**
+     * Insert a visible column at a grid position, splitting spanning cells
+     * and halving the width of the column at the insertion point so the
+     * total table width stays constant.
+     */
+    function insertColumnAt(
+      table: PMNode,
+      tablePos: number,
+      insertGridCol: number,
+      state: EditorState,
+      dispatch?: (tr: Transaction) => void
+    ): boolean {
+      // Split the column-width entry at insertGridCol into two halves
+      const colWidths = ((table.attrs.columnWidths as number[]) || []).slice();
+      const clampedCol = Math.min(insertGridCol, colWidths.length - 1);
+      const origWidth = colWidths[clampedCol] || 1440;
+      const halfA = Math.floor(origWidth / 2);
+      const halfB = origWidth - halfA;
+      colWidths.splice(clampedCol, 1, halfA, halfB);
+
+      const newRows: PMNode[] = [];
+
+      table.forEach((rowNode) => {
+        const newCells: PMNode[] = [];
+        let gridPos = 0;
+
+        rowNode.forEach((cell) => {
+          const colspan = (cell.attrs.colspan as number) || 1;
+          const cellEnd = gridPos + colspan;
+          const nodeType =
+            cell.type.name === 'tableHeader' ? schema.nodes.tableHeader : schema.nodes.tableCell;
+
+          if (gridPos <= insertGridCol && cellEnd > insertGridCol) {
+            const leftSpan = insertGridCol - gridPos;
+
+            if (leftSpan > 0) {
+              // Left portion keeps original content
+              newCells.push(nodeType.create({ ...cell.attrs, colspan: leftSpan }, cell.content));
+              // New empty cell
+              newCells.push(
+                nodeType.create(
+                  {
+                    colspan: 1,
+                    rowspan: (cell.attrs.rowspan as number) || 1,
+                    width: halfB,
+                    widthType: 'dxa',
+                    borders: cell.attrs.borders,
+                  },
+                  schema.nodes.paragraph.create()
+                )
+              );
+              const remaining = cellEnd - insertGridCol - 1;
+              if (remaining > 0) {
+                newCells.push(
+                  nodeType.create(
+                    { ...cell.attrs, colspan: remaining },
+                    schema.nodes.paragraph.create()
+                  )
+                );
+              }
+            } else {
+              // Cell starts right at the insertion point — add new cell before it
+              newCells.push(
+                nodeType.create(
+                  {
+                    colspan: 1,
+                    rowspan: (cell.attrs.rowspan as number) || 1,
+                    width: halfA,
+                    widthType: 'dxa',
+                    borders: cell.attrs.borders,
+                  },
+                  schema.nodes.paragraph.create()
+                )
+              );
+              newCells.push(cell);
+            }
+          } else {
+            newCells.push(cell);
+          }
+          gridPos = cellEnd;
+        });
+
+        newRows.push(schema.nodes.tableRow.create(rowNode.attrs, newCells));
+      });
+
+      const newTable = schema.nodes.table.create(
+        { ...table.attrs, columnWidths: colWidths },
+        newRows
+      );
+
+      if (dispatch) {
+        const tr = state.tr;
+        tr.setMeta('allowLockedEdit', true);
+        tr.replaceWith(tablePos, tablePos + table.nodeSize, newTable);
+        dispatch(tr);
+      }
+      return true;
+    }
+
+    /**
+     * Delete the grid column at the given index.  For cells that span the column
+     * their colspan is reduced by 1; for cells that occupy only that column they
+     * are removed.  The matching columnWidths entry is removed and its width is
+     * added to the adjacent column so the table doesn't shrink.
+     */
+    function deleteColumnAt(
+      table: PMNode,
+      tablePos: number,
+      deleteGridCol: number,
+      state: EditorState,
+      dispatch?: (tr: Transaction) => void
+    ): boolean {
+      // Compute grid width
+      let gridWidth = 0;
+      const firstRow = table.child(0);
+      firstRow.forEach((c) => {
+        gridWidth += (c.attrs.colspan as number) || 1;
+      });
+      if (gridWidth <= 1) return false; // don't delete last column
+
+      // Update columnWidths — absorb deleted width into neighbour
+      const colWidths = ((table.attrs.columnWidths as number[]) || []).slice();
+      if (colWidths.length > deleteGridCol) {
+        const removedWidth = colWidths[deleteGridCol] || 0;
+        colWidths.splice(deleteGridCol, 1);
+        // Give width to the left neighbour, or right if deleting col 0
+        const neighbour = deleteGridCol > 0 ? deleteGridCol - 1 : 0;
+        if (colWidths.length > neighbour) {
+          colWidths[neighbour] = (colWidths[neighbour] || 0) + removedWidth;
+        }
+      }
+
+      const newRows: PMNode[] = [];
+      table.forEach((rowNode) => {
+        const newCells: PMNode[] = [];
+        let gridPos = 0;
+
+        rowNode.forEach((cell) => {
+          const colspan = (cell.attrs.colspan as number) || 1;
+          const cellEnd = gridPos + colspan;
+          const nodeType =
+            cell.type.name === 'tableHeader' ? schema.nodes.tableHeader : schema.nodes.tableCell;
+
+          if (deleteGridCol >= gridPos && deleteGridCol < cellEnd) {
+            if (colspan > 1) {
+              // Spanning cell — shrink by 1
+              newCells.push(nodeType.create({ ...cell.attrs, colspan: colspan - 1 }, cell.content));
+            }
+            // colspan === 1 → skip (delete this cell)
+          } else {
+            newCells.push(cell);
+          }
+          gridPos = cellEnd;
+        });
+
+        newRows.push(schema.nodes.tableRow.create(rowNode.attrs, newCells));
+      });
+
+      const newTable = schema.nodes.table.create(
+        { ...table.attrs, columnWidths: colWidths },
+        newRows
+      );
+
+      if (dispatch) {
+        const tr = state.tr;
+        tr.setMeta('allowLockedEdit', true);
+        tr.replaceWith(tablePos, tablePos + table.nodeSize, newTable);
+        dispatch(tr);
+      }
+      return true;
+    }
+
+    function addColumnLeft(): Command {
+      return (state, dispatch) => {
+        const info = findCellInfo(state);
+        if (!info) return false;
+        const { $from } = state.selection;
+        const table = $from.node(info.tableDepth);
+        const tablePos = $from.before(info.tableDepth);
+
+        // Find cursor cell's grid column (left edge)
+        const row = $from.node(info.rowDepth);
+        const cellIndex = $from.index(info.rowDepth);
+        let cursorGridCol = 0;
+        for (let i = 0; i < cellIndex; i++) {
+          cursorGridCol += (row.child(i).attrs.colspan as number) || 1;
+        }
+
+        return insertColumnAt(table, tablePos, cursorGridCol, state, dispatch);
+      };
+    }
+
+    function addColumnRight(): Command {
+      return (state, dispatch) => {
+        const info = findCellInfo(state);
+        if (!info) return false;
+        const { $from } = state.selection;
+        const table = $from.node(info.tableDepth);
+        const tablePos = $from.before(info.tableDepth);
+
+        // Find cursor cell's right edge grid column
+        const row = $from.node(info.rowDepth);
+        const cellIndex = $from.index(info.rowDepth);
+        let cursorGridCol = 0;
+        for (let i = 0; i <= cellIndex; i++) {
+          cursorGridCol += (row.child(i).attrs.colspan as number) || 1;
+        }
+
+        return insertColumnAt(table, tablePos, cursorGridCol, state, dispatch);
       };
     }
 
@@ -1892,9 +2101,22 @@ export const TablePluginExtension = createExtension({
         addRowAbove: () => addRowAbove(),
         addRowBelow: () => addRowBelow(),
         deleteRow: () => pmDeleteRow,
-        addColumnLeft: () => pmAddColumnBefore,
-        addColumnRight: () => pmAddColumnAfter,
-        deleteColumn: () => pmDeleteColumn,
+        addColumnLeft: () => addColumnLeft(),
+        addColumnRight: () => addColumnRight(),
+        deleteColumn: () => (state: EditorState, dispatch?: (tr: Transaction) => void) => {
+          const info = findCellInfo(state);
+          if (!info) return false;
+          const { $from } = state.selection;
+          const table = $from.node(info.tableDepth);
+          const tablePos = $from.before(info.tableDepth);
+          const row = $from.node(info.rowDepth);
+          const cellIndex = $from.index(info.rowDepth);
+          let gridCol = 0;
+          for (let i = 0; i < cellIndex; i++) {
+            gridCol += (row.child(i).attrs.colspan as number) || 1;
+          }
+          return deleteColumnAt(table, tablePos, gridCol, state, dispatch);
+        },
         deleteTable: () => deleteTable,
         selectTable: () => selectTable,
         selectRow: () => selectRow,
