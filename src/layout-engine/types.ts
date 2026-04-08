@@ -197,6 +197,7 @@ export type BorderStyle = {
   style?: string;
   width?: number; // in pixels
   color?: string; // CSS color
+  space?: number; // spacing from text in pixels (from w:space, converted from pt)
 };
 
 /**
@@ -208,6 +209,8 @@ export type ParagraphBorders = {
   left?: BorderStyle;
   right?: BorderStyle;
   between?: BorderStyle;
+  /** Vertical bar border on the left side (ECMA-376 §17.3.1.4). */
+  bar?: BorderStyle;
 };
 
 /**

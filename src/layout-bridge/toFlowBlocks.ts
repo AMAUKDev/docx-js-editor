@@ -14,6 +14,7 @@ import type {
   TableCell,
   CellBorders,
   CellBorderSpec,
+  BorderStyle,
   ImageBlock,
   PageBreakBlock,
   Run,
@@ -35,6 +36,7 @@ import type {
 import type { Theme } from '../types/document';
 import type { NumberingMap } from '../docx/numberingParser';
 import { resolveColor } from '../utils/colorResolver';
+import { pointsToPixels } from '../utils/units';
 
 /**
  * Options for the conversion.
@@ -901,6 +903,35 @@ const OOXML_TO_CSS_BORDER: Record<string, string> = {
   outset: 'outset',
   inset: 'inset',
 };
+
+/**
+ * Convert an OOXML BorderSpec to a layout-engine BorderStyle.
+ * Shared by paragraph borders, cell borders, and header/footer borders.
+ */
+export function convertBorderSpecToLayout(
+  border: {
+    style?: string;
+    size?: number;
+    space?: number;
+    color?: { rgb?: string; themeColor?: string; themeTint?: string; themeShade?: string };
+  },
+  theme?: Theme | null
+): BorderStyle | undefined {
+  if (!border || !border.style || border.style === 'none' || border.style === 'nil') {
+    return undefined;
+  }
+  const result: BorderStyle = {
+    style: OOXML_TO_CSS_BORDER[border.style] || 'solid',
+    width: borderWidthToPixels(border.size ?? 0),
+    color: border.color
+      ? resolveColor(border.color as Parameters<typeof resolveColor>[0], theme)
+      : '#000000',
+  };
+  if (border.space !== undefined) {
+    result.space = pointsToPixels(border.space);
+  }
+  return result;
+}
 
 /**
  * Extract cell borders from ProseMirror attributes.
