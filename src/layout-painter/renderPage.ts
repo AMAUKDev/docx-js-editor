@@ -996,6 +996,7 @@ export function renderPage(
   };
 
   let prevParagraphBorders: ParagraphBorders | undefined;
+  const renderedInlineImageKeysByBlock = new Map<string, Set<string>>();
 
   for (let i = 0; i < page.fragments.length; i++) {
     const fragment = page.fragments[i];
@@ -1017,6 +1018,12 @@ export function renderPage(
         const paragraphBlock = blockData.block as ParagraphBlock;
         const nextBorders =
           i + 1 < page.fragments.length ? getParaBorders(page.fragments[i + 1]) : undefined;
+        const blockKey = String(fragment.blockId);
+        let renderedInlineImageKeys = renderedInlineImageKeysByBlock.get(blockKey);
+        if (!renderedInlineImageKeys) {
+          renderedInlineImageKeys = new Set<string>();
+          renderedInlineImageKeysByBlock.set(blockKey, renderedInlineImageKeys);
+        }
 
         fragmentEl = renderParagraphFragment(
           fragment as ParagraphFragment,
@@ -1029,6 +1036,7 @@ export function renderPage(
             fragmentContentY: fragmentContentY,
             prevBorders: prevParagraphBorders,
             nextBorders,
+            renderedInlineImageKeys,
           }
         );
         prevParagraphBorders = paragraphBlock.attrs?.borders;

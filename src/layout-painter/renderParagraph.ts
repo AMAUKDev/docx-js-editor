@@ -77,6 +77,8 @@ export interface RenderParagraphOptions {
   prevBorders?: ParagraphBorders;
   /** Borders from the next adjacent paragraph (for border grouping) */
   nextBorders?: ParagraphBorders;
+  /** Inline image runs already rendered for this paragraph block */
+  renderedInlineImageKeys?: Set<string>;
 }
 
 /**
@@ -548,6 +550,24 @@ interface RenderLineOptions {
   firstLineIndentPx?: number;
   /** Line-specific floating image margins (calculated per-line based on Y overlap) */
   floatingMargins?: { leftMargin: number; rightMargin: number };
+  /** Track inline image runs already rendered in this paragraph fragment to prevent duplicates */
+  renderedInlineImageKeys?: Set<string>;
+}
+
+/**
+ * Build a stable key for an inline image run.
+ * PM positions are preferred because they uniquely identify the source node.
+ */
+function getInlineImageRunKey(run: ImageRun): string {
+  return [
+    run.pmStart ?? 'no-start',
+    run.pmEnd ?? 'no-end',
+    run.src,
+    run.width,
+    run.height,
+    run.displayMode ?? 'inline',
+    run.wrapType ?? 'none',
+  ].join('|');
 }
 
 /**
@@ -756,6 +776,11 @@ export function renderLine(
       if (isFloating) {
         continue;
       }
+      const imageKey = getInlineImageRunKey(run);
+      if (options?.renderedInlineImageKeys?.has(imageKey)) {
+        continue;
+      }
+      options?.renderedInlineImageKeys?.add(imageKey);
       // Inline or block image - render in the text flow
       const runEl = renderImageRun(run, doc);
       lineEl.appendChild(runEl);
@@ -1038,6 +1063,7 @@ export function renderParagraphFragment(
 
   // Render each line with per-line floating margin calculation
   let cumulativeLineY = 0; // Track Y position within the fragment
+  const renderedInlineImageKeys = options.renderedInlineImageKeys ?? new Set<string>();
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -1075,6 +1101,7 @@ export function renderParagraphFragment(
       firstLineIndentPx: isFirstLine ? firstLineIndentPx : 0,
       context,
       floatingMargins: { leftMargin: lineLeftOffset, rightMargin: lineRightOffset },
+      renderedInlineImageKeys,
     });
 
     // Apply left offset from floating images (lines start after the floating image)
