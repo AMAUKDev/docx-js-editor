@@ -207,6 +207,21 @@ export interface PagedEditorProps {
   className?: string;
   /** Custom styles. */
   style?: CSSProperties;
+  /** Whether comments sidebar is open (shifts document left). */
+  commentsSidebarOpen?: boolean;
+  /** Sidebar overlay rendered inside the scroll container (scrolls with document). */
+  sidebarOverlay?: React.ReactNode;
+  /** Ref callback for the scroll container element. */
+  scrollContainerRef?: React.Ref<HTMLDivElement>;
+  /** Callback when a hyperlink is clicked (for showing popup). */
+  onHyperlinkClick?: (data: {
+    href: string;
+    displayText: string;
+    tooltip?: string;
+    anchorRect: DOMRect;
+  }) => void;
+  /** Callback when user right-clicks on the pages (for context menu). */
+  onContextMenu?: (data: { x: number; y: number; hasSelection: boolean }) => void;
 }
 
 export interface PagedEditorRef {
@@ -1860,6 +1875,11 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
       deletedCommentIds,
       className,
       style,
+      commentsSidebarOpen: _commentsSidebarOpen = false,
+      sidebarOverlay: _sidebarOverlay,
+      scrollContainerRef: _scrollContainerRefProp,
+      onHyperlinkClick: _onHyperlinkClick,
+      onContextMenu,
     } = props;
 
     // Refs
@@ -2861,7 +2881,7 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
     /**
      * Handle right-click (contextmenu) on pages — detect context tag nodes.
      */
-    const handlePagesContextMenu = useCallback(
+    const handleContextTagContextMenu = useCallback(
       (e: React.MouseEvent) => {
         if (!onContextTagRightClick || !hiddenPMRef.current) return;
 
@@ -2989,6 +3009,45 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
         });
       },
       [getPositionFromMouse, onContextTagRightClick, selectedImageInfo]
+    );
+
+    /**
+     * Handle right-click on pages — set/preserve selection and show context menu.
+     * Also delegates to context tag handler if applicable.
+     */
+    const handlePagesContextMenu = useCallback(
+      (e: React.MouseEvent) => {
+        // First try context tag right-click handler
+        handleContextTagContextMenu(e);
+        if (e.defaultPrevented) return; // context tag handled it
+
+        if (!onContextMenu) return; // No handler, let browser default
+
+        e.preventDefault();
+
+        const view = hiddenPMRef.current?.getView();
+        if (!view) return;
+
+        const { from, to } = view.state.selection;
+        const pmPos = getPositionFromMouse(e.clientX, e.clientY);
+
+        // If the right-click is within the existing selection, keep it
+        // Otherwise, move cursor to the right-click position
+        if (pmPos !== null && (from === to || pmPos < from || pmPos > to)) {
+          hiddenPMRef.current?.setSelection(pmPos);
+          hiddenPMRef.current?.focus();
+          setIsFocused(true);
+        }
+
+        // Read updated selection state after potential change
+        const updatedState = hiddenPMRef.current?.getState();
+        const hasSelection = updatedState
+          ? updatedState.selection.from !== updatedState.selection.to
+          : false;
+
+        onContextMenu({ x: e.clientX, y: e.clientY, hasSelection });
+      },
+      [onContextMenu, getPositionFromMouse, handleContextTagContextMenu]
     );
 
     /**
@@ -4269,8 +4328,8 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
             className={`paged-editor__pages${hfEditMode ? ` paged-editor--hf-editing paged-editor--editing-${hfEditMode}` : ''}`}
             style={pagesContainerStyles}
             onMouseDown={handlePagesMouseDown}
-            onContextMenu={handlePagesContextMenu}
             onClick={handlePagesClick}
+            onContextMenu={handlePagesContextMenu}
             aria-hidden="true" // Visual only, PM provides semantic content
           />
 
