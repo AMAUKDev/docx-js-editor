@@ -4456,6 +4456,29 @@ body { background: white; }
                         const styleSpaceAfter = resolved?.paragraphFormatting?.spaceAfter || 0;
                         const styleLineSpacing = resolved?.paragraphFormatting?.lineSpacing || 240;
 
+                        // Read paragraph-level indentation from the PM node at cursor
+                        let indentLeft: number | undefined;
+                        let indentRight: number | undefined;
+                        let indentFirstLine: number | undefined;
+                        let numPr: { numId: number; ilvl: number } | undefined;
+                        const view = pagedEditorRef.current?.getView();
+                        if (view) {
+                          const { $from } = view.state.selection;
+                          for (let d = $from.depth; d > 0; d--) {
+                            const node = $from.node(d);
+                            if (node.type.name === 'paragraph') {
+                              const a = node.attrs;
+                              indentLeft = a.indentLeft ?? undefined;
+                              indentRight = a.indentRight ?? undefined;
+                              indentFirstLine = a.indentFirstLine ?? undefined;
+                              if (a.numPr?.numId != null) {
+                                numPr = { numId: a.numPr.numId, ilvl: a.numPr.ilvl ?? 0 };
+                              }
+                              break;
+                            }
+                          }
+                        }
+
                         const formData = {
                           fontFamily: sf?.fontFamily || styleFont,
                           fontSize: sf?.fontSize || styleSize,
@@ -4473,6 +4496,10 @@ body { background: white; }
                           lineSpacing: sf?.lineSpacing || styleLineSpacing,
                           spaceBefore: styleSpaceBefore,
                           spaceAfter: styleSpaceAfter,
+                          indentLeft,
+                          indentRight,
+                          indentFirstLine,
+                          numPr,
                         };
 
                         // Apply to style definition
@@ -4494,6 +4521,10 @@ body { background: white; }
                           spaceBefore: formData.spaceBefore,
                           spaceAfter: formData.spaceAfter,
                           lineSpacing: formData.lineSpacing,
+                          indentLeft: formData.indentLeft,
+                          indentRight: formData.indentRight,
+                          indentFirstLine: formData.indentFirstLine,
+                          numPr: formData.numPr || undefined,
                         };
                         existing._dirty = true;
 
