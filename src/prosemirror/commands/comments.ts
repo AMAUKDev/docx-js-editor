@@ -115,21 +115,93 @@ export interface ChangeRange {
   type: 'insertion' | 'deletion';
 }
 
-/** Find the next tracked change after startPos (wraps around). */
+/**
+ * Expand a seed range to cover all contiguous text nodes within the same
+ * parent that carry the same tracked-change mark type and revisionId.
+ * This ensures Accept/Reject operates on the full run, not one text node.
+ */
+function expandChangeRange(state: EditorState, seed: ChangeRange): ChangeRange {
+  const markType =
+    seed.type === 'insertion' ? state.schema.marks.insertion : state.schema.marks.deletion;
+  if (!markType) return seed;
+
+  // Find the revisionId at the seed position
+  let revisionId: number | null = null;
+  state.doc.nodesBetween(seed.from, Math.min(seed.to, state.doc.content.size), (node) => {
+    if (!node.isText || revisionId !== null) return;
+    for (const m of node.marks) {
+      if (m.type === markType) {
+        revisionId = m.attrs.revisionId as number;
+        return;
+      }
+    }
+  });
+
+  // Walk the parent's children to find the contiguous span
+  const $pos = state.doc.resolve(seed.from);
+  const parent = $pos.parent;
+  const parentStart = $pos.start($pos.depth);
+
+  let from = seed.from;
+  let to = seed.to;
+
+  // Scan backwards — find earliest contiguous node with same mark+revisionId
+  let prevEnd = seed.from;
+  parent.forEach((child, offset) => {
+    const childPos = parentStart + offset;
+    const childEnd = childPos + child.nodeSize;
+    if (childEnd <= seed.from) {
+      if (
+        child.isText &&
+        child.marks.some(
+          (m) => m.type === markType && (revisionId == null || m.attrs.revisionId === revisionId)
+        )
+      ) {
+        // Contiguous only if this child ends where the next tracked node starts
+        if (childEnd === prevEnd || childEnd >= from) {
+          from = childPos;
+        }
+        prevEnd = childPos;
+      } else {
+        // Gap — reset
+        from = seed.from;
+        prevEnd = seed.from;
+      }
+    }
+  });
+
+  // Scan forwards — find latest contiguous node with same mark+revisionId
+  parent.forEach((child, offset) => {
+    const childPos = parentStart + offset;
+    if (childPos < seed.to) return;
+    if (
+      child.isText &&
+      child.marks.some(
+        (m) => m.type === markType && (revisionId == null || m.attrs.revisionId === revisionId)
+      )
+    ) {
+      to = childPos + child.nodeSize;
+    }
+  });
+
+  return { from, to, type: seed.type };
+}
+
+/** Find the next tracked change after startPos (wraps around). Returns the full contiguous run. */
 export function findNextChange(state: EditorState, startPos: number): ChangeRange | null {
   const insertionType = state.schema.marks.insertion;
   const deletionType = state.schema.marks.deletion;
   if (!insertionType && !deletionType) return null;
 
-  let result: ChangeRange | null = null;
+  let seed: ChangeRange | null = null;
 
   state.doc.descendants((node, pos) => {
-    if (result) return false;
+    if (seed) return false;
     if (!node.isText) return;
     if (pos + node.nodeSize <= startPos) return;
     for (const mark of node.marks) {
       if (mark.type === insertionType || mark.type === deletionType) {
-        result = {
+        seed = {
           from: Math.max(pos, startPos),
           to: pos + node.nodeSize,
           type: mark.type === insertionType ? 'insertion' : 'deletion',
@@ -139,24 +211,24 @@ export function findNextChange(state: EditorState, startPos: number): ChangeRang
     }
   });
 
-  if (!result && startPos > 0) return findNextChange(state, 0);
-  return result;
+  if (!seed && startPos > 0) return findNextChange(state, 0);
+  return seed ? expandChangeRange(state, seed) : null;
 }
 
-/** Find the previous tracked change before startPos (wraps around). */
+/** Find the previous tracked change before startPos (wraps around). Returns the full contiguous run. */
 export function findPreviousChange(state: EditorState, startPos: number): ChangeRange | null {
   const insertionType = state.schema.marks.insertion;
   const deletionType = state.schema.marks.deletion;
   if (!insertionType && !deletionType) return null;
 
-  let result: ChangeRange | null = null;
+  let seed: ChangeRange | null = null;
 
   state.doc.descendants((node, pos) => {
     if (!node.isText) return;
     if (pos >= startPos) return false;
     for (const mark of node.marks) {
       if (mark.type === insertionType || mark.type === deletionType) {
-        result = {
+        seed = {
           from: pos,
           to: pos + node.nodeSize,
           type: mark.type === insertionType ? 'insertion' : 'deletion',
@@ -165,9 +237,9 @@ export function findPreviousChange(state: EditorState, startPos: number): Change
     }
   });
 
-  if (!result && startPos < state.doc.content.size)
+  if (!seed && startPos < state.doc.content.size)
     return findPreviousChange(state, state.doc.content.size);
-  return result;
+  return seed ? expandChangeRange(state, seed) : null;
 }
 
 /** Count all tracked changes in the document. */
