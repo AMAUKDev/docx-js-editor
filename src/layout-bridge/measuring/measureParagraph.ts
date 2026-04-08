@@ -23,6 +23,7 @@ import {
   measureRun,
   getFontMetrics,
   ptToPx,
+  twipsToPx,
   type FontStyle,
   type FontMetrics,
 } from './measureContainer';
@@ -37,6 +38,51 @@ const DEFAULT_LINE_HEIGHT_MULTIPLIER = 1.15; // Word single spacing
 // Floating-point tolerance for line breaking (0.5px)
 // Prevents premature line breaks due to measurement rounding
 const WIDTH_TOLERANCE = 0.5;
+
+/**
+ * Compute the width a tab character should advance to reach the next tab stop.
+ */
+function computeTabWidth(
+  currentPos: number,
+  tabStops: { pos: number; val: string }[] | undefined
+): number {
+  if (tabStops && tabStops.length > 0) {
+    for (const stop of tabStops) {
+      const stopPx = twipsToPx(stop.pos);
+      if (stopPx > currentPos + 0.5) {
+        return Math.max(1, stopPx - currentPos);
+      }
+    }
+  }
+  // No matching stop — advance to next default interval
+  const remainder = currentPos % DEFAULT_TAB_WIDTH;
+  return Math.max(1, remainder < 0.5 ? DEFAULT_TAB_WIDTH : DEFAULT_TAB_WIDTH - remainder);
+}
+
+/**
+ * Find the longest prefix of `text` that fits within `maxWidth` pixels.
+ * Returns the number of characters that fit (at least 1 if `forceMin` is true).
+ */
+function findMaxFittingLength(
+  text: string,
+  style: FontStyle,
+  maxWidth: number,
+  forceMin: boolean = false
+): number {
+  let lo = 1;
+  let hi = text.length;
+  let best = 0;
+  while (lo <= hi) {
+    const mid = (lo + hi) >>> 1;
+    if (measureTextWidth(text.slice(0, mid), style) <= maxWidth) {
+      best = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return forceMin && best === 0 ? 1 : best;
+}
 
 /**
  * Floating image exclusion zone - describes an area where text cannot flow.
@@ -129,7 +175,7 @@ function calculateTypographyMetrics(
   //   line=240 → 1.0x (single), line=276 → 1.15x (Word default), line=480 → 2.0x
   //
   // The multiplier base is the font's "single line" height per OOXML spec (§17.3.1.33):
-  //   singleLine = (usWinAscent + usWinDescent + externalLeading) / unitsPerEm × fontSizePx
+  //   singleLine = (usWinAscent + usWinDescent) / unitsPerEm × fontSizePx
   // This ratio is font-specific (1.07–1.27 for common fonts). We use a hardcoded
   // lookup table of OS/2 metrics since Canvas fontBoundingBox is unreliable
   // cross-platform (Mac uses hhea, not usWin) and Google Font substitutes
@@ -488,11 +534,14 @@ export function measureParagraph(
     }
 
     if (isTabRun(run)) {
-      // Handle tab run
+      // Handle tab run — compute width from paragraph tab stops
       const style = runToFontStyle(run);
       updateMaxFont(style);
 
-      const tabWidth = run.width ?? DEFAULT_TAB_WIDTH;
+      // Compute tab width: advance to the next tab stop position.
+      const tabStops = attrs?.tabs;
+      const currentPos = currentLine.width + (currentLine.leftOffset ?? 0);
+      const tabWidth = computeTabWidth(currentPos, tabStops);
 
       if (currentLine.width + tabWidth > currentLine.availableWidth + WIDTH_TOLERANCE) {
         // Tab doesn't fit, start new line
@@ -624,34 +673,34 @@ export function measureParagraph(
         const wordWidth = measureTextWidth(word, style);
 
         // If the word itself is longer than a line, hard-break by characters.
+        // Use substring measurement (not char-by-char accumulation) to preserve
+        // kerning accuracy. Char-by-char accumulation overestimates width by
+        // ~1-2px per line due to lost kerning, causing extra wraps in narrow cells.
         if (wordWidth > currentLine.availableWidth + WIDTH_TOLERANCE) {
-          // Move to a new line if we already have content.
-          if (currentLine.width > 0) {
-            startNewLine(runIndex, charIndex);
-            updateMaxFont(style);
-          }
-
-          const { charWidths } = measureRun(word, style);
+          // Long word that needs hard-breaking. DON'T start a new line first —
+          // fill the remaining space on the current line with as many characters
+          // as possible. This prevents wasting a full line when a small run
+          // (like "{" at 10pt) precedes a long word (like a variable at 5.5pt).
           let chunkStart = 0;
 
           while (chunkStart < word.length) {
-            let chunkWidth = 0;
-            let chunkEnd = chunkStart;
+            const spaceLeft = currentLine.availableWidth - currentLine.width + WIDTH_TOLERANCE;
+            const remaining = word.slice(chunkStart);
+            let bestEnd = findMaxFittingLength(remaining, style, spaceLeft);
 
-            while (chunkEnd < word.length) {
-              const w = charWidths[chunkEnd] ?? 0;
-              if (chunkWidth + w > currentLine.availableWidth + WIDTH_TOLERANCE) {
-                break;
+            // Nothing fits → start a new line and retry (or force 1 char on empty line)
+            if (bestEnd === 0) {
+              if (currentLine.width > 0) {
+                startNewLine(runIndex, charIndex + chunkStart);
+                updateMaxFont(style);
+                continue;
               }
-              chunkWidth += w;
-              chunkEnd += 1;
+              bestEnd = 1;
             }
 
-            // If a single character doesn't fit (very narrow width), force it.
-            if (chunkEnd === chunkStart) {
-              chunkEnd = Math.min(word.length, chunkStart + 1);
-              chunkWidth = charWidths[chunkStart] ?? 0;
-            }
+            const chunkEnd = chunkStart + bestEnd;
+            const chunk = word.slice(chunkStart, chunkEnd);
+            const chunkWidth = measureTextWidth(chunk, style);
 
             currentLine.width += chunkWidth;
             currentLine.toRun = runIndex;

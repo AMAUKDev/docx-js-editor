@@ -692,23 +692,24 @@ function convertTable(table: Table, styleResolver: StyleResolver | null): PMNode
     table.rows[0]?.cells.reduce((sum, cell) => sum + (cell.formatting?.gridSpan ?? 1), 0) ??
     0;
   const rows = table.rows.map((row, rowIndex) => {
-    const isHeader = rowIndex === 0 && !!look?.firstRow;
+    // Conditional formatting flag: firstRow in tblLook means "apply first-row styling"
+    const isFirstRowStyled = rowIndex === 0 && !!look?.firstRow;
     const isLastRow = rowIndex === totalRows - 1 && !!look?.lastRow;
 
     const rowBandStyle =
-      bandingEnabledH && !isHeader && !isLastRow
+      bandingEnabledH && !isFirstRowStyled && !isLastRow
         ? dataRowIndex % 2 === 0
           ? conditionalStyles.band1Horz
           : conditionalStyles.band2Horz
         : undefined;
-    if (bandingEnabledH && !isHeader && !isLastRow) {
+    if (bandingEnabledH && !isFirstRowStyled && !isLastRow) {
       dataRowIndex++;
     }
 
     return convertTableRow(
       row,
       styleResolver,
-      isHeader,
+      isFirstRowStyled,
       columnWidths,
       totalWidth,
       conditionalStyles,
@@ -764,7 +765,10 @@ function convertTableRow(
   const attrs: TableRowAttrs = {
     height: row.formatting?.height?.value,
     heightRule: row.formatting?.heightRule,
-    isHeader: isHeaderRow || row.formatting?.header,
+    // isHeader controls header row REPETITION on page breaks.
+    // Only w:tblHeader (row.formatting.header) should trigger this — NOT tblLook/firstRow
+    // which is purely a conditional formatting flag (ECMA-376 §17.7.6.1).
+    isHeader: !!row.formatting?.header,
     _originalFormatting: row.formatting || undefined,
   };
 

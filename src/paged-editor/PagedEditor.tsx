@@ -393,8 +393,7 @@ function resolveTableWidthPx(
 
 function measureTableBlock(tableBlock: TableBlock, contentWidth: number): TableMeasure {
   const DEFAULT_CELL_PADDING_X = 7; // Word default: 108 twips ≈ 7px
-  const DEFAULT_CELL_PADDING_Y = 1; // OOXML spec says 0 but Word renders ~1px internal leading
-  const TABLE_MIN_ROW_HEIGHT = 24;
+  const DEFAULT_CELL_PADDING_Y = 0; // OOXML/TableNormal default: top=0, bottom=0
 
   // columnWidths are already in pixels (converted in toFlowBlocks)
   let columnWidths = tableBlock.columnWidths ?? [];
@@ -558,10 +557,13 @@ function measureTableBlock(tableBlock: TableBlock, contentWidth: number): TableM
 
     if (explicitHeight && heightRule === 'exact') {
       row.height = explicitHeight;
-    } else if (explicitHeight && heightRule === 'atLeast') {
+    } else if (explicitHeight) {
+      // Both 'atLeast' and 'auto' (OOXML default) treat the value as minimum height.
+      // ECMA-376 §17.4.81: when hRule is absent or "auto", val is the minimum row height.
       row.height = Math.max(maxHeight, explicitHeight);
     } else {
-      row.height = Math.max(maxHeight, TABLE_MIN_ROW_HEIGHT);
+      // No explicit height — use content height directly.
+      row.height = maxHeight;
     }
   }
 
