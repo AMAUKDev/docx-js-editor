@@ -962,6 +962,42 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     doc.commentsModified = true;
   }, []);
 
+  // Remove comments whose marks no longer exist in the document.
+  // Called (debounced) from handleDocumentChange so orphaned comments left
+  // by Ctrl+A→Delete or similar bulk deletions are cleaned up automatically.
+  const cleanOrphanedCommentsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cleanOrphanedComments = useCallback(() => {
+    const view = pagedEditorRef.current?.getView();
+    if (!view) return;
+    const { doc: pmDoc, schema } = view.state;
+    const commentMarkType = schema.marks.comment;
+    if (!commentMarkType) return;
+
+    // Collect all comment IDs still present as PM marks
+    const liveIds = new Set<number>();
+    pmDoc.descendants((node) => {
+      for (const mark of node.marks) {
+        if (mark.type === commentMarkType) {
+          liveIds.add(mark.attrs.commentId as number);
+        }
+      }
+    });
+
+    // Check the current document's comment list for orphans
+    const currentDoc = historyStateRef.current;
+    const allComments = currentDoc?.package.document?.comments ?? [];
+    for (const c of allComments) {
+      if (c.parentId == null && !liveIds.has(c.id) && !deletedCommentIdsRef.current.has(c.id)) {
+        // Parent comment with no PM mark — mark as deleted (replies pruned during save)
+        deletedCommentIdsRef.current.add(c.id);
+      }
+    }
+    // Also clean addedCommentsRef so newly-added then immediately deleted comments are removed
+    addedCommentsRef.current = addedCommentsRef.current.filter(
+      (c) => c.parentId != null || liveIds.has(c.id)
+    );
+  }, []);
+
   // Keep cross-ref updater plugin refs in sync with latest data
   crossRefNumMapRef.current = history.state?.package.numbering
     ? createNumberingMapFromDefs(history.state.package.numbering)
@@ -1124,6 +1160,15 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     return cleanup;
   }, [onFontsLoadedCallback]);
 
+  // Clean up orphaned-comment debounce timer on unmount
+  useEffect(() => {
+    return () => {
+      if (cleanOrphanedCommentsTimerRef.current) {
+        clearTimeout(cleanOrphanedCommentsTimerRef.current);
+      }
+    };
+  }, []);
+
   // Handle document change
   const handleDocumentChange = useCallback(
     (newDocument: Document) => {
@@ -1140,8 +1185,13 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
           setHeadingInfos(collectHeadings(view.state.doc));
         }
       }
+      // Clean up orphaned comments (debounced — avoid full doc walk on every keystroke)
+      if (cleanOrphanedCommentsTimerRef.current) {
+        clearTimeout(cleanOrphanedCommentsTimerRef.current);
+      }
+      cleanOrphanedCommentsTimerRef.current = setTimeout(cleanOrphanedComments, 300);
     },
-    [onChange, history]
+    [onChange, history, cleanOrphanedComments]
   );
 
   // Handle selection changes from ProseMirror
