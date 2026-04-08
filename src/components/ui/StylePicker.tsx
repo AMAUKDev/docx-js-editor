@@ -15,6 +15,7 @@ import type { NumberingMap } from '../../docx/numberingParser';
 import { formatNumberedMarker } from '../../layout-bridge/toFlowBlocks';
 import { resolveColor } from '../../utils/colorResolver';
 import { resolveThemeFontRef } from '../../docx/themeParser';
+import { MaterialSymbol } from './Icons';
 
 // ============================================================================
 // TYPES
@@ -61,6 +62,10 @@ export interface StylePickerProps {
   onModifyStyle?: (styleId: string) => void;
   /** Called when user clicks "Create New Style..." */
   onCreateStyle?: () => void;
+  /** When true, text is selected in the editor — shows the "update from selection" button */
+  hasSelection?: boolean;
+  /** Called when user clicks the "update from selection" button for a style */
+  onUpdateStyleFromSelection?: (styleId: string) => void;
 }
 
 // ============================================================================
@@ -176,6 +181,8 @@ export function StylePicker({
   canModifyStyles = false,
   onModifyStyle,
   onCreateStyle,
+  hasSelection = false,
+  onUpdateStyleFromSelection,
 }: StylePickerProps) {
   // Convert document styles to options with visual info
   const styleOptions = React.useMemo(() => {
@@ -412,6 +419,22 @@ export function StylePicker({
                       >
                         {style.name}
                       </span>
+                      {hasSelection && onUpdateStyleFromSelection && (
+                        <button
+                          data-testid="style-update-from-selection-btn"
+                          data-style-id={style.styleId}
+                          className="flex-shrink-0 p-1 rounded hover:bg-blue-100 text-blue-400 hover:text-blue-700"
+                          style={{ fontSize: '13px', lineHeight: 1 }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setCustomOpen(false);
+                            onUpdateStyleFromSelection(style.styleId);
+                          }}
+                          title={`Update style "${style.name}" from current selection`}
+                        >
+                          <MaterialSymbol name="format_paint" size={14} />
+                        </button>
+                      )}
                       <button
                         data-testid="style-modify-btn"
                         data-style-id={style.styleId}
@@ -543,6 +566,23 @@ export function StylePicker({
                   <span style={getStylePreviewCSS(style)} className="flex-1 truncate">
                     {style.name}
                   </span>
+                  {/* Update from selection button */}
+                  {hasSelection && onUpdateStyleFromSelection && (
+                    <button
+                      data-testid="style-update-from-selection-btn"
+                      data-style-id={style.styleId}
+                      className="flex-shrink-0 p-1 rounded hover:bg-blue-100 text-blue-400 hover:text-blue-700"
+                      style={{ fontSize: '13px', lineHeight: 1 }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setCustomOpen(false);
+                        onUpdateStyleFromSelection(style.styleId);
+                      }}
+                      title={`Update style "${style.name}" from current selection`}
+                    >
+                      <MaterialSymbol name="format_paint" size={14} />
+                    </button>
+                  )}
                   {/* Gear icon for modify — separate click target */}
                   <button
                     data-testid="style-modify-btn"

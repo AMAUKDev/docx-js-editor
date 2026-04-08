@@ -79,6 +79,8 @@ export interface SelectionFormatting {
   styleId?: string;
   /** Paragraph left indentation in twips */
   indentLeft?: number;
+  /** Whether text is currently selected (from !== to) in the editor */
+  hasSelection?: boolean;
 }
 
 /**
@@ -193,6 +195,8 @@ export interface ToolbarProps {
   onModifyStyle?: (styleId: string) => void;
   /** Called when user clicks "Create New Style..." */
   onCreateStyle?: () => void;
+  /** Called when user clicks "update from selection" for a style */
+  onUpdateStyleFromSelection?: (styleId: string) => void;
   /** Callback when user wants to insert a shape */
   onInsertShape?: (data: {
     shapeType: string;
@@ -385,6 +389,7 @@ export function Toolbar({
   canModifyStyles = false,
   onModifyStyle,
   onCreateStyle,
+  onUpdateStyleFromSelection,
   showFontPicker: showFontPickerProp = true,
   showFontSizePicker: showFontSizePickerProp = true,
   showTextColorPicker: showTextColorPickerProp = true,
@@ -915,6 +920,8 @@ export function Toolbar({
             canModifyStyles={canModifyStyles}
             onModifyStyle={onModifyStyle}
             onCreateStyle={onCreateStyle}
+            hasSelection={currentFormatting.hasSelection}
+            onUpdateStyleFromSelection={onUpdateStyleFromSelection}
           />
         </ToolbarGroup>
       )}

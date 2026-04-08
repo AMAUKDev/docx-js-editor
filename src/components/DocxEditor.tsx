@@ -1639,6 +1639,7 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
         listState,
         styleId: selectionState.styleId ?? undefined,
         indentLeft: paragraphFormatting.indentLeft,
+        hasSelection: view ? !view.state.selection.empty : false,
       };
       setState((prev) => ({
         ...prev,
@@ -4434,6 +4435,74 @@ body { background: white; }
                         setStyleEditorState({ open: true, mode: 'modify', styleId })
                       }
                       onCreateStyle={() => setStyleEditorState({ open: true, mode: 'create' })}
+                      onUpdateStyleFromSelection={(styleId: string) => {
+                        const doc = agentRef.current?.getDocument();
+                        if (!doc?.package?.styles) return;
+                        const styles = doc.package.styles;
+                        const existing = styles.styles.find((s) => s.styleId === styleId);
+                        if (!existing) return;
+
+                        // Build formatting data from current selection
+                        const sf = state.selectionFormatting;
+                        const resolved =
+                          crossRefStyleResolverRef.current?.resolveParagraphStyle(styleId);
+                        const styleFont = resolved?.runFormatting?.fontFamily?.ascii || '';
+                        const styleSize = resolved?.runFormatting?.fontSize || 22;
+                        const styleBold = !!resolved?.runFormatting?.bold;
+                        const styleItalic = !!resolved?.runFormatting?.italic;
+                        const styleColor = resolved?.runFormatting?.color?.rgb || '000000';
+                        const styleAlignment = resolved?.paragraphFormatting?.alignment || 'left';
+                        const styleSpaceBefore = resolved?.paragraphFormatting?.spaceBefore || 0;
+                        const styleSpaceAfter = resolved?.paragraphFormatting?.spaceAfter || 0;
+                        const styleLineSpacing = resolved?.paragraphFormatting?.lineSpacing || 240;
+
+                        const formData = {
+                          fontFamily: sf?.fontFamily || styleFont,
+                          fontSize: sf?.fontSize || styleSize,
+                          bold: sf?.bold != null ? sf.bold : styleBold,
+                          italic: sf?.italic != null ? sf.italic : styleItalic,
+                          underline: !!sf?.underline,
+                          strikethrough: !!sf?.strike,
+                          color: sf?.color?.replace('#', '') || styleColor,
+                          alignment:
+                            ((sf?.alignment || styleAlignment) as
+                              | 'left'
+                              | 'center'
+                              | 'right'
+                              | 'justify') || 'left',
+                          lineSpacing: sf?.lineSpacing || styleLineSpacing,
+                          spaceBefore: styleSpaceBefore,
+                          spaceAfter: styleSpaceAfter,
+                        };
+
+                        // Apply to style definition
+                        existing.rPr = {
+                          ...existing.rPr,
+                          fontFamily: formData.fontFamily
+                            ? { ascii: formData.fontFamily, hAnsi: formData.fontFamily }
+                            : existing.rPr?.fontFamily,
+                          fontSize: formData.fontSize || existing.rPr?.fontSize,
+                          bold: formData.bold || undefined,
+                          italic: formData.italic || undefined,
+                          strike: formData.strikethrough || undefined,
+                          underline: formData.underline ? { style: 'single' } : undefined,
+                          color: formData.color ? { rgb: formData.color } : existing.rPr?.color,
+                        };
+                        existing.pPr = {
+                          ...existing.pPr,
+                          alignment: formData.alignment === 'justify' ? 'both' : formData.alignment,
+                          spaceBefore: formData.spaceBefore,
+                          spaceAfter: formData.spaceAfter,
+                          lineSpacing: formData.lineSpacing,
+                        };
+                        existing._dirty = true;
+
+                        doc.package.stylesDirty = true;
+                        doc.package.styles = { ...styles, styles: [...styles.styles] };
+                        setDocumentStyles(doc.package.styles.styles);
+                        history.push({ ...doc, package: { ...doc.package } });
+                        onChange?.(doc);
+                      }}
                       renderMode={state.renderMode}
                       onToggleRenderMode={() =>
                         setState((prev) => ({
