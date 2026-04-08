@@ -612,8 +612,19 @@ export function refreshAllReferences(
           href: `#${h.bookmarkName}`,
         });
 
-        // Combine link mark with optional override formatting marks
-        const entryMarks = overrideMarks.length > 0 ? [linkMark, ...overrideMarks] : [linkMark];
+        // Resolve per-entry TOC style run formatting (font size, caps, etc.) so the
+        // regenerated entries match the initial DOCX rendering.  The TOC1-9 styles
+        // typically specify a font size (e.g. 14pt for TOC1) and may include allCaps.
+        // Without these marks the layout bridge falls back to DEFAULT_SIZE (11pt),
+        // making refreshed entries appear smaller than on initial load.
+        const tocEntryResolved =
+          overrideResolved ?? styleResolver?.resolveParagraphStyle(tocStyleId);
+        const tocRunMarks: Mark[] = tocEntryResolved?.runFormatting
+          ? textFormattingToMarks(tocEntryResolved.runFormatting, schema as Schema)
+          : overrideMarks;
+
+        // Combine link mark with style run formatting marks
+        const entryMarks = tocRunMarks.length > 0 ? [linkMark, ...tocRunMarks] : [linkMark];
 
         const entryContent: PMNode[] = [];
 
@@ -634,9 +645,8 @@ export function refreshAllReferences(
         }
         entryContent.push(schema.text(String(pageNum), entryMarks));
 
-        // Use override spacing when set, otherwise fall back to per-level TOC style
-        const resolvedStyle = overrideResolved ?? styleResolver?.resolveParagraphStyle(tocStyleId);
-        const pFmt = resolvedStyle?.paragraphFormatting;
+        // Use the already-resolved per-entry style for paragraph spacing
+        const pFmt = tocEntryResolved?.paragraphFormatting;
 
         tocNodes.push(
           schema.node(
