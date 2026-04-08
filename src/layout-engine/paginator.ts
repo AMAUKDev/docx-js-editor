@@ -292,8 +292,10 @@ export function createPaginator(options: PaginatorOptions) {
     pages,
     /** All page states. */
     states,
-    /** Column width in pixels. */
-    columnWidth,
+    /** Column width in pixels (live — updated by updateActiveMargins). */
+    get columnWidth() {
+      return columnWidth;
+    },
     /** Get current state. */
     getCurrentState,
     /** Get available height in current column. */

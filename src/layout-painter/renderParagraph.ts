@@ -1116,13 +1116,15 @@ export function renderParagraphFragment(
     const lineRightOffset = line.rightOffset ?? 0;
 
     // For first line, adjust available width for hanging/firstLine indent
-    // Measurement uses: baseFirstLineWidth = bodyContentWidth - (firstLine - hanging)
-    // So hanging gives MORE width, firstLine gives LESS width
+    // When a list marker is present, the marker is rendered absolutely and text
+    // starts at indentLeft, so the first line has bodyContentWidth (same as body lines).
+    // Without a list marker, hanging indent gives the first line MORE width.
     let lineAvailableWidth = availableWidth;
     if (isFirstLine) {
       const hasHangingIndent = indent?.hanging && indent.hanging > 0;
       const hasFirstLineIndent = indent?.firstLine && indent.firstLine > 0;
-      if (hasHangingIndent && indent?.hanging) {
+      const hasListMarker = !!block.attrs?.listMarker;
+      if (hasHangingIndent && indent?.hanging && !hasListMarker) {
         lineAvailableWidth = availableWidth + indent.hanging;
       } else if (hasFirstLineIndent && indent?.firstLine) {
         lineAvailableWidth = availableWidth - indent.firstLine;
@@ -1196,13 +1198,16 @@ export function renderParagraphFragment(
     // - Text starts at indentLeft
     // - The marker box fills the hanging space
     if (isFirstLine && block.attrs?.listMarker) {
-      // Override padding for list first lines
-      // Marker position = indentLeft - hanging (where first line content starts)
+      // List first line: marker is absolutely positioned in the hanging area,
+      // text starts at indentLeft (same as body lines).
       const markerPos = Math.max(0, indentLeft - (indent?.hanging ?? 0));
-      lineEl.style.paddingLeft = `${markerPos}px`;
+      lineEl.style.paddingLeft = `${indentLeft}px`;
       lineEl.style.textIndent = '0'; // Don't use textIndent for lists
+      lineEl.style.position = 'relative'; // Anchor for absolute marker
 
       const marker = renderListMarker(block.attrs.listMarker, indent, doc);
+      marker.style.position = 'absolute';
+      marker.style.left = `${markerPos}px`;
       lineEl.insertBefore(marker, lineEl.firstChild);
     }
 

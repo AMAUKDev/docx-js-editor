@@ -331,8 +331,14 @@ export function measureParagraph(
   // Calculate base available widths (before floating image adjustment)
   const bodyContentWidth = Math.max(1, maxWidth - indentLeft - indentRight);
   // First line offset: positive = first-line indent (less space), negative = hanging (more space)
-  // Subtracting gives correct width in both cases
-  const baseFirstLineWidth = Math.max(1, bodyContentWidth - firstLineOffset);
+  // When a list marker is present, the marker occupies the hanging area and is rendered
+  // separately (not part of the text runs). So the first line text has bodyContentWidth
+  // available, NOT bodyContentWidth + hanging.
+  const hasListMarker = !!attrs?.listMarker;
+  const effectiveFirstLineOffset = hasListMarker
+    ? Math.max(0, indent?.firstLine ?? 0)
+    : firstLineOffset;
+  const baseFirstLineWidth = Math.max(1, bodyContentWidth - effectiveFirstLineOffset);
 
   // Track cumulative height for floating zone calculations
   let cumulativeHeight = 0;

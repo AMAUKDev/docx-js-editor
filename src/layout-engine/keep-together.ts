@@ -32,12 +32,8 @@ export type KeepNextChain = {
  */
 export function computeKeepNextChains(blocks: FlowBlock[]): Map<number, KeepNextChain> {
   const chains = new Map<number, KeepNextChain>();
-  const processed = new Set<number>();
 
   for (let i = 0; i < blocks.length; i++) {
-    // Skip already-processed blocks (mid-chain members)
-    if (processed.has(i)) continue;
-
     const block = blocks[i];
     // Only paragraphs can have keepNext
     if (block.kind !== 'paragraph') continue;
@@ -46,38 +42,13 @@ export function computeKeepNextChains(blocks: FlowBlock[]): Map<number, KeepNext
     // Skip paragraphs without keepNext
     if (!para.attrs?.keepNext) continue;
 
-    // Found a keepNext paragraph - scan forward to find full chain
+    // Found a keepNext paragraph — create a pair-wise chain (this paragraph
+    // + the immediately following paragraph). Word implements keepNext as a
+    // pair-wise relationship, NOT an extended chain. If headings A, B, C all
+    // have keepNext, Word checks A+B fit, B+C fit, etc. individually — it
+    // does NOT require A+B+C+anchor to fit together on one page.
     const memberIndices: number[] = [i];
-    let endIndex = i;
-
-    for (let j = i + 1; j < blocks.length; j++) {
-      const nextBlock = blocks[j];
-
-      // Breaks terminate the chain
-      if (
-        nextBlock.kind === 'sectionBreak' ||
-        nextBlock.kind === 'pageBreak' ||
-        nextBlock.kind === 'columnBreak'
-      ) {
-        break;
-      }
-
-      // Non-paragraphs terminate the chain
-      if (nextBlock.kind !== 'paragraph') {
-        break;
-      }
-
-      const nextPara = nextBlock as ParagraphBlock;
-      if (nextPara.attrs?.keepNext) {
-        // Continue the chain
-        memberIndices.push(j);
-        endIndex = j;
-        processed.add(j);
-      } else {
-        // Found the anchor - stop here
-        break;
-      }
-    }
+    const endIndex = i;
 
     // Find the anchor (first paragraph after the chain)
     const potentialAnchor = endIndex + 1;
