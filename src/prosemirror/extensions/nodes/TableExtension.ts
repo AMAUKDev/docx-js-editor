@@ -18,8 +18,6 @@ import { Decoration, DecorationSet } from 'prosemirror-view';
 import {
   columnResizing,
   tableEditing,
-  addRowBefore as pmAddRowBefore,
-  addRowAfter as pmAddRowAfter,
   deleteRow as pmDeleteRow,
   addColumnBefore as pmAddColumnBefore,
   addColumnAfter as pmAddColumnAfter,
@@ -642,6 +640,74 @@ export const TablePluginExtension = createExtension({
       };
     }
 
+    /**
+     * Build a new table row whose cells mirror the colspan/rowspan structure of
+     * the source row.  Each new cell is empty (single paragraph) but inherits
+     * the same type (tableCell vs tableHeader), colspan, rowspan, width, and
+     * borders from its counterpart so the table stays visually consistent.
+     *
+     * This replaces the prosemirror-tables default which creates one cell per
+     * grid column (ignoring colspans), which looks wrong for tables with merged
+     * cells loaded from DOCX.
+     */
+    function cloneRowStructure(sourceRow: PMNode): PMNode {
+      const newCells: PMNode[] = [];
+      sourceRow.forEach((cell) => {
+        const { colspan, rowspan, width, widthType, borders, margins } =
+          cell.attrs as TableCellAttrs;
+        const cellAttrs: Record<string, unknown> = {
+          colspan: colspan ?? 1,
+          rowspan: rowspan ?? 1,
+          width: width ?? null,
+          widthType: widthType ?? 'dxa',
+          borders: borders ?? undefined,
+          margins: margins ?? undefined,
+        };
+        const nodeType =
+          cell.type.name === 'tableHeader' ? schema.nodes.tableHeader : schema.nodes.tableCell;
+        newCells.push(nodeType.create(cellAttrs, schema.nodes.paragraph.create()));
+      });
+      const rowAttrs = { height: 360, heightRule: 'atLeast' };
+      return schema.nodes.tableRow.create(rowAttrs, newCells);
+    }
+
+    function addRowAbove(): Command {
+      return (state, dispatch) => {
+        const info = findCellInfo(state);
+        if (!info) return false;
+        const { $from } = state.selection;
+        const sourceRow = $from.node(info.rowDepth);
+        const rowPos = $from.before(info.rowDepth);
+        const newRow = cloneRowStructure(sourceRow);
+        if (dispatch) {
+          const tr = state.tr;
+          tr.setMeta('allowLockedEdit', true);
+          tr.insert(rowPos, newRow);
+          dispatch(tr);
+        }
+        return true;
+      };
+    }
+
+    function addRowBelow(): Command {
+      return (state, dispatch) => {
+        const info = findCellInfo(state);
+        if (!info) return false;
+        const { $from } = state.selection;
+        const sourceRow = $from.node(info.rowDepth);
+        const rowPos = $from.before(info.rowDepth);
+        const rowEndPos = rowPos + sourceRow.nodeSize;
+        const newRow = cloneRowStructure(sourceRow);
+        if (dispatch) {
+          const tr = state.tr;
+          tr.setMeta('allowLockedEdit', true);
+          tr.insert(rowEndPos, newRow);
+          dispatch(tr);
+        }
+        return true;
+      };
+    }
+
     function createTable(
       rows: number,
       cols: number,
@@ -763,9 +829,9 @@ export const TablePluginExtension = createExtension({
       };
     }
 
-    // Row/column add/delete commands are provided by prosemirror-tables library
-    // (pmAddRowBefore, pmAddRowAfter, pmDeleteRow, pmAddColumnBefore, pmAddColumnAfter, pmDeleteColumn)
-    // which correctly handle merged cells via TableMap and use the document's own schema.
+    // Row add commands (addRowAbove/addRowBelow) use custom implementations that clone
+    // the colspan structure of the adjacent row, so merged-cell tables stay consistent.
+    // Column and delete commands still use prosemirror-tables (pmDeleteRow, etc.).
 
     function deleteTable(state: EditorState, dispatch?: (tr: Transaction) => void): boolean {
       const context = getTableContext(state);
@@ -1823,8 +1889,8 @@ export const TablePluginExtension = createExtension({
       },
       commands: {
         insertTable: (rows: number, cols: number) => insertTable(rows, cols),
-        addRowAbove: () => pmAddRowBefore,
-        addRowBelow: () => pmAddRowAfter,
+        addRowAbove: () => addRowAbove(),
+        addRowBelow: () => addRowBelow(),
         deleteRow: () => pmDeleteRow,
         addColumnLeft: () => pmAddColumnBefore,
         addColumnRight: () => pmAddColumnAfter,
