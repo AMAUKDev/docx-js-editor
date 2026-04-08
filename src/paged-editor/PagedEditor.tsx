@@ -1254,6 +1254,102 @@ function convertDocumentRunsToFlowRuns(
   return runs;
 }
 
+type HeaderFooterMetrics = {
+  section: 'header' | 'footer';
+  pageSize: { w: number; h: number };
+  margins: PageMargins;
+};
+
+type PositionedAxis = {
+  relativeTo?: string;
+  posOffset?: number;
+  align?: string;
+  alignment?: string;
+};
+
+function getPositionAlignment(axis: PositionedAxis | undefined): string | undefined {
+  return axis?.align ?? axis?.alignment;
+}
+
+function resolveHeaderFooterVisualTop(
+  run: ImageRun,
+  paragraphY: number,
+  flowHeight: number,
+  metrics: HeaderFooterMetrics
+): number {
+  const flowTop =
+    metrics.section === 'header'
+      ? (metrics.margins.header ?? 48)
+      : metrics.pageSize.h - (metrics.margins.footer ?? 48) - flowHeight;
+  const vertical = run.position?.vertical;
+
+  if (!vertical) {
+    return paragraphY;
+  }
+
+  const align = getPositionAlignment(vertical);
+  const offsetPx = vertical.posOffset !== undefined ? emuToPixels(vertical.posOffset) : undefined;
+
+  if (vertical.relativeTo === 'page') {
+    if (offsetPx !== undefined) return offsetPx - flowTop;
+    if (align === 'top') return -flowTop;
+    if (align === 'bottom') return metrics.pageSize.h - run.height - flowTop;
+    if (align === 'center') return (metrics.pageSize.h - run.height) / 2 - flowTop;
+  }
+
+  if (vertical.relativeTo === 'margin') {
+    const marginTop = metrics.margins.top;
+    const marginHeight = metrics.pageSize.h - metrics.margins.top - metrics.margins.bottom;
+    if (offsetPx !== undefined) return marginTop + offsetPx - flowTop;
+    if (align === 'top') return marginTop - flowTop;
+    if (align === 'bottom') return marginTop + marginHeight - run.height - flowTop;
+    if (align === 'center') return marginTop + (marginHeight - run.height) / 2 - flowTop;
+  }
+
+  if (offsetPx !== undefined) {
+    return paragraphY + offsetPx;
+  }
+
+  return paragraphY;
+}
+
+function calculateHeaderFooterVisualBounds(
+  blocks: FlowBlock[],
+  measures: Measure[],
+  flowHeight: number,
+  metrics: HeaderFooterMetrics
+): { visualTop: number; visualBottom: number } {
+  let visualTop = 0;
+  let visualBottom = flowHeight;
+  let cursorY = 0;
+
+  for (let i = 0; i < blocks.length; i++) {
+    const block = blocks[i];
+    const measure = measures[i];
+    if (block?.kind !== 'paragraph' || measure?.kind !== 'paragraph') {
+      continue;
+    }
+
+    const paragraphBlock = block as ParagraphBlock;
+    const paragraphStartY = cursorY;
+    const paragraphBottomY = paragraphStartY + measure.totalHeight;
+    visualTop = Math.min(visualTop, paragraphStartY);
+    visualBottom = Math.max(visualBottom, paragraphBottomY);
+
+    for (const run of paragraphBlock.runs) {
+      if (run.kind !== 'image' || !run.position) continue;
+      const imageRun = run as ImageRun;
+      const runTop = resolveHeaderFooterVisualTop(imageRun, paragraphStartY, flowHeight, metrics);
+      visualTop = Math.min(visualTop, runTop);
+      visualBottom = Math.max(visualBottom, runTop + imageRun.height);
+    }
+
+    cursorY = paragraphBottomY;
+  }
+
+  return { visualTop, visualBottom };
+}
+
 /**
  * Convert HeaderFooter (document type) to HeaderFooterContent (render type).
  *
@@ -1321,7 +1417,8 @@ function convertHeaderFooterToContent(
   contextTags?: Record<string, string>,
   renderMode?: 'rendered' | 'raw',
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  styleResolver?: any
+  styleResolver?: any,
+  metrics?: HeaderFooterMetrics
 ): HeaderFooterContent | undefined {
   if (!headerFooter || !headerFooter.content || headerFooter.content.length === 0) {
     return undefined;
@@ -1657,11 +1754,16 @@ function convertHeaderFooterToContent(
     }
     return h;
   }, 0);
+  const { visualTop, visualBottom } = metrics
+    ? calculateHeaderFooterVisualBounds(blocks, measures, totalHeight, metrics)
+    : { visualTop: 0, visualBottom: totalHeight };
 
   return {
     blocks,
     measures,
     height: totalHeight,
+    visualTop,
+    visualBottom,
   };
 }
 
@@ -1935,13 +2037,17 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
           // Create a StyleResolver so header/footer text gets style-resolved formatting
           // (font, size, color from paragraph styles — not just explicit inline formatting).
           const hfStyleResolver = styles ? createStyleResolver(styles) : null;
+          const hasTitlePg = sectionProperties?.titlePg === true;
+          const hfHeaderMetrics: HeaderFooterMetrics = { section: 'header', pageSize, margins };
+          const hfFooterMetrics: HeaderFooterMetrics = { section: 'footer', pageSize, margins };
           const headerContentForRender = convertHeaderFooterToContent(
             headerContent,
             contentWidth,
             styles,
             contextTags,
             renderMode,
-            hfStyleResolver
+            hfStyleResolver,
+            hfHeaderMetrics
           );
           const footerContentForRender = convertHeaderFooterToContent(
             footerContent,
@@ -1949,16 +2055,17 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
             styles,
             contextTags,
             renderMode,
-            hfStyleResolver
+            hfStyleResolver,
+            hfFooterMetrics
           );
-          const hasTitlePg = sectionProperties?.titlePg === true;
           const firstPageHeaderForRender = convertHeaderFooterToContent(
             firstPageHeaderContent ?? null,
             contentWidth,
             styles,
             contextTags,
             renderMode,
-            hfStyleResolver
+            hfStyleResolver,
+            hfHeaderMetrics
           );
           const firstPageFooterForRender = convertHeaderFooterToContent(
             firstPageFooterContent ?? null,
@@ -1966,7 +2073,8 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
             styles,
             contextTags,
             renderMode,
-            hfStyleResolver
+            hfStyleResolver,
+            hfFooterMetrics
           );
 
           // Adjust margins if header/footer content exceeds available space
