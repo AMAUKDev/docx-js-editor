@@ -65,6 +65,7 @@ import { BaseKeymapExtension } from './features/BaseKeymapExtension';
 import { SelectionTrackerExtension } from './features/SelectionTrackerExtension';
 import { ImageDragExtension } from './features/ImageDragExtension';
 import { DropCursorExtension } from './features/DropCursorExtension';
+import { PasteStyleInlinerExtension } from './features/PasteStyleInlinerExtension';
 
 export interface StarterKitOptions {
   /** Extensions to disable by name */
@@ -151,6 +152,7 @@ export function createStarterKit(options: StarterKitOptions = {}): AnyExtension[
   }
 
   // Features
+  add('pasteStyleInliner', PasteStyleInlinerExtension());
   add('list', ListExtension());
   add('baseKeymap', BaseKeymapExtension());
   add(

@@ -24,7 +24,7 @@ import type {
 } from '../../types/document';
 
 import { serializeParagraph } from './paragraphSerializer';
-import { resetDocPrIdCounter } from './runSerializer';
+import { resetAutoIdCounter } from './runSerializer';
 import { serializeTable } from './tableSerializer';
 
 // ============================================================================
@@ -675,8 +675,8 @@ export function serializeDocumentBody(body: DocumentBody): string {
  * @returns Complete XML string for document.xml
  */
 export function serializeDocument(doc: Document): string {
-  // Reset the docPr ID counter so each serialization pass produces unique IDs
-  resetDocPrIdCounter();
+  // Reset auto-incrementing image/shape ID counter for this serialization pass
+  resetAutoIdCounter();
 
   const parts: string[] = [];
 

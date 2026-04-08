@@ -37,33 +37,56 @@ import type {
 import { serializeParagraph } from './paragraphSerializer';
 
 // ============================================================================
-// DOCPR ID GENERATION
+// ID GENERATION
 // ============================================================================
 
 /**
- * Counter for generating unique docPr IDs within a single serialization pass.
- * OOXML requires all wp:docPr id values to be unique within a document part.
- * Reset via resetDocPrIdCounter() at the start of each document serialization.
+ * Auto-incrementing counter for generating unique image/shape IDs.
+ * Used as a fallback when `image.id` or `shape.id` is undefined (e.g., pasted images).
+ * Starts high (100000) to avoid collisions with IDs parsed from existing DOCX content.
  */
-let _nextDocPrId = 1;
+let nextAutoId = 100000;
 
-/** Reset the docPr ID counter — call at the start of each document serialization. */
-export function resetDocPrIdCounter(): void {
-  _nextDocPrId = 1;
+/**
+ * Reset the auto-incrementing ID counter. Call before each serialization pass
+ * to keep IDs deterministic across saves.
+ */
+export function resetAutoIdCounter(): void {
+  nextAutoId = 100000;
 }
 
-/** Get a unique docPr ID for the current serialization pass. */
-function getNextDocPrId(): number {
-  return _nextDocPrId++;
+/** Get a unique positive integer ID, using the provided value or generating one */
+function getUniqueId(id: string | number | undefined): string {
+  if (id !== undefined && id !== null && id !== '' && id !== 0) {
+    return String(id);
+  }
+  return String(nextAutoId++);
 }
+
+/** Valid OOXML highlight color names (ECMA-376 §17.18.40) */
+const VALID_HIGHLIGHT_COLORS = new Set([
+  'black',
+  'blue',
+  'cyan',
+  'darkBlue',
+  'darkCyan',
+  'darkGray',
+  'darkGreen',
+  'darkMagenta',
+  'darkRed',
+  'darkYellow',
+  'green',
+  'lightGray',
+  'magenta',
+  'red',
+  'white',
+  'yellow',
+]);
 
 // ============================================================================
 // XML ESCAPING
 // ============================================================================
 
-/**
- * Escape special XML characters
- */
 function escapeXml(text: string): string {
   return text
     .replace(/&/g, '&amp;')
@@ -314,25 +337,7 @@ export function serializeTextFormatting(formatting: TextFormatting | undefined):
 
   // Highlight — only emit valid OOXML named colors (not CSS values)
   if (formatting.highlight && formatting.highlight !== 'none') {
-    const validHighlightColors = new Set([
-      'black',
-      'blue',
-      'cyan',
-      'darkBlue',
-      'darkCyan',
-      'darkGray',
-      'darkGreen',
-      'darkMagenta',
-      'darkRed',
-      'darkYellow',
-      'green',
-      'lightGray',
-      'magenta',
-      'red',
-      'white',
-      'yellow',
-    ]);
-    if (validHighlightColors.has(formatting.highlight)) {
+    if (VALID_HIGHLIGHT_COLORS.has(formatting.highlight)) {
       parts.push(`<w:highlight w:val="${formatting.highlight}"/>`);
     }
   }
@@ -616,11 +621,12 @@ function serializeWrap(wrap: ImageWrap): string {
 }
 
 /** Build the common a:graphic > pic:pic element for images */
-function serializePicGraphic(image: Image, picCnvPrId: number): string {
+function serializePicGraphic(image: Image, sharedId: string): string {
   const cx = image.size.width;
   const cy = image.size.height;
   const rId = image.rId || 'rId1';
-  const name = image.filename || `image${picCnvPrId}`;
+  const id = sharedId;
+  const name = image.filename || `image${id}`;
 
   let xfrmAttrs = '';
   if (image.transform?.rotation) {
@@ -634,7 +640,7 @@ function serializePicGraphic(image: Image, picCnvPrId: number): string {
     '<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">',
     '<pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">',
     '<pic:nvPicPr>',
-    `<pic:cNvPr id="${picCnvPrId}" name="${escapeXml(name)}"${image.alt ? ` descr="${escapeXml(image.alt)}"` : ''}/>`,
+    `<pic:cNvPr id="${sharedId}" name="${escapeXml(name)}"${image.alt ? ` descr="${escapeXml(image.alt)}"` : ''}/>`,
     '<pic:cNvPicPr/>',
     '</pic:nvPicPr>',
     '<pic:blipFill>',
@@ -667,7 +673,7 @@ function serializeDrawingContent(content: DrawingContent): string {
   const distB = image.padding?.bottom ?? image.wrap.distB ?? 0;
   const distL = image.padding?.left ?? image.wrap.distL ?? 0;
   const distR = image.padding?.right ?? image.wrap.distR ?? 0;
-  const docPrId = getNextDocPrId();
+  const docPrId = getUniqueId(image.id);
   const docPrName = image.title || image.filename || `Picture ${docPrId}`;
 
   const graphic = serializePicGraphic(image, docPrId);
@@ -733,7 +739,7 @@ function serializeShapeContent(content: ShapeContent): string {
   const distB = shape.wrap?.distB ?? 0;
   const distL = shape.wrap?.distL ?? 0;
   const distR = shape.wrap?.distR ?? 0;
-  const docPrId = getNextDocPrId();
+  const docPrId = getUniqueId(shape.id);
   const docPrName = shape.name || (isTextBox ? `TextBox ${docPrId}` : `Shape ${docPrId}`);
 
   // Build xfrm
