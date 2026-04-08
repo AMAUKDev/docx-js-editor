@@ -730,6 +730,7 @@ export const TablePluginExtension = createExtension({
       table.forEach((rowNode) => {
         const newCells: PMNode[] = [];
         let gridPos = 0;
+        let handled = false;
 
         rowNode.forEach((cell) => {
           const colspan = (cell.attrs.colspan as number) || 1;
@@ -737,7 +738,8 @@ export const TablePluginExtension = createExtension({
           const nodeType =
             cell.type.name === 'tableHeader' ? schema.nodes.tableHeader : schema.nodes.tableCell;
 
-          if (gridPos <= insertGridCol && cellEnd > insertGridCol) {
+          if (!handled && gridPos <= insertGridCol && cellEnd > insertGridCol) {
+            handled = true;
             const leftSpan = insertGridCol - gridPos;
 
             if (leftSpan > 0) {
@@ -786,6 +788,27 @@ export const TablePluginExtension = createExtension({
           }
           gridPos = cellEnd;
         });
+
+        // Insertion past the right edge of the table — append a new cell
+        if (!handled) {
+          const lastChild = rowNode.lastChild!;
+          const nodeType =
+            lastChild.type.name === 'tableHeader'
+              ? schema.nodes.tableHeader
+              : schema.nodes.tableCell;
+          newCells.push(
+            nodeType.create(
+              {
+                colspan: 1,
+                rowspan: 1,
+                width: halfB,
+                widthType: 'dxa',
+                borders: lastChild.attrs.borders,
+              },
+              schema.nodes.paragraph.create()
+            )
+          );
+        }
 
         newRows.push(schema.nodes.tableRow.create(rowNode.attrs, newCells));
       });
