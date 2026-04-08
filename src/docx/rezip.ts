@@ -1291,9 +1291,20 @@ export async function updateMultipleFiles(
   updates: Map<string, string | ArrayBuffer>,
   options: RepackOptions = {}
 ): Promise<ArrayBuffer> {
-  const { compressionLevel = 6 } = options;
-
   const zip = await JSZip.loadAsync(originalBuffer);
+  return applyUpdatesToZip(zip, updates, options);
+}
+
+/**
+ * Apply file updates to an already-loaded JSZip instance and generate the output.
+ * Use this when the zip is already loaded to avoid a redundant decompression pass.
+ */
+export async function applyUpdatesToZip(
+  zip: JSZip,
+  updates: Map<string, string | ArrayBuffer>,
+  options: RepackOptions = {}
+): Promise<ArrayBuffer> {
+  const { compressionLevel = 6 } = options;
 
   for (const [path, content] of updates) {
     zip.file(path, content, {
@@ -1491,7 +1502,7 @@ function _serializeHeadersFootersToZip(doc: Document, zip: JSZip, compressionLev
 /**
  * Update core properties XML with new modification date
  */
-function updateCoreProperties(
+export function updateCoreProperties(
   corePropsXml: string,
   options: { updateModifiedDate?: boolean; modifiedBy?: string }
 ): string {

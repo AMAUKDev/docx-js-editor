@@ -3,7 +3,7 @@
  *
  * Orchestrates selective XML patching for the save flow.
  * Serializes full document.xml, validates patch safety, builds patched XML,
- * and calls updateMultipleFiles() to produce the final DOCX.
+ * and calls applyUpdatesToZip() to produce the final DOCX.
  *
  * Returns null on any failure, signaling the caller to fall back to full repack.
  */
@@ -18,7 +18,8 @@ import {
 } from './serializer/commentSerializer';
 import { buildPatchedDocumentXml } from './selectiveXmlPatch';
 import {
-  updateMultipleFiles,
+  applyUpdatesToZip,
+  updateCoreProperties,
   COMMENTS_CONTENT_TYPE,
   COMMENTS_EXTENDED_CONTENT_TYPE,
   COMMENTS_IDS_CONTENT_TYPE,
@@ -67,7 +68,8 @@ export interface SelectiveSaveOptions {
 
 /**
  * Attempt a selective save — patch only changed paragraphs in document.xml.
- * Also updates comments and comment extension parts so all parts stay in sync.
+ * Also updates comments, headers/footers, and core properties so that
+ * all document parts stay in sync even when only paragraphs are patched.
  *
  * Returns the saved ArrayBuffer, or null if selective save is not possible
  * (caller should fall back to full repack).
@@ -88,33 +90,31 @@ export async function attemptSelectiveSave(
   const content = doc.package.document.content;
   if (hasNewImagesOrHyperlinks(content)) return null;
 
-  // If no changes, just return the original buffer as-is
-  if (changedParaIds.size === 0) {
-    return originalBuffer;
-  }
+  const comments = doc.package.document.comments;
+  const hasComments = comments && comments.length > 0;
 
   try {
-    // Get the original document.xml from the ZIP
     const JSZip = (await import('jszip')).default;
     const zip = await JSZip.loadAsync(originalBuffer);
-    const docXmlFile = zip.file('word/document.xml');
-    if (!docXmlFile) return null;
-    const originalDocXml = await docXmlFile.async('text');
-
-    // Serialize the full document.xml from the current document model
-    const serializedDocXml = serializeDocument(doc);
-
-    // Build the patched document.xml
-    const patchedDocXml = buildPatchedDocumentXml(originalDocXml, serializedDocXml, changedParaIds);
-    if (!patchedDocXml) return null;
-
-    // Apply the patch using updateMultipleFiles
     const updates = new Map<string, string>();
-    updates.set('word/document.xml', patchedDocXml);
+
+    // Patch document.xml if paragraphs changed
+    if (changedParaIds.size > 0) {
+      const docXmlFile = zip.file('word/document.xml');
+      if (!docXmlFile) return null;
+      const originalDocXml = await docXmlFile.async('text');
+
+      const serializedDocXml = serializeDocument(doc);
+      const patchedDocXml = buildPatchedDocumentXml(
+        originalDocXml,
+        serializedDocXml,
+        changedParaIds
+      );
+      if (!patchedDocXml) return null;
+      updates.set('word/document.xml', patchedDocXml);
+    }
 
     // Always serialize comments + extension parts when the document has comments
-    const comments = doc.package.document.comments;
-    const hasComments = comments && comments.length > 0;
     if (hasComments) {
       const { xml: commentsXml, paraInfos } = serializeCommentsWithInfo(comments);
       updates.set('word/comments.xml', commentsXml);
@@ -181,7 +181,18 @@ export async function attemptSelectiveSave(
       }
     }
 
-    return await updateMultipleFiles(originalBuffer, updates);
+    // Update modification date in docProps/core.xml
+    const corePropsFile = zip.file('docProps/core.xml');
+    if (corePropsFile) {
+      const corePropsXml = await corePropsFile.async('text');
+      updates.set(
+        'docProps/core.xml',
+        updateCoreProperties(corePropsXml, { updateModifiedDate: true })
+      );
+    }
+
+    // Use the already-loaded zip to avoid a redundant decompression pass
+    return await applyUpdatesToZip(zip, updates);
   } catch {
     // Any error — fall back to full repack
     return null;
