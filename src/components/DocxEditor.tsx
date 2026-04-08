@@ -286,6 +286,13 @@ export interface DocxEditorProps {
   /** Callback when the editing mode changes */
   onModeChange?: (mode: EditorMode) => void;
   /**
+   * Fired when the cursor moves onto a comment or tracked-change mark.
+   * Null is passed when the cursor leaves all such marks.
+   * The id follows the pattern `comment-<id>` for comments and
+   * `tc-<revisionId>-<type>` for tracked changes.
+   */
+  onCursorMarkChange?: (markId: string | null) => void;
+  /**
    * Callback when rendered DOM context is ready (for plugin overlays).
    * Used by PluginHost to get access to the rendered page DOM for positioning.
    */
@@ -952,6 +959,7 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     onPaste: _onPaste,
     mode: modeProp,
     onModeChange,
+    onCursorMarkChange,
     externalPlugins,
     onEditorViewReady,
     onRenderedDomContextReady,
@@ -4376,8 +4384,39 @@ body { background: white; }
                         if (view) {
                           const selectionState = extractSelectionState(view.state);
                           handleSelectionChange(selectionState);
+
+                          // Detect comment/tracked-change marks at cursor to fire
+                          // onCursorMarkChange callback (for sidebar auto-expansion).
+                          // Collect marks from all sources — inclusive:false marks aren't
+                          // reported by $from.marks() at boundaries, and empty arrays are
+                          // truthy so an OR chain would short-circuit.
+                          if (onCursorMarkChange) {
+                            const $from = view.state.selection.$from;
+                            const marks = [
+                              ...(view.state.storedMarks ?? []),
+                              ...($from.nodeAfter?.marks ?? []),
+                              ...($from.nodeBefore?.marks ?? []),
+                              ...$from.marks(),
+                            ];
+                            let cursorMarkId: string | null = null;
+                            for (const mark of marks) {
+                              if (mark.type.name === 'comment' && mark.attrs.commentId != null) {
+                                cursorMarkId = `comment-${mark.attrs.commentId}`;
+                                break;
+                              }
+                              if (
+                                (mark.type.name === 'insertion' || mark.type.name === 'deletion') &&
+                                mark.attrs.revisionId != null
+                              ) {
+                                cursorMarkId = `tc-${mark.attrs.revisionId}-${mark.type.name}`;
+                                break;
+                              }
+                            }
+                            onCursorMarkChange(cursorMarkId);
+                          }
                         } else {
                           handleSelectionChange(null);
+                          onCursorMarkChange?.(null);
                         }
                       }}
                       externalPlugins={mergedPlugins}
