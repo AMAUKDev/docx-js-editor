@@ -281,6 +281,10 @@ export interface DocxEditorProps {
   onCut?: () => void;
   /** Callback when content is pasted */
   onPaste?: () => void;
+  /** Editor mode: 'editing' (direct edits), 'suggesting' (track changes), or 'viewing' (read-only). Default: 'editing' */
+  mode?: EditorMode;
+  /** Callback when the editing mode changes */
+  onModeChange?: (mode: EditorMode) => void;
   /**
    * Callback when rendered DOM context is ready (for plugin overlays).
    * Used by PluginHost to get access to the rendered page DOM for positioning.
@@ -726,6 +730,183 @@ interface EditorState {
 }
 
 // ============================================================================
+// EDITING MODE DROPDOWN (Google Docs-style)
+// ============================================================================
+
+export type EditorMode = 'editing' | 'suggesting' | 'viewing';
+
+const EDITING_MODES: readonly { value: EditorMode; label: string; icon: string; desc: string }[] = [
+  {
+    value: 'editing',
+    label: 'Editing',
+    icon: 'edit_note',
+    desc: 'Edit document directly',
+  },
+  {
+    value: 'suggesting',
+    label: 'Suggesting',
+    icon: 'rate_review',
+    desc: 'Edits become suggestions',
+  },
+  {
+    value: 'viewing',
+    label: 'Viewing',
+    icon: 'visibility',
+    desc: 'Read-only, no edits',
+  },
+];
+
+function EditingModeDropdown({
+  mode,
+  onModeChange,
+}: {
+  mode: EditorMode;
+  onModeChange: (mode: EditorMode) => void;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [compact, setCompact] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+
+  const current = EDITING_MODES.find((m) => m.value === mode)!;
+
+  // Responsive: icon-only below 1400px
+  useEffect(() => {
+    const mql = window.matchMedia('(max-width: 1400px)');
+    setCompact(mql.matches);
+    const handler = (e: MediaQueryListEvent) => setCompact(e.matches);
+    mql.addEventListener('change', handler);
+    return () => mql.removeEventListener('change', handler);
+  }, []);
+
+  useEffect(() => {
+    if (!isOpen || !triggerRef.current) return;
+    const rect = triggerRef.current.getBoundingClientRect();
+    // Align dropdown to right edge of trigger so it doesn't overflow the screen
+    setPos({ top: rect.bottom + 2, left: rect.right - 220 });
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const close = (e: MouseEvent) => {
+      if (
+        !triggerRef.current?.contains(e.target as Node) &&
+        !dropdownRef.current?.contains(e.target as Node)
+      ) {
+        setIsOpen(false);
+      }
+    };
+    const esc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setIsOpen(false);
+    };
+    document.addEventListener('mousedown', close);
+    document.addEventListener('keydown', esc);
+    return () => {
+      document.removeEventListener('mousedown', close);
+      document.removeEventListener('keydown', esc);
+    };
+  }, [isOpen]);
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <button
+        ref={triggerRef}
+        type="button"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => setIsOpen(!isOpen)}
+        title={`${current.label} (Ctrl+Shift+E)`}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: compact ? 0 : 4,
+          padding: compact ? '2px 4px' : '2px 6px 2px 4px',
+          border: 'none',
+          background: isOpen ? 'var(--doc-hover, #f3f4f6)' : 'transparent',
+          borderRadius: 4,
+          cursor: 'pointer',
+          fontSize: 13,
+          fontWeight: 400,
+          color: 'var(--doc-text, #374151)',
+          whiteSpace: 'nowrap',
+          height: 28,
+        }}
+      >
+        <MaterialSymbol name={current.icon} size={18} />
+        {!compact && <span>{current.label}</span>}
+        <MaterialSymbol name="arrow_drop_down" size={16} />
+      </button>
+
+      {isOpen && (
+        <div
+          ref={dropdownRef}
+          onMouseDown={(e) => e.preventDefault()}
+          style={{
+            position: 'fixed',
+            top: pos.top,
+            left: pos.left,
+            backgroundColor: 'white',
+            border: '1px solid var(--doc-border, #d1d5db)',
+            borderRadius: 8,
+            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.12)',
+            padding: '4px 0',
+            zIndex: 10000,
+            minWidth: 220,
+          }}
+        >
+          {EDITING_MODES.map((m) => (
+            <button
+              key={m.value}
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                onModeChange(m.value);
+                setIsOpen(false);
+              }}
+              onMouseOver={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.backgroundColor =
+                  'var(--doc-hover, #f3f4f6)';
+              }}
+              onMouseOut={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'transparent';
+              }}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                padding: '8px 12px',
+                border: 'none',
+                background: 'transparent',
+                cursor: 'pointer',
+                fontSize: 13,
+                color: 'var(--doc-text, #374151)',
+                width: '100%',
+                textAlign: 'left',
+              }}
+            >
+              <MaterialSymbol name={m.icon} size={20} />
+              <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
+                <span style={{ fontWeight: 500 }}>{m.label}</span>
+                <span style={{ fontSize: 11, color: 'var(--doc-text-muted, #9ca3af)' }}>
+                  {m.desc}
+                </span>
+              </span>
+              {m.value === mode && (
+                <MaterialSymbol
+                  name="check"
+                  size={18}
+                  style={{ marginLeft: 'auto', color: '#1a73e8' }}
+                />
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
 // MAIN COMPONENT
 // ============================================================================
 
@@ -753,7 +934,7 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     showRuler = false,
     rulerUnit = 'inch',
     initialZoom = 1.0,
-    readOnly = false,
+    readOnly: readOnlyProp = false,
     toolbarExtra,
     className = '',
     style,
@@ -769,6 +950,8 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     onCopy: _onCopy,
     onCut: _onCut,
     onPaste: _onPaste,
+    mode: modeProp,
+    onModeChange,
     externalPlugins,
     onEditorViewReady,
     onRenderedDomContextReady,
@@ -825,6 +1008,15 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
   }>({ open: false, mode: 'modify' });
   // Header/footer editing state
   const [hfEditPosition, setHfEditPosition] = useState<'header' | 'footer' | null>(null);
+  // Editing mode (editing / suggesting / viewing) — controlled or uncontrolled
+  const [editingModeInternal, setEditingModeInternal] = useState<EditorMode>(modeProp ?? 'editing');
+  const editingMode = modeProp ?? editingModeInternal;
+  const setEditingMode = (mode: EditorMode) => {
+    if (!modeProp) setEditingModeInternal(mode);
+    onModeChange?.(mode);
+  };
+  // 'viewing' mode acts as read-only
+  const readOnly = readOnlyProp || editingMode === 'viewing';
   // Document outline sidebar state
   const [showOutline, setShowOutline] = useState(showOutlineProp);
   const showOutlineRef = useRef(false);
@@ -4033,8 +4225,8 @@ body { background: white; }
               {/* Editor container - this is the scroll container */}
               <div style={editorContainerStyle}>
                 {/* Toolbar - sticky at top of scroll container */}
-                {/* Hide toolbar in read-only mode unless explicitly requested */}
-                {showToolbar && !readOnly && (
+                {/* Hide toolbar only when readOnly prop is explicitly set (not from viewing mode) */}
+                {showToolbar && !readOnlyProp && (
                   <div
                     ref={toolbarRefCallback}
                     className="sticky top-0 z-50 flex flex-col gap-0 bg-white shadow-sm"
@@ -4087,6 +4279,10 @@ body { background: white; }
                         }))
                       }
                     >
+                      <EditingModeDropdown
+                        mode={editingMode}
+                        onModeChange={(mode) => setEditingMode(mode)}
+                      />
                       {toolbarExtra}
                     </Toolbar>
 
@@ -4116,8 +4312,8 @@ body { background: white; }
                   </div>
                 )}
 
-                {/* Vertical Ruler - fixed on left edge (hidden in read-only mode) */}
-                {showRuler && !readOnly && (
+                {/* Vertical Ruler - fixed on left edge (hidden when readOnly prop is set) */}
+                {showRuler && !readOnlyProp && (
                   <div
                     style={{
                       position: 'absolute',
