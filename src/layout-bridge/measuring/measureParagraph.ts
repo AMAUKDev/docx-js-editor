@@ -41,15 +41,26 @@ const WIDTH_TOLERANCE = 0.5;
 
 /**
  * Compute the width a tab character should advance to reach the next tab stop.
+ *
+ * For right-aligned tabs the tab only advances to (stopPos - trailingWidth)
+ * so the text AFTER the tab finishes at the stop position rather than starting
+ * there.  For center tabs the offset is half the trailing width.
  */
 function computeTabWidth(
   currentPos: number,
-  tabStops: { pos: number; val: string }[] | undefined
+  tabStops: { pos: number; val: string }[] | undefined,
+  trailingWidth: number = 0
 ): number {
   if (tabStops && tabStops.length > 0) {
     for (const stop of tabStops) {
       const stopPx = twipsToPx(stop.pos);
       if (stopPx > currentPos + 0.5) {
+        if (stop.val === 'right' || stop.val === 'end') {
+          return Math.max(1, stopPx - currentPos - trailingWidth);
+        }
+        if (stop.val === 'center') {
+          return Math.max(1, stopPx - currentPos - trailingWidth / 2);
+        }
         return Math.max(1, stopPx - currentPos);
       }
     }
@@ -538,10 +549,31 @@ export function measureParagraph(
       const style = runToFontStyle(run);
       updateMaxFont(style);
 
-      // Compute tab width: advance to the next tab stop position.
+      // Compute trailing width (all runs after this tab until end of paragraph
+      // or next tab) so right/center aligned tabs position correctly.
+      // Includes text runs, field runs (PAGEREF page numbers), etc.
+      let trailingWidth = 0;
+      for (let j = runIndex + 1; j < runs.length; j++) {
+        const nextRun = runs[j];
+        if (isTabRun(nextRun) || isLineBreakRun(nextRun)) break;
+        if (isTextRun(nextRun)) {
+          trailingWidth += measureTextWidth(nextRun.text, runToFontStyle(nextRun));
+        } else if (isFieldRun(nextRun)) {
+          // Field runs (PAGEREF, PAGE, etc.) — use fallback text for measurement.
+          const fieldText = nextRun.fallback || '0';
+          const fieldStyle: FontStyle = {
+            fontFamily: nextRun.fontFamily || 'Calibri',
+            fontSize: nextRun.fontSize || 11,
+            bold: nextRun.bold || false,
+            italic: nextRun.italic || false,
+          };
+          trailingWidth += measureTextWidth(fieldText, fieldStyle);
+        }
+      }
+
       const tabStops = attrs?.tabs;
       const currentPos = currentLine.width + (currentLine.leftOffset ?? 0);
-      const tabWidth = computeTabWidth(currentPos, tabStops);
+      const tabWidth = computeTabWidth(currentPos, tabStops, trailingWidth);
 
       if (currentLine.width + tabWidth > currentLine.availableWidth + WIDTH_TOLERANCE) {
         // Tab doesn't fit, start new line
