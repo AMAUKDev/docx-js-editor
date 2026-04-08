@@ -756,6 +756,30 @@ export function IconRateReview(props: IconProps) {
   );
 }
 
+export function IconClose(props: IconProps) {
+  return (
+    <SvgIcon {...props}>
+      <path d="m256-200-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z" />
+    </SvgIcon>
+  );
+}
+
+export function IconNavigateNext(props: IconProps) {
+  return (
+    <SvgIcon {...props}>
+      <path d="M504-480 320-664l56-56 240 240-240 240-56-56 184-184Z" />
+    </SvgIcon>
+  );
+}
+
+export function IconNavigateBefore(props: IconProps) {
+  return (
+    <SvgIcon {...props}>
+      <path d="M560-240 320-480l240-240 56 56-184 184 184 184-56 56Z" />
+    </SvgIcon>
+  );
+}
+
 export function IconCheck(props: IconProps) {
   return (
     <SvgIcon {...props}>
@@ -879,6 +903,10 @@ const iconMap: Record<string, React.ComponentType<IconProps>> = {
   check_circle: IconCheckCircle,
   chat_bubble_outline: IconChatBubbleOutline,
   chat_bubble_check: IconChatBubbleCheck,
+  // Navigation / utility
+  close: IconClose,
+  navigate_next: IconNavigateNext,
+  navigate_before: IconNavigateBefore,
   // Editing mode
   check: IconCheck,
   edit_note: IconEditNote,

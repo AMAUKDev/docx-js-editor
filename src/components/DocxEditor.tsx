@@ -196,6 +196,15 @@ import {
   createSuggestionModePlugin,
   setSuggestionMode,
 } from '../prosemirror/plugins/suggestionMode';
+import {
+  acceptAllChanges,
+  rejectAllChanges,
+  acceptChange,
+  rejectChange,
+  findNextChange,
+  countChanges,
+  type ChangeRange,
+} from '../prosemirror/commands/comments';
 
 // ============================================================================
 // TYPES
@@ -918,6 +927,125 @@ function EditingModeDropdown({
 }
 
 // ============================================================================
+// TRACKED CHANGES TOOLBAR
+// ============================================================================
+
+/**
+ * Context-sensitive bar shown below the main toolbar when suggestion mode is
+ * active (or when there are tracked changes). Provides Accept All / Accept /
+ * Reject / Reject All buttons matching standard Word behavior.
+ */
+function TrackedChangesBar({
+  changeCount,
+  onAcceptAll,
+  onRejectAll,
+  onAcceptCurrent,
+  onRejectCurrent,
+  onNextChange,
+  currentChange,
+}: {
+  changeCount: number;
+  onAcceptAll: () => void;
+  onRejectAll: () => void;
+  onAcceptCurrent: () => void;
+  onRejectCurrent: () => void;
+  onNextChange: () => void;
+  currentChange: ChangeRange | null;
+}) {
+  if (changeCount === 0) return null;
+
+  const btnStyle = (color: string): React.CSSProperties => ({
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 4,
+    padding: '2px 8px',
+    border: `1px solid ${color}`,
+    borderRadius: 4,
+    background: 'transparent',
+    color,
+    fontSize: 12,
+    fontWeight: 500,
+    cursor: 'pointer',
+    height: 24,
+    whiteSpace: 'nowrap',
+  });
+
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
+        padding: '3px 8px',
+        borderBottom: '1px solid var(--doc-border, #d1d5db)',
+        background: 'rgba(52, 168, 83, 0.04)',
+        flexShrink: 0,
+        flexWrap: 'wrap',
+      }}
+    >
+      <span style={{ fontSize: 11, color: 'var(--doc-text-muted, #6b7280)', marginRight: 2 }}>
+        {changeCount} tracked change{changeCount !== 1 ? 's' : ''}
+      </span>
+
+      {/* Per-change actions (only active when cursor is on a change) */}
+      <button
+        type="button"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={onAcceptCurrent}
+        disabled={!currentChange}
+        title="Accept this change"
+        style={{ ...btnStyle('#2e7d32'), opacity: currentChange ? 1 : 0.4 }}
+      >
+        <MaterialSymbol name="check" size={14} /> Accept
+      </button>
+      <button
+        type="button"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={onRejectCurrent}
+        disabled={!currentChange}
+        title="Reject this change"
+        style={{ ...btnStyle('#c62828'), opacity: currentChange ? 1 : 0.4 }}
+      >
+        <MaterialSymbol name="close" size={14} /> Reject
+      </button>
+      <button
+        type="button"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={onNextChange}
+        title="Move to next change"
+        style={{ ...btnStyle('#374151') }}
+      >
+        <MaterialSymbol name="navigate_next" size={14} /> Next
+      </button>
+
+      <div
+        style={{ width: 1, height: 16, background: 'var(--doc-border, #d1d5db)', margin: '0 2px' }}
+      />
+
+      {/* Document-wide actions */}
+      <button
+        type="button"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={onAcceptAll}
+        title="Accept all changes"
+        style={{ ...btnStyle('#2e7d32') }}
+      >
+        <MaterialSymbol name="done_all" size={14} /> Accept All
+      </button>
+      <button
+        type="button"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={onRejectAll}
+        title="Reject all changes"
+        style={{ ...btnStyle('#c62828') }}
+      >
+        <MaterialSymbol name="close" size={14} /> Reject All
+      </button>
+    </div>
+  );
+}
+
+// ============================================================================
 // MAIN COMPONENT
 // ============================================================================
 
@@ -1029,6 +1157,9 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
   };
   // 'viewing' mode acts as read-only
   const readOnly = readOnlyProp || editingMode === 'viewing';
+  // Tracked changes state — updated whenever the document changes
+  const [trackedChangeCount, setTrackedChangeCount] = useState(0);
+  const [currentChange, setCurrentChange] = useState<ChangeRange | null>(null);
   // Document outline sidebar state
   const [showOutline, setShowOutline] = useState(showOutlineProp);
   const showOutlineRef = useRef(false);
@@ -1400,6 +1531,14 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
         if (view) {
           setHeadingInfos(collectHeadings(view.state.doc));
         }
+      }
+      // Update tracked change count for the bar
+      const view = pagedEditorRef.current?.getView() ?? null;
+      if (view) {
+        setTrackedChangeCount(countChanges(view.state));
+        // Update current change at cursor position
+        const pos = view.state.selection.from;
+        setCurrentChange(findNextChange(view.state, pos) ?? null);
       }
       // Clean up orphaned comments (debounced — avoid full doc walk on every keystroke)
       if (cleanOrphanedCommentsTimerRef.current) {
@@ -4309,6 +4448,69 @@ body { background: white; }
                       />
                       {toolbarExtra}
                     </Toolbar>
+                    {/* Tracked changes action bar — shown when changes exist */}
+                    <TrackedChangesBar
+                      changeCount={trackedChangeCount}
+                      currentChange={currentChange}
+                      onAcceptAll={() => {
+                        const view = pagedEditorRef.current?.getView();
+                        if (view) {
+                          acceptAllChanges()(view.state, view.dispatch);
+                          setTrackedChangeCount(0);
+                          setCurrentChange(null);
+                        }
+                      }}
+                      onRejectAll={() => {
+                        const view = pagedEditorRef.current?.getView();
+                        if (view) {
+                          rejectAllChanges()(view.state, view.dispatch);
+                          setTrackedChangeCount(0);
+                          setCurrentChange(null);
+                        }
+                      }}
+                      onAcceptCurrent={() => {
+                        if (!currentChange) return;
+                        const view = pagedEditorRef.current?.getView();
+                        if (view) {
+                          acceptChange(currentChange.from, currentChange.to)(
+                            view.state,
+                            view.dispatch
+                          );
+                          const next = findNextChange(view.state, currentChange.from);
+                          setCurrentChange(next);
+                          setTrackedChangeCount(countChanges(view.state));
+                        }
+                      }}
+                      onRejectCurrent={() => {
+                        if (!currentChange) return;
+                        const view = pagedEditorRef.current?.getView();
+                        if (view) {
+                          rejectChange(currentChange.from, currentChange.to)(
+                            view.state,
+                            view.dispatch
+                          );
+                          const next = findNextChange(view.state, currentChange.from);
+                          setCurrentChange(next);
+                          setTrackedChangeCount(countChanges(view.state));
+                        }
+                      }}
+                      onNextChange={() => {
+                        const view = pagedEditorRef.current?.getView();
+                        if (!view) return;
+                        const pos = view.state.selection.to;
+                        const next = findNextChange(view.state, pos + 1);
+                        setCurrentChange(next);
+                        if (next) {
+                          const tr = view.state.tr.setSelection(
+                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                            (view.state.selection.constructor as any).near(
+                              view.state.doc.resolve(next.from)
+                            )
+                          );
+                          view.dispatch(tr.scrollIntoView());
+                        }
+                      }}
+                    />
 
                     {/* Horizontal Ruler - sticky with toolbar */}
                     {showRuler && (
