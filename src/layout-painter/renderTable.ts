@@ -332,7 +332,7 @@ function renderTableRow(
   doc: Document,
   spanningCells?: Map<string, SpanningCell>,
   rowYPositions?: number[],
-  _drawTopBorder?: boolean
+  isFirstRowInFragment?: boolean
 ): HTMLElement {
   const rowEl = doc.createElement('div');
   rowEl.className = TABLE_CLASS_NAMES.row;
@@ -394,7 +394,7 @@ function renderTableRow(
       }
     }
 
-    const isFirstRow = rowIndex === 0;
+    const isFirstRow = rowIndex === 0 || isFirstRowInFragment === true;
     const isLastRow = rowIndex + rowSpan >= totalRows;
     const isFirstCol = columnIndex === 0;
     const isLastCol = columnIndex + colSpan >= columnWidths.length;
