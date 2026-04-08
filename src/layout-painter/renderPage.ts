@@ -114,6 +114,10 @@ export interface HeaderFooterContent {
   measures: Measure[];
   /** Total height of the content. */
   height: number;
+  /** Visual top offset (for anchored content above the header baseline). */
+  visualTop?: number;
+  /** Visual bottom offset (for anchored content below the header baseline). */
+  visualBottom?: number;
 }
 
 /**
@@ -140,14 +144,16 @@ export interface RenderPageOptions {
   backgroundColor?: string;
   /** Drop shadow on pages */
   showShadow?: boolean;
-  /** Header content to render (default / all pages). */
+  /** Header content to render (used for all pages, or pages 2+ when titlePg is set). */
   headerContent?: HeaderFooterContent;
-  /** Footer content to render (default / all pages). */
+  /** Footer content to render (used for all pages, or pages 2+ when titlePg is set). */
   footerContent?: HeaderFooterContent;
-  /** Header content for the first page only (titlePg). */
+  /** Header content for the first page only (when titlePg is set). */
   firstPageHeaderContent?: HeaderFooterContent;
-  /** Footer content for the first page only (titlePg). */
+  /** Footer content for the first page only (when titlePg is set). */
   firstPageFooterContent?: HeaderFooterContent;
+  /** Whether different first page headers/footers are enabled (w:titlePg). */
+  titlePg?: boolean;
   /** Distance from page top to header content. */
   headerDistance?: number;
   /** Distance from page bottom to footer content. */
@@ -1064,11 +1070,9 @@ function buildPageRenderArgs(
   };
   const pageOptions: RenderPageOptions = { ...options };
 
-  // Select per-page header/footer when titlePg differentiation is available
-  if (page.number === 1 && options.firstPageHeaderContent) {
+  // Per-page header/footer selection when titlePg is enabled
+  if (options.titlePg && page.number === 1) {
     pageOptions.headerContent = options.firstPageHeaderContent;
-  }
-  if (page.number === 1 && options.firstPageFooterContent) {
     pageOptions.footerContent = options.firstPageFooterContent;
   }
 
@@ -1181,12 +1185,13 @@ function computeOptionsHash(options: RenderPageOptions): string {
   }
   // First-page H/F (separate from default — missing these caused the bug where
   // office change didn't update the first-page footer)
-  if ((options as any).firstPageHeaderContent) {
-    parts.push(`fphdr:${hfTextFingerprint((options as any).firstPageHeaderContent)}`);
+  if (options.firstPageHeaderContent) {
+    parts.push(`fphdr:${hfTextFingerprint(options.firstPageHeaderContent)}`);
   }
-  if ((options as any).firstPageFooterContent) {
-    parts.push(`fpftr:${hfTextFingerprint((options as any).firstPageFooterContent)}`);
+  if (options.firstPageFooterContent) {
+    parts.push(`fpftr:${hfTextFingerprint(options.firstPageFooterContent)}`);
   }
+  if (options.titlePg) parts.push('titlePg');
 
   // Theme changes
   if (options.theme) {
