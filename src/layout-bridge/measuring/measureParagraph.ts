@@ -23,12 +23,15 @@ import {
   measureRun,
   getFontMetrics,
   ptToPx,
-  twipsToPx,
   type FontStyle,
   type FontMetrics,
 } from './measureContainer';
 
 import { DEFAULT_SINGLE_LINE_RATIO } from '../../utils/fontResolver';
+import {
+  calculateTabWidth as calcTabWidth,
+  type TabContext,
+} from '../../prosemirror/utils/tabCalculator';
 
 // Default values - match Word 2007+ defaults and renderPage.ts
 const DEFAULT_FONT_SIZE = 11; // 11pt (Word 2007+ default)
@@ -39,36 +42,7 @@ const DEFAULT_LINE_HEIGHT_MULTIPLIER = 1.15; // Word single spacing
 // Prevents premature line breaks due to measurement rounding
 const WIDTH_TOLERANCE = 0.5;
 
-/**
- * Compute the width a tab character should advance to reach the next tab stop.
- *
- * For right-aligned tabs the tab only advances to (stopPos - trailingWidth)
- * so the text AFTER the tab finishes at the stop position rather than starting
- * there.  For center tabs the offset is half the trailing width.
- */
-function computeTabWidth(
-  currentPos: number,
-  tabStops: { pos: number; val: string }[] | undefined,
-  trailingWidth: number = 0
-): number {
-  if (tabStops && tabStops.length > 0) {
-    for (const stop of tabStops) {
-      const stopPx = twipsToPx(stop.pos);
-      if (stopPx > currentPos + 0.5) {
-        if (stop.val === 'right' || stop.val === 'end') {
-          return Math.max(1, stopPx - currentPos - trailingWidth);
-        }
-        if (stop.val === 'center') {
-          return Math.max(1, stopPx - currentPos - trailingWidth / 2);
-        }
-        return Math.max(1, stopPx - currentPos);
-      }
-    }
-  }
-  // No matching stop — advance to next default interval
-  const remainder = currentPos % DEFAULT_TAB_WIDTH;
-  return Math.max(1, remainder < 0.5 ? DEFAULT_TAB_WIDTH : DEFAULT_TAB_WIDTH - remainder);
-}
+// Tab calculation reuses the shared tabCalculator (same logic as the renderer)
 
 /**
  * Find the longest prefix of `text` that fits within `maxWidth` pixels.
@@ -294,7 +268,7 @@ function findWordBreaks(text: string): number[] {
 /**
  * Default tab width in pixels (0.5 inch at 96 DPI)
  */
-const DEFAULT_TAB_WIDTH = 48;
+// DEFAULT_TAB_WIDTH removed — now handled by tabCalculator
 
 /**
  * Calculate width reduction for a line based on floating image zones.
@@ -549,31 +523,25 @@ export function measureParagraph(
       const style = runToFontStyle(run);
       updateMaxFont(style);
 
-      // Compute trailing width (all runs after this tab until end of paragraph
-      // or next tab) so right/center aligned tabs position correctly.
-      // Includes text runs, field runs (PAGEREF page numbers), etc.
-      let trailingWidth = 0;
+      // Build following text for alignment calculation (center/right tabs)
+      let followingText = '';
       for (let j = runIndex + 1; j < runs.length; j++) {
         const nextRun = runs[j];
         if (isTabRun(nextRun) || isLineBreakRun(nextRun)) break;
-        if (isTextRun(nextRun)) {
-          trailingWidth += measureTextWidth(nextRun.text, runToFontStyle(nextRun));
-        } else if (isFieldRun(nextRun)) {
-          // Field runs (PAGEREF, PAGE, etc.) — use fallback text for measurement.
-          const fieldText = nextRun.fallback || '0';
-          const fieldStyle: FontStyle = {
-            fontFamily: nextRun.fontFamily || 'Calibri',
-            fontSize: nextRun.fontSize || 11,
-            bold: nextRun.bold || false,
-            italic: nextRun.italic || false,
-          };
-          trailingWidth += measureTextWidth(fieldText, fieldStyle);
-        }
+        if (isTextRun(nextRun)) followingText += nextRun.text;
+        else if (isFieldRun(nextRun)) followingText += nextRun.fallback || '0';
       }
 
-      const tabStops = attrs?.tabs;
+      // Use the shared tab calculator (same as the renderer) so measurement
+      // and visual rendering agree on tab widths for center/right tabs.
       const currentPos = currentLine.width + (currentLine.leftOffset ?? 0);
-      const tabWidth = computeTabWidth(currentPos, tabStops, trailingWidth);
+      const tabContext: TabContext = {
+        explicitStops: attrs?.tabs,
+      };
+      const tabResult = calcTabWidth(currentPos, tabContext, followingText, (t) =>
+        measureTextWidth(t, runToFontStyle(run))
+      );
+      const tabWidth = tabResult.width;
 
       if (currentLine.width + tabWidth > currentLine.availableWidth + WIDTH_TOLERANCE) {
         // Tab doesn't fit, start new line

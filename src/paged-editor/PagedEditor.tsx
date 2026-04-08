@@ -1520,35 +1520,8 @@ function convertHeaderFooterToContent(
             attrs.tabs = Array.from(merged.values()).sort((a, b) => a.pos - b.pos);
           }
         }
-        // Convert tab stops (needed for center/right tab alignment in headers/footers)
-        if (formatting && Array.isArray(formatting.tabs) && formatting.tabs.length > 0) {
-          attrs.tabs = (
-            formatting.tabs as Array<{
-              position: number;
-              alignment: string;
-              leader?: string;
-            }>
-          ).map((tab) => {
-            const align =
-              tab.alignment === 'left'
-                ? 'start'
-                : tab.alignment === 'right'
-                  ? 'end'
-                  : tab.alignment;
-            return {
-              val: align as 'start' | 'end' | 'center' | 'decimal' | 'bar' | 'clear',
-              pos: twipsToPixels(tab.position),
-              leader: tab.leader as
-                | 'none'
-                | 'dot'
-                | 'hyphen'
-                | 'underscore'
-                | 'heavy'
-                | 'middleDot'
-                | undefined,
-            };
-          });
-        }
+        // Note: tab stops are already handled above (style + paragraph merge).
+        // Do NOT convert to pixels here — calculateTabWidth expects twips.
       }
 
       // Resolve style defaults for run formatting (font/size/color from paragraph style).
