@@ -1,7 +1,5 @@
 import { defineConfig } from 'tsup';
 
-const isProd = process.env.NODE_ENV === 'production';
-
 export default defineConfig([
   // Main builds (without shebang)
   {
@@ -17,7 +15,7 @@ export default defineConfig([
     format: ['cjs', 'esm'],
     dts: true,
     splitting: true, // Enable code splitting for tree-shaking
-    sourcemap: !isProd, // Disable source maps in production to reduce package size
+    sourcemap: false,
     clean: true,
     treeshake: true, // Enable tree-shaking
     minify: true, // Minify the output
@@ -43,7 +41,7 @@ export default defineConfig([
     format: ['esm'],
     dts: true,
     splitting: false,
-    sourcemap: !isProd, // Disable source maps in production
+    sourcemap: false,
     clean: false, // Don't clean since main build already did
     treeshake: true,
     minify: true,
