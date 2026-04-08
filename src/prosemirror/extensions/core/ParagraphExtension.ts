@@ -578,22 +578,31 @@ function makeApplyStyle(schema: Schema) {
             styleId,
           };
 
-          if (resolvedAttrs?.paragraphFormatting) {
+          if (resolvedAttrs) {
+            // When applying a style, explicitly reset all style-controlled
+            // paragraph attrs to the new style's values (or null to clear).
+            // This prevents old style properties (e.g. heading line spacing)
+            // from persisting when switching to a different style.
             const ppr = resolvedAttrs.paragraphFormatting;
-            if (ppr.alignment !== undefined) newAttrs.alignment = ppr.alignment;
-            if (ppr.spaceBefore !== undefined) newAttrs.spaceBefore = ppr.spaceBefore;
-            if (ppr.spaceAfter !== undefined) newAttrs.spaceAfter = ppr.spaceAfter;
-            if (ppr.lineSpacing !== undefined) newAttrs.lineSpacing = ppr.lineSpacing;
-            if (ppr.lineSpacingRule !== undefined) newAttrs.lineSpacingRule = ppr.lineSpacingRule;
+            newAttrs.alignment = ppr?.alignment ?? null;
+            newAttrs.spaceBefore = ppr?.spaceBefore ?? null;
+            newAttrs.spaceAfter = ppr?.spaceAfter ?? null;
+            newAttrs.lineSpacing = ppr?.lineSpacing ?? null;
+            newAttrs.lineSpacingRule = ppr?.lineSpacingRule ?? null;
             // Always explicitly set indent attrs when applying a style — even if the resolved
             // style doesn't define them — so that leftover indentation from a previous style
             // (e.g. ListParagraph's indentLeft) is cleared rather than inherited.
-            newAttrs.indentLeft = ppr.indentLeft ?? null;
-            newAttrs.indentRight = ppr.indentRight ?? null;
-            newAttrs.indentFirstLine = ppr.indentFirstLine ?? null;
-            newAttrs.hangingIndent = ppr.hangingIndent ?? false;
+            newAttrs.indentLeft = ppr?.indentLeft ?? null;
+            newAttrs.indentRight = ppr?.indentRight ?? null;
+            newAttrs.indentFirstLine = ppr?.indentFirstLine ?? null;
+            newAttrs.hangingIndent = ppr?.hangingIndent ?? null;
+            newAttrs.contextualSpacing = ppr?.contextualSpacing ?? null;
+            newAttrs.keepNext = ppr?.keepNext ?? null;
+            newAttrs.keepLines = ppr?.keepLines ?? null;
+            newAttrs.pageBreakBefore = ppr?.pageBreakBefore ?? null;
+            newAttrs.outlineLevel = ppr?.outlineLevel ?? null;
             // Apply numbering properties from the style definition
-            if (ppr.numPr !== undefined) {
+            if (ppr?.numPr !== undefined) {
               newAttrs.numPr = ppr.numPr;
             } else {
               // Style has no numbering — clear all list attrs
