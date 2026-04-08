@@ -39,6 +39,12 @@ export type PaginatorOptions = {
   footnoteReservedHeights?: Map<number, number>;
   /** Callback when a new page is created. */
   onNewPage?: (state: PageState) => void;
+  /**
+   * When set, margins switch to these values starting from page 2.
+   * Used for titlePg documents where the first page has a taller header
+   * (requiring a larger top margin) than subsequent pages.
+   */
+  marginsAfterFirstPage?: PageMargins;
 };
 
 /**
@@ -64,9 +70,12 @@ export function createPaginator(options: PaginatorOptions) {
   const pages: Page[] = [];
   const states: PageState[] = [];
 
+  // Active margins — mutable so section breaks and titlePg can update them
+  let activeMargins = { ...margins };
+
   // Calculate content boundaries
-  const topMargin = margins.top;
-  const contentBottom = pageSize.h - margins.bottom;
+  let topMargin = activeMargins.top;
+  let contentBottom = pageSize.h - activeMargins.bottom;
   const contentHeight = contentBottom - topMargin;
 
   if (contentHeight <= 0) {
@@ -74,13 +83,18 @@ export function createPaginator(options: PaginatorOptions) {
   }
 
   // Calculate column width
-  const columnWidth = calculateColumnWidth(pageSize.w, margins.left, margins.right, columns);
+  let columnWidth = calculateColumnWidth(
+    pageSize.w,
+    activeMargins.left,
+    activeMargins.right,
+    columns
+  );
 
   /**
    * Get X position for a given column index.
    */
   function getColumnX(columnIndex: number): number {
-    return margins.left + columnIndex * (columnWidth + columns.gap);
+    return activeMargins.left + columnIndex * (columnWidth + columns.gap);
   }
 
   /**
@@ -96,7 +110,7 @@ export function createPaginator(options: PaginatorOptions) {
     const page: Page = {
       number: pageNumber,
       fragments: [],
-      margins: { ...margins },
+      margins: { ...activeMargins },
       size: { ...pageSize },
       footnoteReservedHeight: footnoteHeight > 0 ? footnoteHeight : undefined,
     };
@@ -112,6 +126,11 @@ export function createPaginator(options: PaginatorOptions) {
 
     pages.push(page);
     states.push(state);
+
+    // When marginsAfterFirstPage is set, switch to smaller margins on page 2
+    if (options.marginsAfterFirstPage && pageNumber === 2) {
+      updateActiveMargins(options.marginsAfterFirstPage);
+    }
 
     if (options.onNewPage) {
       options.onNewPage(state);
@@ -243,6 +262,31 @@ export function createPaginator(options: PaginatorOptions) {
     return advanceColumn(state);
   }
 
+  /**
+   * Update active margins for current and future pages.
+   * Call after forcePageBreak() when a section break or titlePg page switch
+   * requires different margins (e.g. pages 2+ need smaller top margin than page 1).
+   * Updates the most-recently created page's margins and resets its cursor.
+   */
+  function updateActiveMargins(newMargins: Partial<PageMargins>): void {
+    activeMargins = { ...activeMargins, ...newMargins };
+    topMargin = activeMargins.top;
+    contentBottom = pageSize.h - activeMargins.bottom;
+    columnWidth = calculateColumnWidth(
+      pageSize.w,
+      activeMargins.left,
+      activeMargins.right,
+      columns
+    );
+
+    // Update the current page (most recently created)
+    const state = getCurrentState();
+    state.page.margins = { ...activeMargins };
+    state.topMargin = topMargin;
+    state.cursorY = topMargin;
+    state.contentBottom = contentBottom;
+  }
+
   return {
     /** All pages created so far. */
     pages,
@@ -266,6 +310,8 @@ export function createPaginator(options: PaginatorOptions) {
     forceColumnBreak,
     /** Get X position for column. */
     getColumnX,
+    /** Update active margins (for section breaks and titlePg page switches). */
+    updateActiveMargins,
   } as const;
 }
 

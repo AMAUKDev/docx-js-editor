@@ -146,6 +146,7 @@ export function layoutDocument(
     margins,
     columns: options.columns,
     footnoteReservedHeights: options.footnoteReservedHeights,
+    marginsAfterFirstPage: options.marginsAfterFirstPage,
   });
 
   // Apply contextual spacing: suppress spaceBefore/spaceAfter between

@@ -749,6 +749,12 @@ export type LayoutOptions = {
   footerContentHeights?: HeaderFooterContentHeights;
   /** Whether section has different first page header/footer. */
   titlePage?: boolean;
+  /**
+   * When set (and titlePage=true), the paginator switches to these margins
+   * starting from page 2, so pages 2+ don't inherit the inflated top margin
+   * needed to accommodate the taller first-page header.
+   */
+  marginsAfterFirstPage?: PageMargins;
   /** Whether section has different even/odd headers/footers. */
   evenAndOddHeaders?: boolean;
   /** Per-page footnote reserved heights (pageNumber → height in pixels). */

@@ -2109,6 +2109,19 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
             }
           }
 
+          // When titlePg is active compute a second set of margins for pages 2+.
+          // The regular (non-first-page) header is shorter, so pages 2+ need a
+          // smaller top margin — otherwise the content starts too far down.
+          let marginsAfterFirstPage: typeof effectiveMargins | undefined;
+          if (hasTitlePg) {
+            const regularHeaderH = hfHeight(headerContentForRender);
+            const regularEffectiveTop =
+              regularHeaderH > availableHeaderSpace ? headerDistance + regularHeaderH : margins.top;
+            if (regularEffectiveTop < effectiveMargins.top) {
+              marginsAfterFirstPage = { ...effectiveMargins, top: regularEffectiveTop };
+            }
+          }
+
           // Step 3: Layout blocks onto pages (two-pass if footnotes exist)
           stepStart = performance.now();
           let newLayout: Layout;
@@ -2120,6 +2133,7 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
             const pass1Layout = layoutDocument(newBlocks, newMeasures, {
               pageSize,
               margins: effectiveMargins,
+              marginsAfterFirstPage,
             });
 
             // Map footnote refs to pages
@@ -2143,6 +2157,7 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
               newLayout = layoutDocument(newBlocks, newMeasures, {
                 pageSize,
                 margins: effectiveMargins,
+                marginsAfterFirstPage,
                 footnoteReservedHeights,
               });
 
@@ -2164,6 +2179,7 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
             newLayout = layoutDocument(newBlocks, newMeasures, {
               pageSize,
               margins: effectiveMargins,
+              marginsAfterFirstPage,
             });
           }
 
