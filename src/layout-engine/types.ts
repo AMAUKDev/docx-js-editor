@@ -38,6 +38,16 @@ export type RunFormatting = {
   footnoteRefId?: number;
   /** Endnote reference ID (if this run contains an endnote reference) */
   endnoteRefId?: number;
+  /** Tracked change: this run was inserted (suggestion mode) */
+  isInsertion?: boolean;
+  /** Tracked change: this run was deleted (suggestion mode) */
+  isDeletion?: boolean;
+  /** Author of the tracked change */
+  changeAuthor?: string;
+  /** ISO date string of the tracked change */
+  changeDate?: string;
+  /** Revision ID grouping consecutive changes */
+  changeRevisionId?: number;
 };
 
 /**

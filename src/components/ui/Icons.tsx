@@ -756,6 +756,14 @@ export function IconRateReview(props: IconProps) {
   );
 }
 
+export function IconCheck(props: IconProps) {
+  return (
+    <SvgIcon {...props}>
+      <path d="M382-240 154-468l57-57 171 171 367-367 57 57-424 424Z" />
+    </SvgIcon>
+  );
+}
+
 export function IconEditNote(props: IconProps) {
   return (
     <SvgIcon {...props}>
@@ -872,6 +880,7 @@ const iconMap: Record<string, React.ComponentType<IconProps>> = {
   chat_bubble_outline: IconChatBubbleOutline,
   chat_bubble_check: IconChatBubbleCheck,
   // Editing mode
+  check: IconCheck,
   edit_note: IconEditNote,
   rate_review: IconRateReview,
   visibility: IconVisibility,

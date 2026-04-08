@@ -311,6 +311,24 @@ function extractRunFormatting(marks: readonly Mark[], theme?: Theme | null): Run
         }
         break;
       }
+
+      case 'insertion': {
+        const attrs = mark.attrs as { author?: string; date?: string; revisionId?: number };
+        formatting.isInsertion = true;
+        if (attrs.author) formatting.changeAuthor = attrs.author;
+        if (attrs.date) formatting.changeDate = attrs.date;
+        if (attrs.revisionId != null) formatting.changeRevisionId = attrs.revisionId;
+        break;
+      }
+
+      case 'deletion': {
+        const attrs = mark.attrs as { author?: string; date?: string; revisionId?: number };
+        formatting.isDeletion = true;
+        if (attrs.author) formatting.changeAuthor = attrs.author;
+        if (attrs.date) formatting.changeDate = attrs.date;
+        if (attrs.revisionId != null) formatting.changeRevisionId = attrs.revisionId;
+        break;
+      }
     }
   }
 

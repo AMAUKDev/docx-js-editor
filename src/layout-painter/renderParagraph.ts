@@ -192,6 +192,30 @@ function applyRunStyles(element: HTMLElement, run: TextRun | TabRun): void {
   } else if (run.smallCaps) {
     element.style.fontVariant = 'small-caps';
   }
+
+  // Tracked insertion styling — light green background with dashed underline
+  if (run.isInsertion) {
+    element.style.backgroundColor = 'rgba(52, 168, 83, 0.08)';
+    element.style.borderBottom = '2px dashed #2e7d32';
+    element.style.paddingBottom = '1px';
+    element.classList.add('docx-insertion');
+    if (run.changeAuthor) element.dataset.changeAuthor = run.changeAuthor;
+    if (run.changeDate) element.dataset.changeDate = run.changeDate;
+    if (run.changeRevisionId != null) element.dataset.revisionId = String(run.changeRevisionId);
+  }
+
+  // Tracked deletion styling — light red background with strikethrough
+  if (run.isDeletion) {
+    element.style.backgroundColor = 'rgba(211, 47, 47, 0.08)';
+    element.style.color = '#c62828';
+    if (!decorations.includes('line-through')) decorations.push('line-through');
+    element.style.textDecorationLine = decorations.join(' ');
+    element.style.textDecorationColor = '#c62828';
+    element.classList.add('docx-deletion');
+    if (run.changeAuthor) element.dataset.changeAuthor = run.changeAuthor;
+    if (run.changeDate) element.dataset.changeDate = run.changeDate;
+    if (run.changeRevisionId != null) element.dataset.revisionId = String(run.changeRevisionId);
+  }
 }
 
 /**
