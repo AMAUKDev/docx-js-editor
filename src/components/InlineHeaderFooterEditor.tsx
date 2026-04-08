@@ -10,6 +10,7 @@ import React, {
   useRef,
   useEffect,
   useCallback,
+  useMemo,
   useState,
   useImperativeHandle,
   useLayoutEffect,
@@ -23,7 +24,7 @@ import { undo, redo } from 'prosemirror-history';
 import { schema } from '../prosemirror/schema';
 import { headerFooterToProseDoc } from '../prosemirror/conversion/toProseDoc';
 import { proseDocToBlocks } from '../prosemirror/conversion/fromProseDoc';
-import { extractSelectionState, type SelectionState } from '../prosemirror';
+import { extractSelectionState, type SelectionState, createStyleResolver } from '../prosemirror';
 import { createStarterKit } from '../prosemirror/extensions/StarterKit';
 import { ExtensionManager } from '../prosemirror/extensions/ExtensionManager';
 import type { HeaderFooter, Paragraph, Table, StyleDefinitions } from '../types/document';
@@ -144,6 +145,16 @@ export const InlineHeaderFooterEditor = forwardRef<
   const editorContainerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const [isDirty, setIsDirty] = useState(false);
+
+  // Resolve default font size from document styles so the PM editor's
+  // line-height calculations use the correct base (not browser-default 16px)
+  const defaultFontSizePt = useMemo(() => {
+    if (!styles) return 11; // Word 2007+ default
+    const resolver = createStyleResolver(styles);
+    const resolved = resolver.resolveParagraphStyle(undefined);
+    // fontSize in document model is in half-points
+    return resolved.runFormatting?.fontSize ? (resolved.runFormatting.fontSize as number) / 2 : 11;
+  }, [styles]);
   const [showOptions, setShowOptions] = useState(false);
   const optionsRef = useRef<HTMLDivElement>(null);
 
@@ -333,6 +344,7 @@ export const InlineHeaderFooterEditor = forwardRef<
         style={{
           minHeight: 40,
           outline: 'none',
+          fontSize: `${defaultFontSizePt}pt`,
         }}
       />
 
