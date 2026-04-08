@@ -1423,7 +1423,7 @@ function convertHeaderFooterToContent(
                   : tab.alignment;
             return {
               val: align as 'start' | 'end' | 'center' | 'decimal' | 'bar' | 'clear',
-              pos: tab.position,
+              pos: twipsToPixels(tab.position),
               leader: tab.leader as
                 | 'none'
                 | 'dot'
@@ -1487,16 +1487,17 @@ function convertHeaderFooterToContent(
 
       const runs = convertDocumentRunsToFlowRuns(itemObj.content as unknown[], styleRunDefaults);
 
-      // Only add paragraph if it has content
-      if (runs.length > 0) {
-        const paragraphBlock: ParagraphBlock = {
-          kind: 'paragraph',
-          id: String(blocks.length),
-          runs,
-          attrs: Object.keys(attrs).length > 0 ? attrs : undefined,
-        };
-        blocks.push(paragraphBlock);
+      // Empty paragraphs (blank lines) should still measure — add empty text run
+      if (runs.length === 0) {
+        runs.push({ kind: 'text' as const, text: '' });
       }
+      const paragraphBlock: ParagraphBlock = {
+        kind: 'paragraph',
+        id: String(blocks.length),
+        runs,
+        attrs: Object.keys(attrs).length > 0 ? attrs : undefined,
+      };
+      blocks.push(paragraphBlock);
     }
 
     // Handle Document Table type (e.g. AMA header contains a table with logo + company info)
@@ -1994,18 +1995,13 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
             footerContentHeight > availableFooterSpace
           ) {
             effectiveMargins = { ...margins };
-            // Gap between header/footer content and body to prevent overlap
-            const headerBodyGap = 8;
             if (headerContentHeight > availableHeaderSpace) {
-              effectiveMargins.top = Math.max(
-                margins.top,
-                headerDistance + headerContentHeight + headerBodyGap
-              );
+              effectiveMargins.top = Math.max(margins.top, headerDistance + headerContentHeight);
             }
             if (footerContentHeight > availableFooterSpace) {
               effectiveMargins.bottom = Math.max(
                 margins.bottom,
-                footerDistance + footerContentHeight + headerBodyGap
+                footerDistance + footerContentHeight
               );
             }
           }
