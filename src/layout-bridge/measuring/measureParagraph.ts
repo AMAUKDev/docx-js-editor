@@ -28,10 +28,9 @@ import {
 } from './measureContainer';
 
 import { DEFAULT_SINGLE_LINE_RATIO } from '../../utils/fontResolver';
-import {
-  calculateTabWidth as calcTabWidth,
-  type TabContext,
-} from '../../prosemirror/utils/tabCalculator';
+// Tab rendering uses calculateTabWidth from tabCalculator — but for measurement
+// (line break decisions) we intentionally use a simple fixed width to avoid
+// false line wraps from sub-pixel text measurement differences.
 
 // Default values - match Word 2007+ defaults and renderPage.ts
 const DEFAULT_FONT_SIZE = 11; // 11pt (Word 2007+ default)
@@ -519,29 +518,18 @@ export function measureParagraph(
     }
 
     if (isTabRun(run)) {
-      // Handle tab run — compute width from paragraph tab stops
+      // Handle tab run
       const style = runToFontStyle(run);
       updateMaxFont(style);
 
-      // Build following text for alignment calculation (center/right tabs)
-      let followingText = '';
-      for (let j = runIndex + 1; j < runs.length; j++) {
-        const nextRun = runs[j];
-        if (isTabRun(nextRun) || isLineBreakRun(nextRun)) break;
-        if (isTextRun(nextRun)) followingText += nextRun.text;
-        else if (isFieldRun(nextRun)) followingText += nextRun.fallback || '0';
-      }
-
-      // Use the shared tab calculator (same as the renderer) so measurement
-      // and visual rendering agree on tab widths for center/right tabs.
-      const currentPos = currentLine.width + (currentLine.leftOffset ?? 0);
-      const tabContext: TabContext = {
-        explicitStops: attrs?.tabs,
-      };
-      const tabResult = calcTabWidth(currentPos, tabContext, followingText, (t) =>
-        measureTextWidth(t, runToFontStyle(run))
-      );
-      const tabWidth = tabResult.width;
+      // For LINE BREAK decisions, use a conservative small tab width (48px default).
+      // The renderer independently positions tabs using calculateTabWidth() with
+      // full center/right alignment logic — so the visual output is always correct.
+      // Using the accurate tab width here causes false line wraps because text
+      // measurement on initial load may differ by 1-2px from the renderer,
+      // pushing right-aligned tabs past the margin.
+      const MEASURE_TAB_WIDTH = 48; // 0.5 inch default
+      const tabWidth = run.width ?? MEASURE_TAB_WIDTH;
 
       if (currentLine.width + tabWidth > currentLine.availableWidth + WIDTH_TOLERANCE) {
         // Tab doesn't fit, start new line
