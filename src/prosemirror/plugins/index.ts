@@ -22,3 +22,11 @@ export {
 export type { CrossRefUpdaterConfig } from './crossRefUpdater';
 
 export { createSelectiveEditablePlugin, selectiveEditableKey } from './SelectiveEditablePlugin';
+
+export {
+  createSuggestionModePlugin,
+  suggestionModeKey,
+  toggleSuggestionMode,
+  setSuggestionMode,
+  isSuggestionModeActive,
+} from './suggestionMode';

@@ -192,6 +192,10 @@ import {
   refreshAllReferences,
 } from '../prosemirror/plugins/crossRefUpdater';
 import { createSelectiveEditablePlugin } from '../prosemirror/plugins/SelectiveEditablePlugin';
+import {
+  createSuggestionModePlugin,
+  setSuggestionMode,
+} from '../prosemirror/plugins/suggestionMode';
 
 // ============================================================================
 // TYPES
@@ -1074,7 +1078,11 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     []
   );
 
-  // Merge external plugins with style enforcer, cross-ref updater, and selective editable
+  // Merge external plugins with style enforcer, cross-ref updater, selective editable,
+  // and suggestion mode.  The suggestion mode plugin is always registered so it can
+  // be activated/deactivated via dispatch without recreating the EditorState.
+  // initialActive captures the mode at mount time (04b470b fix).
+  const initialSuggestionActive = useRef(editingMode === 'suggesting');
   const mergedPlugins = useMemo(() => {
     const plugins = externalPlugins ? [...externalPlugins] : [];
     plugins.push(crossRefUpdaterPlugin);
@@ -1084,8 +1092,16 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     if (lockedEditing) {
       plugins.push(createSelectiveEditablePlugin());
     }
+    plugins.push(createSuggestionModePlugin(initialSuggestionActive.current, 'User'));
     return plugins;
   }, [restrictedMode, allowedStyleIds, externalPlugins, crossRefUpdaterPlugin, lockedEditing]);
+
+  // Sync editingMode changes to the suggestion mode plugin via dispatch
+  useEffect(() => {
+    const view = pagedEditorRef.current?.getView();
+    if (!view) return;
+    setSuggestionMode(editingMode === 'suggesting', view.state, view.dispatch);
+  }, [editingMode]);
 
   // Refs
   const pagedEditorRef = useRef<PagedEditorRef>(null);
