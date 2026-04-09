@@ -276,8 +276,9 @@ export function parseRunProperties(
       }
         ? T
         : never;
-      // Also resolve the actual font name for convenience
-      if (theme && !formatting.fontFamily.ascii) {
+      // Resolve the actual font name. resolveThemeFontRef handles null theme
+      // gracefully via DEFAULT_FONTS, so always resolve regardless of theme presence.
+      if (!formatting.fontFamily.ascii) {
         formatting.fontFamily.ascii = resolveThemeFontRef(theme, asciiTheme);
       }
     }
@@ -285,7 +286,7 @@ export function parseRunProperties(
     const hAnsiTheme = getAttribute(rFonts, 'w', 'hAnsiTheme');
     if (hAnsiTheme) {
       formatting.fontFamily.hAnsiTheme = hAnsiTheme;
-      if (theme && !formatting.fontFamily.hAnsi) {
+      if (!formatting.fontFamily.hAnsi) {
         formatting.fontFamily.hAnsi = resolveThemeFontRef(theme, hAnsiTheme);
       }
     }
@@ -293,7 +294,7 @@ export function parseRunProperties(
     const eastAsiaTheme = getAttribute(rFonts, 'w', 'eastAsiaTheme');
     if (eastAsiaTheme) {
       formatting.fontFamily.eastAsiaTheme = eastAsiaTheme;
-      if (theme && !formatting.fontFamily.eastAsia) {
+      if (!formatting.fontFamily.eastAsia) {
         formatting.fontFamily.eastAsia = resolveThemeFontRef(theme, eastAsiaTheme);
       }
     }
@@ -301,7 +302,7 @@ export function parseRunProperties(
     const csTheme = getAttribute(rFonts, 'w', 'cstheme');
     if (csTheme) {
       formatting.fontFamily.csTheme = csTheme;
-      if (theme && !formatting.fontFamily.cs) {
+      if (!formatting.fontFamily.cs) {
         formatting.fontFamily.cs = resolveThemeFontRef(theme, csTheme);
       }
     }

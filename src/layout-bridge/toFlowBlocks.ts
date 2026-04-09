@@ -37,6 +37,7 @@ import type { Theme } from '../types/document';
 import type { NumberingMap } from '../docx/numberingParser';
 import { resolveColor } from '../utils/colorResolver';
 import { pointsToPixels } from '../utils/units';
+import { resolveThemeFontRef } from '../docx/themeParser';
 
 /**
  * Options for the conversion.
@@ -272,7 +273,13 @@ function extractRunFormatting(marks: readonly Mark[], theme?: Theme | null): Run
 
       case 'fontFamily': {
         const attrs = mark.attrs as FontFamilyAttrs;
-        formatting.fontFamily = attrs.ascii || attrs.hAnsi;
+        // Prefer explicit ascii/hAnsi; fall back to resolving theme refs if ascii was
+        // not populated during parsing (e.g. theme was unavailable).
+        formatting.fontFamily =
+          attrs.ascii ||
+          attrs.hAnsi ||
+          (attrs.asciiTheme ? resolveThemeFontRef(null, attrs.asciiTheme) : undefined) ||
+          (attrs.hAnsiTheme ? resolveThemeFontRef(null, attrs.hAnsiTheme) : undefined);
         break;
       }
 

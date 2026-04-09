@@ -174,7 +174,9 @@ function parseRunProperties(
       cs: getAttribute(rFonts, 'w', 'cs') ?? undefined,
     };
 
-    // Theme font references - resolve to actual font names
+    // Theme font references - resolve to actual font names.
+    // resolveThemeFontRef handles null theme gracefully (uses DEFAULT_FONTS → Calibri),
+    // so we always resolve to avoid inheriting a parent style's explicit ASCII font.
     const asciiTheme = getAttribute(rFonts, 'w', 'asciiTheme');
     if (asciiTheme) {
       formatting.fontFamily.asciiTheme = asciiTheme as TextFormatting['fontFamily'] extends {
@@ -182,29 +184,28 @@ function parseRunProperties(
       }
         ? T
         : never;
-      // Also resolve the actual font name for convenience
-      if (theme && !formatting.fontFamily.ascii) {
+      if (!formatting.fontFamily.ascii) {
         formatting.fontFamily.ascii = resolveThemeFontRef(theme, asciiTheme);
       }
     }
     const hAnsiTheme = getAttribute(rFonts, 'w', 'hAnsiTheme');
     if (hAnsiTheme) {
       formatting.fontFamily.hAnsiTheme = hAnsiTheme;
-      if (theme && !formatting.fontFamily.hAnsi) {
+      if (!formatting.fontFamily.hAnsi) {
         formatting.fontFamily.hAnsi = resolveThemeFontRef(theme, hAnsiTheme);
       }
     }
     const eastAsiaTheme = getAttribute(rFonts, 'w', 'eastAsiaTheme');
     if (eastAsiaTheme) {
       formatting.fontFamily.eastAsiaTheme = eastAsiaTheme;
-      if (theme && !formatting.fontFamily.eastAsia) {
+      if (!formatting.fontFamily.eastAsia) {
         formatting.fontFamily.eastAsia = resolveThemeFontRef(theme, eastAsiaTheme);
       }
     }
     const csTheme = getAttribute(rFonts, 'w', 'cstheme');
     if (csTheme) {
       formatting.fontFamily.csTheme = csTheme;
-      if (theme && !formatting.fontFamily.cs) {
+      if (!formatting.fontFamily.cs) {
         formatting.fontFamily.cs = resolveThemeFontRef(theme, csTheme);
       }
     }
