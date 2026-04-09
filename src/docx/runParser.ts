@@ -261,12 +261,19 @@ export function parseRunProperties(
   // Font family (w:rFonts)
   const rFonts = findChild(rPr, 'w', 'rFonts');
   if (rFonts) {
-    formatting.fontFamily = {
-      ascii: getAttribute(rFonts, 'w', 'ascii') ?? undefined,
-      hAnsi: getAttribute(rFonts, 'w', 'hAnsi') ?? undefined,
-      eastAsia: getAttribute(rFonts, 'w', 'eastAsia') ?? undefined,
-      cs: getAttribute(rFonts, 'w', 'cs') ?? undefined,
-    };
+    // IMPORTANT: Only include properties that are actually present in the XML.
+    // Setting absent properties to `undefined` explicitly causes spread-merges
+    // to overwrite parent-resolved values with `undefined`, breaking inheritance.
+    const fontFamily: NonNullable<TextFormatting['fontFamily']> = {};
+    const asciiVal = getAttribute(rFonts, 'w', 'ascii');
+    if (asciiVal) fontFamily.ascii = asciiVal;
+    const hAnsiVal = getAttribute(rFonts, 'w', 'hAnsi');
+    if (hAnsiVal) fontFamily.hAnsi = hAnsiVal;
+    const eastAsiaVal = getAttribute(rFonts, 'w', 'eastAsia');
+    if (eastAsiaVal) fontFamily.eastAsia = eastAsiaVal;
+    const csVal = getAttribute(rFonts, 'w', 'cs');
+    if (csVal) fontFamily.cs = csVal;
+    formatting.fontFamily = fontFamily;
 
     // Theme font references
     const asciiTheme = getAttribute(rFonts, 'w', 'asciiTheme');
