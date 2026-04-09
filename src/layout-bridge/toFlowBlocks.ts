@@ -1358,6 +1358,10 @@ function substituteBlocksForItem(
         return {
           ...row,
           id: nextBlockId(),
+          // Strip isHeader: loop-expanded tables should not repeat rows as page-break headers.
+          // Word often sets tblHeader on the first row of template tables, which causes the
+          // image row to duplicate when the expanded table is split across a page boundary.
+          isHeader: undefined,
           cells: row.cells.map((cell) => {
             const colSpan = cell.colSpan ?? 1;
             let cellW = 0;
