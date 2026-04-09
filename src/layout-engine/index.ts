@@ -391,6 +391,12 @@ function layoutTable(
   const headerRowsHeight = getHeaderRowsHeight(measure, headerRowCount);
 
   let currentRowIndex = 0;
+  // Track whether the first fragment contained any non-header content rows.
+  // Header repetition is only meaningful when the first fragment had real content
+  // beyond just the header rows. If the first fragment was ALL header rows (e.g.
+  // a photo table where Word set tblHeader on the image row), repeating the header
+  // on every continuation would duplicate the image on every page.
+  let firstFragmentHadContentRows = false;
 
   while (currentRowIndex < rows.length) {
     const state = paginator.getCurrentState();
@@ -404,8 +410,14 @@ function layoutTable(
     const pendingSpacing = isFirstFragment ? state.trailingSpacing : 0;
     const availableHeight = rawAvailableHeight - pendingSpacing;
 
+    // Only repeat headers on continuation fragments when the first fragment actually
+    // contained content rows beyond the headers. This prevents photo/image rows that
+    // are accidentally flagged as tblHeader from being duplicated on every split.
+    const shouldRepeatHeaders =
+      !isFirstFragment && headerRowCount > 0 && firstFragmentHadContentRows;
+
     // For continuation fragments, we need space for header rows + at least one content row
-    const headerOverhead = !isFirstFragment && headerRowCount > 0 ? headerRowsHeight : 0;
+    const headerOverhead = shouldRepeatHeaders ? headerRowsHeight : 0;
 
     // Calculate how many rows fit (excluding header rows which are prepended separately)
     let rowsHeight = 0;
@@ -421,6 +433,11 @@ function layoutTable(
       } else {
         break;
       }
+    }
+
+    // Record whether the first fragment had content rows beyond the headers
+    if (isFirstFragment) {
+      firstFragmentHadContentRows = currentRowIndex + fittingRows > headerRowCount;
     }
 
     // Total fragment height includes header rows for continuation fragments
@@ -452,7 +469,7 @@ function layoutTable(
       pmEnd: block.pmEnd,
       continuesFromPrev: !isFirstFragment,
       continuesOnNext: !isLastFragment,
-      headerRowCount: !isFirstFragment && headerRowCount > 0 ? headerRowCount : undefined,
+      headerRowCount: shouldRepeatHeaders ? headerRowCount : undefined,
     };
 
     const result = paginator.addFragment(fragment, fragmentHeight, 0, 0);
@@ -463,9 +480,11 @@ function layoutTable(
 
     // If more rows remain, advance to next column/page
     if (currentRowIndex < rows.length) {
-      // Need space for at least one content row plus repeated header rows
+      // Need space for at least one content row plus repeated header rows.
+      // Only account for header overhead when headers will actually repeat.
+      const repeatHeadersNext = headerRowCount > 0 && firstFragmentHadContentRows;
       const nextRowHeight =
-        rows[currentRowIndex].height + (headerRowCount > 0 ? headerRowsHeight : 0);
+        rows[currentRowIndex].height + (repeatHeadersNext ? headerRowsHeight : 0);
       paginator.ensureFits(nextRowHeight);
     }
   }
