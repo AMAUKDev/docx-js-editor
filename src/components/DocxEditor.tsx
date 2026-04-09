@@ -3886,6 +3886,10 @@ body { background: white; }
                 `<w:numId w:val="${newNumId}"/>`
               );
             }
+            // Also update parsed pPr.numPr.numId so live editor rendering uses the remapped ID
+            if (idx >= 0 && existingStyles[idx].pPr?.numPr?.numId === s._numId) {
+              existingStyles[idx].pPr!.numPr!.numId = newNumId;
+            }
           }
           // Store on document for rezip to inject into numbering.xml
           (doc as any).importedNumberingEntries = [

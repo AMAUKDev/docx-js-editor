@@ -103,6 +103,35 @@ export function parseImportedStyleXml(xml: string): Record<string, any> {
   const jcMatch = xml.match(/<w:jc w:val="([^"]+)"/);
   if (jcMatch) pPr.alignment = jcMatch[1];
 
+  // Indentation (w:ind)
+  const indMatch = xml.match(/<w:ind\b([^/]*?)\/?>/);
+  if (indMatch) {
+    const attrs = indMatch[1];
+    const left = attrs.match(/w:left="(\d+)"/);
+    const right = attrs.match(/w:right="(\d+)"/);
+    const firstLine = attrs.match(/w:firstLine="(\d+)"/);
+    const hanging = attrs.match(/w:hanging="(\d+)"/);
+    if (left) pPr.indentLeft = parseInt(left[1], 10);
+    if (right) pPr.indentRight = parseInt(right[1], 10);
+    if (firstLine) pPr.indentFirstLine = parseInt(firstLine[1], 10);
+    if (hanging) {
+      pPr.indentFirstLine = -parseInt(hanging[1], 10);
+      pPr.hangingIndent = true;
+    }
+  }
+
+  // Numbering properties (w:numPr) — numId will be remapped by importStyles after ID collision avoidance
+  const numPrMatch = xml.match(/<w:numPr>([\s\S]*?)<\/w:numPr>/);
+  if (numPrMatch) {
+    const numPrXml = numPrMatch[1];
+    const numPr: Record<string, number> = {};
+    const ilvlMatch = numPrXml.match(/<w:ilvl w:val="(\d+)"/);
+    const numIdMatch = numPrXml.match(/<w:numId w:val="(\d+)"/);
+    if (ilvlMatch) numPr.ilvl = parseInt(ilvlMatch[1], 10);
+    if (numIdMatch) numPr.numId = parseInt(numIdMatch[1], 10);
+    if (Object.keys(numPr).length > 0) pPr.numPr = numPr;
+  }
+
   if (Object.keys(pPr).length > 0) result.pPr = pPr;
 
   return result;

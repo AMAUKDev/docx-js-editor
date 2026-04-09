@@ -553,6 +553,16 @@ function makeApplyStyle(schema: Schema) {
         }
       }
 
+      // Emphasis marks (bold, italic, etc.) are only removed if they span the
+      // ENTIRE paragraph (meaning they came from the previous style, not from
+      // the user manually formatting a word). Sub-range emphasis is preserved.
+      const emphasisMarkTypes = [
+        schema.marks.bold,
+        schema.marks.italic,
+        schema.marks.underline,
+        schema.marks.strike,
+      ].filter(Boolean);
+
       // Style-level marks (font, size, color) are always reset to the new style.
       const styleResetMarks = [
         schema.marks.fontSize,
@@ -625,10 +635,20 @@ function makeApplyStyle(schema: Schema) {
                 tr = tr.removeMark(paragraphStart, paragraphEnd, markType);
               }
 
-              // Emphasis marks (bold, italic, etc.) are NEVER removed when applying a style.
-              // They represent user intent (e.g. a manually-bolded word) and must survive
-              // style changes. The new style's emphasis marks are added below — if the new
-              // style is bold the paragraph will be bold; if not, only user-bolded words remain.
+              // For emphasis marks: only remove if they span the ENTIRE paragraph
+              // (meaning they came from the previous style). Sub-range emphasis
+              // (user manually bolded a word) is preserved.
+              for (const markType of emphasisMarkTypes) {
+                let coversAll = true;
+                node.descendants((child) => {
+                  if (child.isText && !child.marks.some((m) => m.type === markType)) {
+                    coversAll = false;
+                  }
+                });
+                if (coversAll && node.content.size > 0) {
+                  tr = tr.removeMark(paragraphStart, paragraphEnd, markType);
+                }
+              }
 
               // Add back the marks defined by the new style
               for (const mark of styleMarks) {
