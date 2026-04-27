@@ -353,7 +353,7 @@ export interface DocxEditorProps {
   onPageCountChange?: (pageCount: number) => void;
   /** When true, show gear icons on styles + "Create New Style" in dropdown */
   canModifyStyles?: boolean;
-  /** Initial render mode on mount ('rendered' | 'raw'). Defaults to 'rendered'. Does not persist between loads. */
+  /** Initial render mode on mount ('rendered' | 'raw'). Defaults to 'rendered'. Resets on each page navigation (full remount); does not reset on buffer swaps within the same mounted instance. */
   initialRenderMode?: 'rendered' | 'raw';
 }
 
@@ -1132,7 +1132,7 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     paragraphTabs: null,
     pmTableContext: null,
     pmImageContext: null,
-    renderMode: initialRenderMode,
+    renderMode: initialRenderMode === 'raw' ? 'raw' : 'rendered',
   });
 
   // Table properties dialog state
