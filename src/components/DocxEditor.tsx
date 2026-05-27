@@ -236,6 +236,8 @@ export interface DocxEditorProps {
   theme?: Theme | null;
   /** Whether to show toolbar (default: true) */
   showToolbar?: boolean;
+  /** Whether to show the editing mode dropdown (Editing/Suggesting/Viewing). Default: true */
+  showModeDropdown?: boolean;
   /** Whether to show zoom control (default: true) */
   showZoomControl?: boolean;
   /** Whether to show page number indicator (default: true) */
@@ -1065,6 +1067,7 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     onFontsLoaded: onFontsLoadedCallback,
     theme,
     showToolbar = true,
+    showModeDropdown = true,
     showZoomControl = true,
     showPageNumbers = true,
     enablePageNavigation = true,
@@ -4549,10 +4552,12 @@ body { background: white; }
                         }))
                       }
                     >
-                      <EditingModeDropdown
-                        mode={editingMode}
-                        onModeChange={(mode) => setEditingMode(mode)}
-                      />
+                      {showModeDropdown && (
+                        <EditingModeDropdown
+                          mode={editingMode}
+                          onModeChange={(mode) => setEditingMode(mode)}
+                        />
+                      )}
                       {toolbarExtra}
                     </Toolbar>
                     {/* Tracked changes action bar — shown when changes exist */}
