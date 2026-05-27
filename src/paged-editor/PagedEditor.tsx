@@ -2377,6 +2377,36 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
             continue; // Skip to next span
           }
 
+          // Special handling for context tag spans — they are atom nodes in PM
+          // (size 1) but render as multi-character text (e.g. "{case_no}"). The
+          // caret must sit at the span edge (before "{" or after "}"), never at a
+          // character index inside the braces. Using charIndex here would place the
+          // caret between "{" and the first character while PM is positioned after
+          // the atom, so typed text appears to the right of "}".
+          if (
+            spanEl.classList.contains('layout-context-tag') ||
+            spanEl.classList.contains('layout-context-tag-image')
+          ) {
+            // Inclusive <= pmEnd (unlike the tab branch's strict <): an atom has two
+            // valid caret positions — before (pmStart) and after (pmEnd).
+            if (pmPos >= pmStart && pmPos <= pmEnd) {
+              const spanRect = spanEl.getBoundingClientRect();
+              const edgeX = pmPos === pmEnd ? spanRect.right : spanRect.left;
+              const pageEl = spanEl.closest('.layout-page');
+              const pageIndex = pageEl ? Number((pageEl as HTMLElement).dataset.pageNumber) - 1 : 0;
+              const lineEl = spanEl.closest('.layout-line');
+              const lineHeight = lineEl ? (lineEl as HTMLElement).offsetHeight : 16;
+
+              return {
+                x: (edgeX - overlayRect.left) / currentZoom,
+                y: (spanRect.top - overlayRect.top) / currentZoom,
+                height: lineHeight,
+                pageIndex,
+              };
+            }
+            continue; // Skip to next span
+          }
+
           // For text runs, use inclusive range
           if (pmPos >= pmStart && pmPos <= pmEnd && span.firstChild?.nodeType === Node.TEXT_NODE) {
             const textNode = span.firstChild as Text;

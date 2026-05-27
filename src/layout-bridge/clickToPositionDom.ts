@@ -475,6 +475,34 @@ export function getCaretPositionFromDom(
       continue; // Skip to next span
     }
 
+    // Context tag spans are atom nodes (PM size 1) rendered as multi-character
+    // text. Place the caret at the span edge (before "{" or after "}"), never at
+    // a character index inside the braces — otherwise the caret sits between "{"
+    // and the first character while PM is positioned after the atom.
+    if (
+      spanEl.classList.contains('layout-context-tag') ||
+      spanEl.classList.contains('layout-context-tag-image')
+    ) {
+      // Inclusive <= pmEnd (unlike the tab branch's strict <): an atom has two
+      // valid caret positions — before (pmStart) and after (pmEnd).
+      if (pmPos >= pmStart && pmPos <= pmEnd) {
+        const spanRect = spanEl.getBoundingClientRect();
+        const edgeX = pmPos === pmEnd ? spanRect.right : spanRect.left;
+        const pageEl = spanEl.closest('.layout-page') as HTMLElement | null;
+        const pageIndex = pageEl ? Number(pageEl.dataset.pageNumber || 1) - 1 : 0;
+        const lineEl = spanEl.closest('.layout-line');
+        const lineHeight = lineEl ? (lineEl as HTMLElement).offsetHeight : 16;
+
+        return {
+          x: edgeX - overlayRect.left,
+          y: spanRect.top - overlayRect.top,
+          height: lineHeight,
+          pageIndex,
+        };
+      }
+      continue; // Skip to next span
+    }
+
     // For text runs, use inclusive range
     if (pmPos >= pmStart && pmPos <= pmEnd) {
       const textNode = spanEl.firstChild;
