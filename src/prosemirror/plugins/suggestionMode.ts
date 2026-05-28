@@ -22,7 +22,7 @@ import {
   type Transaction,
 } from 'prosemirror-state';
 import type { EditorView } from 'prosemirror-view';
-import type { Node as PMNode, MarkType } from 'prosemirror-model';
+import type { Node as PMNode, MarkType, Mark } from 'prosemirror-model';
 
 export const suggestionModeKey = new PluginKey<SuggestionModeState>('suggestionMode');
 const SUGGESTION_META = 'suggestionModeApplied';
@@ -310,26 +310,70 @@ export function createSuggestionModePlugin(initialActive = false, author = 'User
 
       const insertionType = newState.schema.marks.insertion;
       if (!insertionType) return null;
-
-      const markAttrs = makeMarkAttrs(pluginState);
+      const deletionType = newState.schema.marks.deletion;
 
       const tr = newState.tr;
       tr.setMeta(SUGGESTION_META, true);
 
-      const deletionType = newState.schema.marks.deletion;
       userTr.steps.forEach((step) => {
         const stepMap = step.getMap();
+        const insertMarkAttrs = makeMarkAttrs(pluginState);
+
         stepMap.forEach((_oldFrom, _oldTo, newFrom, newTo) => {
+          // Restore deleted text with deletion marks so it remains visible as a tracked deletion.
+          // This handles paste-over-selection and other unintercepted replacement operations.
+          if (_oldTo > _oldFrom && deletionType) {
+            const deletedSegments: { text: string; marks: readonly Mark[]; isOwnInsert: boolean }[] = [];
+
+            _oldState.doc.nodesBetween(_oldFrom, _oldTo, (node, pos) => {
+              if (!node.isText) return;
+              const start = Math.max(pos, _oldFrom);
+              const end = Math.min(pos + node.nodeSize, _oldTo);
+              if (start >= end) return;
+              const slicedText = (node.text ?? '').slice(start - pos, end - pos);
+              const isOwnInsert = node.marks.some(
+                (m) => m.type === insertionType && m.attrs.author === pluginState.author
+              );
+              const hasDeletion = node.marks.some((m) => m.type === deletionType);
+              if (!hasDeletion) {
+                deletedSegments.push({ text: slicedText, marks: node.marks, isOwnInsert });
+              }
+            });
+
+            if (deletedSegments.some(({ isOwnInsert }) => !isOwnInsert)) {
+              const insertAt = tr.mapping.map(newFrom);
+              const delAttrs =
+                findAdjacentRevisionForRange(tr.doc, insertAt, insertAt, 'deletion', pluginState.author) ||
+                makeMarkAttrs(pluginState);
+
+              let cursor = insertAt;
+              for (const { text, marks, isOwnInsert } of deletedSegments) {
+                if (isOwnInsert) continue; // retract own insertion — don't restore
+                tr.insertText(text, cursor);
+                tr.addMark(cursor, cursor + text.length, deletionType.create(delAttrs));
+                for (const mark of marks) {
+                  if (mark.type !== insertionType && mark.type !== deletionType) {
+                    tr.addMark(cursor, cursor + text.length, mark);
+                  }
+                }
+                cursor += text.length;
+              }
+            }
+          }
+
+          // Mark newly inserted text as insertion.
           if (newTo > newFrom) {
-            newState.doc.nodesBetween(newFrom, newTo, (node, pos) => {
+            const mappedFrom = tr.mapping.map(newFrom);
+            const mappedTo = tr.mapping.map(newTo);
+            tr.doc.nodesBetween(mappedFrom, mappedTo, (node, pos) => {
               if (!node.isText) return;
               const hasTrackedMark = node.marks.some(
                 (m) => m.type === insertionType || (deletionType && m.type === deletionType)
               );
               if (!hasTrackedMark) {
-                const nodeStart = Math.max(pos, newFrom);
-                const nodeEnd = Math.min(pos + node.nodeSize, newTo);
-                tr.addMark(nodeStart, nodeEnd, insertionType.create(markAttrs));
+                const nodeStart = Math.max(pos, mappedFrom);
+                const nodeEnd = Math.min(pos + node.nodeSize, mappedTo);
+                tr.addMark(nodeStart, nodeEnd, insertionType.create(insertMarkAttrs));
               }
             });
           }
