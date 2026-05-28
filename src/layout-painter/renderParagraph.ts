@@ -1070,13 +1070,17 @@ export function renderParagraphFragment(
     fragmentEl.style.backgroundColor = block.attrs.shading;
   }
 
-  // Locked paragraph visual indicator
+  // Protected region visual indicator (soft lock — advisory only, not enforced)
   if (block.attrs?.locked) {
     if (!block.attrs.shading) {
-      fragmentEl.style.backgroundColor = 'rgba(0, 0, 0, 0.03)';
+      fragmentEl.style.backgroundColor = 'rgba(255, 200, 100, 0.07)';
     }
-    fragmentEl.style.borderLeft = '3px solid #b0b0b0';
+    fragmentEl.style.borderLeft = '3px solid rgba(180, 120, 40, 0.5)';
     fragmentEl.style.paddingLeft = parseInt(fragmentEl.style.paddingLeft || '0', 10) + 4 + 'px';
+    fragmentEl.dataset.protected = 'true';
+    if (block.attrs.protectedBy) fragmentEl.dataset.protectedBy = block.attrs.protectedBy;
+    if (block.attrs.protectedAt) fragmentEl.dataset.protectedAt = block.attrs.protectedAt;
+    if (block.attrs.protectedReason) fragmentEl.dataset.protectedReason = block.attrs.protectedReason;
   }
 
   // Calculate available width for justify

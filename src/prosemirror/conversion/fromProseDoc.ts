@@ -300,6 +300,9 @@ function paragraphAttrsToFormatting(attrs: ParagraphAttrs): ParagraphFormatting 
     }
     // Locked state is always overridden from the PM attr (admin can toggle it)
     result.locked = attrs.locked || undefined;
+    result.protectedBy = attrs.protectedBy ?? undefined;
+    result.protectedAt = attrs.protectedAt ?? undefined;
+    result.protectedReason = attrs.protectedReason ?? undefined;
 
     return result;
   }
@@ -345,6 +348,9 @@ function paragraphAttrsToFormatting(attrs: ParagraphAttrs): ParagraphFormatting 
     outlineLevel: attrs.outlineLevel ?? undefined,
     contextualSpacing: attrs.contextualSpacing || undefined,
     locked: attrs.locked || undefined,
+    protectedBy: attrs.protectedBy ?? undefined,
+    protectedAt: attrs.protectedAt ?? undefined,
+    protectedReason: attrs.protectedReason ?? undefined,
   };
 }
 
