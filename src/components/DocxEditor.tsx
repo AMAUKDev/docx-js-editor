@@ -417,6 +417,10 @@ export interface DocxEditorRef {
   getCommentPositions: () => Array<{ commentId: number; top: number; height: number }>;
   /** Insert a context tag at the current cursor position */
   insertContextTag: (tagKey: string, label?: string, removeIfEmpty?: boolean) => void;
+  /** Replace every plain-text occurrence of searchText with a context tag node (single transaction). Returns replacement count. */
+  replaceAllWithContextTag: (searchText: string, tagKey: string, label?: string, removeIfEmpty?: boolean) => number;
+  /** Count plain-text occurrences of searchText in the document (single-run matches). */
+  countTextOccurrences: (searchText: string) => number;
   /** Insert a cross-reference at the current cursor position */
   insertCrossRef: (
     refType: 'heading' | 'figure',
@@ -3380,6 +3384,68 @@ body { background: white; }
         tr.setMeta('allowLockedEdit', true);
         view.dispatch(tr);
         pagedEditorRef.current?.focus();
+      },
+      replaceAllWithContextTag: (
+        searchText: string,
+        tagKey: string,
+        label?: string,
+        removeIfEmpty?: boolean
+      ): number => {
+        const view = pagedEditorRef.current?.getView();
+        if (!view || !searchText) return 0;
+        const schema = view.state.schema;
+        const nodeType = schema.nodes.contextTag;
+        if (!nodeType) return 0;
+
+        const hits: Array<{ from: number; to: number }> = [];
+        view.state.doc.descendants((node, pos) => {
+          if (!node.isText || !node.text) return;
+          let idx = node.text.indexOf(searchText);
+          while (idx !== -1) {
+            hits.push({ from: pos + idx, to: pos + idx + searchText.length });
+            idx = node.text.indexOf(searchText, idx + 1);
+          }
+        });
+        if (hits.length === 0) return 0;
+
+        const sortedHits = [...hits].sort((a, b) => b.from - a.from);
+        let tr = view.state.tr;
+        for (const { from, to } of sortedHits) {
+          const resolvedMarks = view.state.doc.resolve(from).marks();
+          const allowedMarks = resolvedMarks.filter((m: import('prosemirror-model').Mark) =>
+            nodeType.allowsMarkType(m.type)
+          );
+          const tagNode = nodeType.create(
+            {
+              tagKey,
+              label: label || contextTagDisplayValue(contextTags?.[tagKey]) || '',
+              removeIfEmpty: removeIfEmpty ?? false,
+              metaId: generateMetaId(),
+            },
+            null,
+            allowedMarks
+          );
+          tr = tr.replaceWith(from, to, tagNode);
+        }
+        tr.setMeta('allowLockedEdit', true);
+        tr.scrollIntoView();
+        view.dispatch(tr);
+        pagedEditorRef.current?.focus();
+        return hits.length;
+      },
+      countTextOccurrences: (searchText: string): number => {
+        const view = pagedEditorRef.current?.getView();
+        if (!view || !searchText) return 0;
+        let count = 0;
+        view.state.doc.descendants((node) => {
+          if (!node.isText || !node.text) return;
+          let idx = node.text.indexOf(searchText);
+          while (idx !== -1) {
+            count++;
+            idx = node.text.indexOf(searchText, idx + 1);
+          }
+        });
+        return count;
       },
       insertCrossRef: (
         refType: 'heading' | 'figure',
