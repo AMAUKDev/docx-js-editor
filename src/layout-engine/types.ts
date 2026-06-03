@@ -253,8 +253,14 @@ export type ParagraphAttrs = {
   // Default font for empty paragraphs (from style's rPr / pPr/rPr)
   defaultFontSize?: number; // in points
   defaultFontFamily?: string;
-  /** Whether this paragraph is locked (non-editable in locked-editing mode) */
+  /** Whether this paragraph is protected (advisory soft lock). */
   locked?: boolean;
+  /** Display name of the user who applied the protection. */
+  protectedBy?: string | null;
+  /** ISO 8601 timestamp when the protection was applied. */
+  protectedAt?: string | null;
+  /** Optional free-text reason for protection. */
+  protectedReason?: string | null;
   /** True when this paragraph represents a loop block delimiter ({% for %} / {% endfor %}). */
   isLoopBlock?: boolean;
   /** 'for' | 'endfor' when isLoopBlock is true. */

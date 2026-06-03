@@ -844,9 +844,12 @@ function convertParagraphAttrs(pmAttrs: PMParagraphAttrs): ParagraphAttrs {
     }
   }
 
-  // Lock state for selective editing
+  // Protection state (soft lock — advisory only)
   if (pmAttrs.locked) {
     attrs.locked = true;
+    if (pmAttrs.protectedBy != null) attrs.protectedBy = pmAttrs.protectedBy;
+    if (pmAttrs.protectedAt != null) attrs.protectedAt = pmAttrs.protectedAt;
+    if (pmAttrs.protectedReason != null) attrs.protectedReason = pmAttrs.protectedReason;
   }
 
   return attrs;

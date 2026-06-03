@@ -330,6 +330,12 @@ export interface ParagraphFormatting {
   // Lock state for selective editing
   /** Whether this paragraph is locked (custom extension, serialized as w:fpLocked in pPr) */
   locked?: boolean;
+  /** Display name of the user who applied protection (serialized as w:fpLockedBy) */
+  protectedBy?: string;
+  /** ISO 8601 timestamp when protection was applied (serialized as w:fpLockedAt) */
+  protectedAt?: string;
+  /** Optional reason for protection (serialized as w:fpLockedReason) */
+  protectedReason?: string;
 }
 
 // ============================================================================

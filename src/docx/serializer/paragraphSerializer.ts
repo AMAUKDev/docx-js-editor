@@ -487,6 +487,12 @@ export function serializeParagraphFormatting(formatting: ParagraphFormatting | u
   // Lock state (custom extension for selective editing)
   if (formatting.locked) {
     parts.push('<w:fpLocked/>');
+    if (formatting.protectedBy)
+      parts.push(`<w:fpLockedBy w:val="${escapeXml(formatting.protectedBy)}"/>`);
+    if (formatting.protectedAt)
+      parts.push(`<w:fpLockedAt w:val="${escapeXml(formatting.protectedAt)}"/>`);
+    if (formatting.protectedReason)
+      parts.push(`<w:fpLockedReason w:val="${escapeXml(formatting.protectedReason)}"/>`);
   }
 
   if (parts.length === 0) return '';

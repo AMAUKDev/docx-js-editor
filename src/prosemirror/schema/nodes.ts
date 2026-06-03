@@ -104,6 +104,12 @@ export interface ParagraphAttrs {
 
   /** Whether this paragraph is locked (non-editable in locked-editing mode) */
   locked?: boolean;
+  /** Display name of the user who applied the protection */
+  protectedBy?: string | null;
+  /** ISO 8601 timestamp when the protection was applied */
+  protectedAt?: string | null;
+  /** Optional free-text reason for protection */
+  protectedReason?: string | null;
 }
 
 /**

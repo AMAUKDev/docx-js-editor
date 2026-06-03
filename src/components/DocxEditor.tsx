@@ -192,6 +192,7 @@ import {
   refreshAllReferences,
 } from '../prosemirror/plugins/crossRefUpdater';
 import { createSelectiveEditablePlugin } from '../prosemirror/plugins/SelectiveEditablePlugin';
+import { createProtectedRegionNotifyPlugin } from '../prosemirror/plugins/ProtectedRegionNotifyPlugin';
 import {
   createSuggestionModePlugin,
   setSuggestionMode,
@@ -333,6 +334,12 @@ export interface DocxEditorProps {
   onLoopDiffsDetected?: (diffs: import('../docx/renderWithBookmarks').LoopDiffReport[]) => void;
   /** When true, the SelectiveEditablePlugin blocks edits to locked paragraphs */
   lockedEditing?: boolean;
+  /** Called once per paragraph position per session when the user edits inside a protected region */
+  onProtectedRegionEdit?: (info: {
+    protectedBy: string | null;
+    protectedAt: string | null;
+    protectedReason: string | null;
+  }) => void;
   /** Called when user right-clicks a context tag in the editor */
   onContextTagRightClick?: (info: {
     tagKey: string;
@@ -357,6 +364,13 @@ export interface DocxEditorProps {
   canModifyStyles?: boolean;
   /** Initial render mode on mount ('rendered' | 'raw'). Defaults to 'rendered'. Resets on each page navigation (full remount); does not reset on buffer swaps within the same mounted instance. */
   initialRenderMode?: 'rendered' | 'raw';
+}
+
+/** Author metadata attached when protecting a paragraph */
+export interface ProtectMeta {
+  protectedBy: string;
+  protectedAt: string;
+  protectedReason?: string;
 }
 
 /**
@@ -446,17 +460,29 @@ export interface DocxEditorRef {
     contextTags?: Record<string, string>;
     unknownTagMode?: 'omit' | 'keep' | 'raw';
   }) => Promise<ArrayBuffer | null>;
-  /** Lock paragraphs in a position range (admin) */
+  /** Protect paragraphs in a position range with author metadata */
+  protectParagraphs: (from: number, to: number, meta: ProtectMeta) => void;
+  /** Remove protection from paragraphs in a position range */
+  unprotectParagraphs: (from: number, to: number) => void;
+  /** Protect all body paragraphs with author metadata */
+  protectAll: (meta: ProtectMeta) => void;
+  /** Remove protection from all body paragraphs */
+  unprotectAll: () => void;
+  /** @deprecated Use protectParagraphs instead */
   lockParagraphs: (from: number, to: number) => void;
-  /** Unlock paragraphs in a position range (admin) */
+  /** @deprecated Use unprotectParagraphs instead */
   unlockParagraphs: (from: number, to: number) => void;
-  /** Lock all paragraphs in the document (admin) */
+  /** @deprecated Use protectAll instead */
   lockAll: () => void;
-  /** Unlock all paragraphs in the document (admin) */
+  /** @deprecated Use unprotectAll instead */
   unlockAll: () => void;
-  /** Lock all paragraphs in headers and footers */
+  /** Soft-protect all paragraphs in headers and footers (advisory, not enforced) */
+  protectHeadersFooters: (meta: ProtectMeta) => void;
+  /** Remove soft protection from all header/footer paragraphs */
+  unprotectHeadersFooters: () => void;
+  /** @deprecated Use protectHeadersFooters instead */
   lockHeadersFooters: () => void;
-  /** Unlock all paragraphs in headers and footers */
+  /** @deprecated Use unprotectHeadersFooters instead */
   unlockHeadersFooters: () => void;
   /** Update attributes of a context tag node at a given PM position */
   updateContextTagAttrs: (pmPos: number, attrs: Record<string, unknown>) => void;
@@ -683,10 +709,11 @@ function replaceContextTagsInHf(
   return { ...hf, content: newContent };
 }
 
-/** Set locked state on all paragraphs in every header and footer. */
+/** Set locked/protection state on all paragraphs in every header and footer. */
 function setHfLocked(
   history: { state: Document | null; push: (d: Document) => void },
-  locked: boolean
+  locked: boolean,
+  meta?: { protectedBy?: string; protectedAt?: string; protectedReason?: string }
 ) {
   const doc = history.state;
   if (!doc?.package) return;
@@ -700,7 +727,13 @@ function setHfLocked(
         if (block.type === 'paragraph') {
           return {
             ...block,
-            formatting: { ...block.formatting, locked: locked || undefined },
+            formatting: {
+              ...block.formatting,
+              locked: locked || undefined,
+              protectedBy: locked ? (meta?.protectedBy ?? undefined) : undefined,
+              protectedAt: locked ? (meta?.protectedAt ?? undefined) : undefined,
+              protectedReason: locked ? (meta?.protectedReason ?? undefined) : undefined,
+            },
           };
         }
         return block;
@@ -1113,6 +1146,7 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     onContextTagsDiscovered,
     onLoopDiffsDetected,
     lockedEditing = false,
+    onProtectedRegionEdit,
     onContextTagRightClick,
     loopPreviewData,
     onPageCountChange: onPageCountChangeProp,
@@ -1158,6 +1192,8 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
   }>({ open: false, mode: 'modify' });
   // Header/footer editing state
   const [hfEditPosition, setHfEditPosition] = useState<'header' | 'footer' | null>(null);
+  // Which H/F type is being edited ('first' for first-page, 'default' for all-pages/non-first)
+  const [hfEditType, setHfEditType] = useState<'default' | 'first' | 'even' | null>(null);
   // Editing mode (editing / suggesting / viewing) — controlled or uncontrolled
   const [editingModeInternal, setEditingModeInternal] = useState<EditorMode>(modeProp ?? 'editing');
   const editingMode = modeProp ?? editingModeInternal;
@@ -1233,9 +1269,12 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     if (lockedEditing) {
       plugins.push(createSelectiveEditablePlugin());
     }
+    if (onProtectedRegionEdit) {
+      plugins.push(createProtectedRegionNotifyPlugin(onProtectedRegionEdit));
+    }
     plugins.push(createSuggestionModePlugin(initialSuggestionActive.current, 'User'));
     return plugins;
-  }, [restrictedMode, allowedStyleIds, externalPlugins, crossRefUpdaterPlugin, lockedEditing]);
+  }, [restrictedMode, allowedStyleIds, externalPlugins, crossRefUpdaterPlugin, lockedEditing, onProtectedRegionEdit]);
 
   // Sync editingMode changes to the suggestion mode plugin via dispatch
   useEffect(() => {
@@ -3729,6 +3768,84 @@ body { background: white; }
         const tempAgent = new DocumentAgent(renderedDocument);
         return tempAgent.toBuffer();
       },
+      protectParagraphs: (from: number, to: number, meta: ProtectMeta) => {
+        const view = pagedEditorRef.current?.getView();
+        if (!view) return;
+        let tr = view.state.tr;
+        tr.setMeta('allowLockedEdit', true);
+        const seen = new Set<number>();
+        view.state.doc.nodesBetween(from, to, (node, pos) => {
+          if (node.type.name === 'paragraph' && !seen.has(pos)) {
+            seen.add(pos);
+            tr = tr.setNodeMarkup(pos, undefined, {
+              ...node.attrs,
+              locked: true,
+              protectedBy: meta.protectedBy,
+              protectedAt: meta.protectedAt,
+              protectedReason: meta.protectedReason ?? null,
+            });
+          }
+        });
+        view.dispatch(tr);
+      },
+      unprotectParagraphs: (from: number, to: number) => {
+        const view = pagedEditorRef.current?.getView();
+        if (!view) return;
+        let tr = view.state.tr;
+        tr.setMeta('allowLockedEdit', true);
+        const seen = new Set<number>();
+        view.state.doc.nodesBetween(from, to, (node, pos) => {
+          if (node.type.name === 'paragraph' && !seen.has(pos)) {
+            seen.add(pos);
+            tr = tr.setNodeMarkup(pos, undefined, {
+              ...node.attrs,
+              locked: false,
+              protectedBy: null,
+              protectedAt: null,
+              protectedReason: null,
+            });
+          }
+        });
+        view.dispatch(tr);
+      },
+      protectAll: (meta: ProtectMeta) => {
+        const view = pagedEditorRef.current?.getView();
+        if (!view) return;
+        let tr = view.state.tr;
+        tr.setMeta('allowLockedEdit', true);
+        view.state.doc.descendants((node, pos) => {
+          if (node.type.name === 'paragraph') {
+            tr = tr.setNodeMarkup(pos, undefined, {
+              ...node.attrs,
+              locked: true,
+              protectedBy: meta.protectedBy,
+              protectedAt: meta.protectedAt,
+              protectedReason: meta.protectedReason ?? null,
+            });
+          }
+          return true;
+        });
+        view.dispatch(tr);
+      },
+      unprotectAll: () => {
+        const view = pagedEditorRef.current?.getView();
+        if (!view) return;
+        let tr = view.state.tr;
+        tr.setMeta('allowLockedEdit', true);
+        view.state.doc.descendants((node, pos) => {
+          if (node.type.name === 'paragraph') {
+            tr = tr.setNodeMarkup(pos, undefined, {
+              ...node.attrs,
+              locked: false,
+              protectedBy: null,
+              protectedAt: null,
+              protectedReason: null,
+            });
+          }
+          return true;
+        });
+        view.dispatch(tr);
+      },
       lockParagraphs: (from: number, to: number) => {
         const view = pagedEditorRef.current?.getView();
         if (!view) return;
@@ -3782,6 +3899,12 @@ body { background: white; }
           return true;
         });
         view.dispatch(tr);
+      },
+      protectHeadersFooters: (meta: ProtectMeta) => {
+        setHfLocked(history, true, meta);
+      },
+      unprotectHeadersFooters: () => {
+        setHfLocked(history, false);
       },
       lockHeadersFooters: () => {
         setHfLocked(history, true);
@@ -4216,9 +4339,20 @@ body { background: white; }
   // Handle header/footer double-click — open editing overlay
   // If no header/footer exists, create an empty one so the user can add content
   const handleHeaderFooterDoubleClick = useCallback(
-    (position: 'header' | 'footer') => {
-      const hf = position === 'header' ? headerContent : footerContent;
+    (position: 'header' | 'footer', pageNumber?: number) => {
+      // Determine whether this is the first-page header/footer
+      const firstPageContent =
+        position === 'header' ? firstPageHeaderContent : firstPageFooterContent;
+      const useFirst = pageNumber === 1 && !!firstPageContent;
+      const type: 'default' | 'first' = useFirst ? 'first' : 'default';
+      const hf = useFirst
+        ? firstPageContent
+        : position === 'header'
+          ? headerContent
+          : footerContent;
+
       if (hf) {
+        setHfEditType(type);
         setHfEditPosition(position);
         return;
       }
@@ -4255,16 +4389,17 @@ body { background: white; }
                 finalSectionProperties: {
                   ...sectionProps,
                   [refKey]: [...existingRefs, newRef],
-                  rawXml: undefined, // Invalidate raw XML since properties changed
+                  rawXml: undefined,
                 },
               }
             : pkg.document,
         },
       };
       history.push(newDoc);
+      setHfEditType('default');
       setHfEditPosition(position);
     },
-    [headerContent, footerContent, history]
+    [headerContent, footerContent, firstPageHeaderContent, firstPageFooterContent, history]
   );
 
   // Handle header/footer save — update document package with edited content
@@ -4272,6 +4407,7 @@ body { background: white; }
     (content: (import('../types/document').Paragraph | import('../types/document').Table)[]) => {
       if (!hfEditPosition || !history.state?.package) {
         setHfEditPosition(null);
+        setHfEditType(null);
         return;
       }
 
@@ -4281,20 +4417,23 @@ body { background: white; }
         hfEditPosition === 'header'
           ? sectionProps?.headerReferences
           : sectionProps?.footerReferences;
-      const defaultRef = refs?.find((r) => r.type === 'default');
+      // Save to the ref matching the edit type; fall back to 'default'
+      const refType = hfEditType ?? 'default';
+      const targetRef =
+        refs?.find((r) => r.type === refType) ?? refs?.find((r) => r.type === 'default');
       const mapKey = hfEditPosition === 'header' ? 'headers' : 'footers';
       const map = pkg[mapKey];
 
-      if (defaultRef?.rId && map) {
-        const existing = map.get(defaultRef.rId);
+      if (targetRef?.rId && map) {
+        const existing = map.get(targetRef.rId);
         const updated: HeaderFooter = {
           type: hfEditPosition,
-          hdrFtrType: 'default',
+          hdrFtrType: refType,
           ...existing,
           content,
         };
         const newMap = new Map(map);
-        newMap.set(defaultRef.rId, updated);
+        newMap.set(targetRef.rId, updated);
 
         const newDoc: Document = {
           ...history.state,
@@ -4307,8 +4446,9 @@ body { background: white; }
       }
 
       setHfEditPosition(null);
+      setHfEditType(null);
     },
-    [hfEditPosition, history]
+    [hfEditPosition, hfEditType, history]
   );
 
   // Handle body click while in HF editing mode — save + close
@@ -4321,6 +4461,7 @@ body { background: white; }
       handleHeaderFooterSave(blocks);
     } else {
       setHfEditPosition(null);
+      setHfEditType(null);
     }
   }, [hfEditPosition, handleHeaderFooterSave]);
 
@@ -4328,6 +4469,7 @@ body { background: white; }
   const handleRemoveHeaderFooter = useCallback(() => {
     if (!hfEditPosition || !history.state?.package) {
       setHfEditPosition(null);
+      setHfEditType(null);
       return;
     }
 
@@ -4336,13 +4478,15 @@ body { background: white; }
     const refKey = hfEditPosition === 'header' ? 'headerReferences' : 'footerReferences';
     const mapKey = hfEditPosition === 'header' ? 'headers' : 'footers';
     const refs = sectionProps?.[refKey];
-    const defaultRef = refs?.find((r) => r.type === 'default');
+    const refType = hfEditType ?? 'default';
+    const targetRef =
+      refs?.find((r) => r.type === refType) ?? refs?.find((r) => r.type === 'default');
 
-    if (defaultRef?.rId) {
+    if (targetRef?.rId) {
       const newMap = new Map(pkg[mapKey] ?? []);
-      newMap.delete(defaultRef.rId);
+      newMap.delete(targetRef.rId);
 
-      const newRefs = (refs ?? []).filter((r) => r.rId !== defaultRef.rId);
+      const newRefs = (refs ?? []).filter((r) => r.rId !== targetRef.rId);
 
       const newDoc: Document = {
         ...history.state,
@@ -4355,7 +4499,7 @@ body { background: white; }
                 finalSectionProperties: {
                   ...sectionProps,
                   [refKey]: newRefs,
-                  rawXml: undefined, // Invalidate raw XML since properties changed
+                  rawXml: undefined,
                 },
               }
             : pkg.document,
@@ -4365,15 +4509,27 @@ body { background: white; }
     }
 
     setHfEditPosition(null);
-  }, [hfEditPosition, history]);
+    setHfEditType(null);
+  }, [hfEditPosition, hfEditType, history]);
 
-  // Get the DOM element for the header/footer area on the first page
-  const getHfTargetElement = useCallback((pos: 'header' | 'footer'): HTMLElement | null => {
-    const pagesContainer = containerRef.current?.querySelector('.paged-editor__pages');
-    if (!pagesContainer) return null;
-    const className = pos === 'header' ? '.layout-page-header' : '.layout-page-footer';
-    return pagesContainer.querySelector(className);
-  }, []);
+  // Get the DOM element for the header/footer area on the appropriate page
+  const getHfTargetElement = useCallback(
+    (pos: 'header' | 'footer'): HTMLElement | null => {
+      const pagesContainer = containerRef.current?.querySelector('.paged-editor__pages');
+      if (!pagesContainer) return null;
+      const className = pos === 'header' ? '.layout-page-header' : '.layout-page-footer';
+      const all = pagesContainer.querySelectorAll<HTMLElement>(className);
+      if (all.length === 0) return null;
+      // For the first-page type: overlay the element on page 1 (index 0)
+      // For the default type: if there's a separate first-page H/F, overlay page 2 (index 1);
+      //                       otherwise overlay page 1 (index 0)
+      if (hfEditType === 'first') return all[0];
+      const hasFirstPage =
+        pos === 'header' ? !!firstPageHeaderContent : !!firstPageFooterContent;
+      return hasFirstPage && all.length > 1 ? all[1] : all[0];
+    },
+    [hfEditType, firstPageHeaderContent, firstPageFooterContent]
+  );
 
   // Container styles - using overflow: auto so sticky toolbar works
   const containerStyle: CSSProperties = {
@@ -4862,25 +5018,27 @@ body { background: white; }
 
                     {/* Inline Header/Footer Editor — positioned over the target area */}
                     {hfEditPosition &&
-                      (hfEditPosition === 'header' ? headerContent : footerContent) &&
                       (() => {
+                        const activeHf =
+                          hfEditType === 'first'
+                            ? (hfEditPosition === 'header'
+                                ? firstPageHeaderContent
+                                : firstPageFooterContent)
+                            : (hfEditPosition === 'header' ? headerContent : footerContent);
+                        if (!activeHf) return null;
                         const targetEl = getHfTargetElement(hfEditPosition);
                         const parentEl = editorContentRef.current;
                         if (!targetEl || !parentEl) return null;
                         return (
                           <InlineHeaderFooterEditor
                             ref={hfEditorRef}
-                            headerFooter={
-                              (hfEditPosition === 'header'
-                                ? headerContent
-                                : footerContent) as HeaderFooter
-                            }
+                            headerFooter={activeHf}
                             position={hfEditPosition}
                             styles={history.state?.package.styles}
                             targetElement={targetEl}
                             parentElement={parentEl}
                             onSave={handleHeaderFooterSave}
-                            onClose={() => setHfEditPosition(null)}
+                            onClose={() => { setHfEditPosition(null); setHfEditType(null); }}
                             onSelectionChange={handleSelectionChange}
                             onRemove={handleRemoveHeaderFooter}
                           />

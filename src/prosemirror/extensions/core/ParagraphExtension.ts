@@ -278,6 +278,9 @@ const paragraphNodeSpec: NodeSpec = {
     bookmarks: { default: null },
     _originalFormatting: { default: null },
     locked: { default: false },
+    protectedBy: { default: null },
+    protectedAt: { default: null },
+    protectedReason: { default: null },
   },
   parseDOM: [
     {

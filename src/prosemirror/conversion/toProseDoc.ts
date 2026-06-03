@@ -382,6 +382,9 @@ function paragraphFormattingToAttrs(
     _originalFormatting: formatting || undefined,
     // Lock state for selective editing (direct property, not style-inherited)
     locked: formatting?.locked || false,
+    protectedBy: formatting?.protectedBy ?? null,
+    protectedAt: formatting?.protectedAt ?? null,
+    protectedReason: formatting?.protectedReason ?? null,
   };
 
   // If we have a style resolver, resolve the style and get base properties
@@ -1981,11 +1984,7 @@ export function headerFooterToProseDoc(
 
   for (const block of content) {
     if (block.type === 'paragraph') {
-      const textBoxes = extractTextBoxesFromParagraph(block);
       nodes.push(convertParagraph(block, styleResolver));
-      for (const tb of textBoxes) {
-        nodes.push(convertTextBox(tb, styleResolver));
-      }
     } else if (block.type === 'table') {
       nodes.push(convertTable(block, styleResolver));
     }

@@ -610,6 +610,12 @@ export function parseParagraphProperties(
   const fpLocked = findChild(pPr, 'w', 'fpLocked');
   if (fpLocked) {
     formatting.locked = parseBooleanElement(fpLocked);
+    const fpLockedBy = findChild(pPr, 'w', 'fpLockedBy');
+    if (fpLockedBy) formatting.protectedBy = getAttribute(fpLockedBy, 'w', 'val') ?? undefined;
+    const fpLockedAt = findChild(pPr, 'w', 'fpLockedAt');
+    if (fpLockedAt) formatting.protectedAt = getAttribute(fpLockedAt, 'w', 'val') ?? undefined;
+    const fpLockedReason = findChild(pPr, 'w', 'fpLockedReason');
+    if (fpLockedReason) formatting.protectedReason = getAttribute(fpLockedReason, 'w', 'val') ?? undefined;
   }
 
   return Object.keys(formatting).length > 0 ? formatting : undefined;
