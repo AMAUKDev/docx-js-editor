@@ -501,6 +501,8 @@ export interface DocxEditorRef {
       color?: string;
     }>
   ) => void;
+  /** Remove style definitions from the document by styleId. Protected styles (Normal, DefaultParagraphFont) are silently skipped. */
+  removeStyles: (styleIds: string[]) => void;
   /** Get document-level metadata from the Custom XML Part (template provenance, tocStyle, etc.) */
   getDocumentMeta: () => FPDocumentMeta | undefined;
   /** Set/update document-level metadata (written to Custom XML Part on next save) */
@@ -4097,6 +4099,18 @@ body { background: white; }
         doc.package.styles = { ...doc.package.styles, styles: [...existingStyles] };
         setDocumentStyles(doc.package.styles.styles);
         // Force document state update so Toolbar + StylePicker re-read styles
+        history.push({ ...doc, package: { ...doc.package } });
+      },
+      removeStyles: (styleIds: string[]) => {
+        const doc = history.state;
+        if (!doc?.package?.styles) return;
+        const PROTECTED = new Set(['Normal', 'DefaultParagraphFont', 'Default Paragraph Font']);
+        const toRemove = new Set(styleIds.filter((id) => !PROTECTED.has(id)));
+        if (toRemove.size === 0) return;
+        const filtered = doc.package.styles.styles.filter((s: any) => !toRemove.has(s.styleId));
+        doc.package.stylesDirty = true;
+        doc.package.styles = { ...doc.package.styles, styles: filtered };
+        setDocumentStyles(filtered);
         history.push({ ...doc, package: { ...doc.package } });
       },
       getDocumentMeta: () => {
