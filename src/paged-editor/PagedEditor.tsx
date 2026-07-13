@@ -112,6 +112,7 @@ import type { RenderedDomContext } from '../plugin-api/types';
 import { createRenderedDomContext } from '../plugin-api/RenderedDomContext';
 import { createStyleResolver } from '../prosemirror/styles/styleResolver';
 import { textFormattingToMarks } from '../prosemirror/extensions/marks/markUtils';
+import { isContextTagLabelSync } from '../prosemirror/contextTagSync';
 
 // =============================================================================
 // TYPES
@@ -141,7 +142,7 @@ export interface PagedEditorProps {
   /** Zoom level (1 = 100%). */
   zoom?: number;
   /** Callback when document changes. */
-  onDocumentChange?: (document: Document) => void;
+  onDocumentChange?: (document: Document, opts?: { programmaticLabelSync?: boolean }) => void;
   /** Callback when selection changes. */
   onSelectionChange?: (from: number, to: number) => void;
   /** External ProseMirror plugins. */
@@ -1475,12 +1476,7 @@ function convertHeaderFooterToContent(
         const toLayoutTab = (t: RawTab) => ({
           pos: t.position ?? t.pos ?? 0,
           val: (alignMap[t.alignment ?? ''] ?? t.val ?? 'start') as
-            | 'start'
-            | 'end'
-            | 'center'
-            | 'decimal'
-            | 'bar'
-            | 'clear',
+            'start' | 'end' | 'center' | 'decimal' | 'bar' | 'clear',
           leader: t.leader as TabStop['leader'],
         });
 
@@ -2677,7 +2673,9 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
           // Notify document change - use ref to avoid infinite loops
           const newDoc = hiddenPMRef.current?.getDocument();
           if (newDoc) {
-            onDocumentChangeRef.current?.(newDoc);
+            onDocumentChangeRef.current?.(newDoc, {
+              programmaticLabelSync: isContextTagLabelSync(transaction),
+            });
           }
         }
 
@@ -3656,8 +3654,7 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
                 if (targetPos !== null) return false; // stop once found
                 if (node.type.name === 'paragraph') {
                   const bookmarks = node.attrs.bookmarks as
-                    | Array<{ id: number; name: string }>
-                    | undefined;
+                    Array<{ id: number; name: string }> | undefined;
                   if (bookmarks?.some((b) => b.name === bookmarkName)) {
                     targetPos = pos;
                     return false;

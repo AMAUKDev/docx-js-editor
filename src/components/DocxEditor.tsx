@@ -108,6 +108,7 @@ import { collectContextTagMetadata } from '../docx/contextTagMetadata';
 import { renderDocumentWithBookmarks } from '../docx/renderWithBookmarks';
 import type { ContextTagMeta, FPDocumentMeta } from '../types/document';
 import { generateMetaId } from '../prosemirror/extensions/nodes/ContextTagExtension';
+import { markContextTagLabelSync } from '../prosemirror/contextTagSync';
 // ProseMirror editor
 import {
   type SelectionState,
@@ -1270,7 +1271,14 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     }
     plugins.push(createSuggestionModePlugin(initialSuggestionActive.current, 'User'));
     return plugins;
-  }, [restrictedMode, allowedStyleIds, externalPlugins, crossRefUpdaterPlugin, lockedEditing, onProtectedRegionEdit]);
+  }, [
+    restrictedMode,
+    allowedStyleIds,
+    externalPlugins,
+    crossRefUpdaterPlugin,
+    lockedEditing,
+    onProtectedRegionEdit,
+  ]);
 
   // Sync editingMode changes to the suggestion mode plugin via dispatch
   useEffect(() => {
@@ -1563,13 +1571,17 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
 
   // Handle document change
   const handleDocumentChange = useCallback(
-    (newDocument: Document) => {
+    (newDocument: Document, opts?: { programmaticLabelSync?: boolean }) => {
       // Mark as dirty so repackDocx re-serializes document.xml instead of using original
       const dirtyDoc = newDocument.contentDirty
         ? newDocument
         : { ...newDocument, contentDirty: true };
       history.push(dirtyDoc);
-      onChange?.(dirtyDoc);
+      // Programmatic context-tag label syncs refresh derived display data —
+      // they must not surface as a user edit (e.g. "unsaved changes" badges).
+      if (!opts?.programmaticLabelSync) {
+        onChange?.(dirtyDoc);
+      }
       // Update outline headings if sidebar is open
       if (showOutlineRef.current) {
         const view = pagedEditorRef.current?.getView();
@@ -3614,7 +3626,10 @@ body { background: white; }
           tocStyleOverride,
         });
 
-        // Also refresh context tag labels (in case they've gotten stale)
+        // Also refresh context tag labels (in case they've gotten stale).
+        // Unlike the applyLabels effect, this is NOT marked with
+        // markContextTagLabelSync: refreshNumbering is an explicit user action
+        // (Refresh Report button), so it should count as an unsaved change.
         const tags = contextTags ?? {};
         const ctNodeType = view.state.schema.nodes.contextTag;
         if (ctNodeType) {
@@ -4110,6 +4125,7 @@ body { background: white; }
 
       if (changed) {
         tr.setMeta('allowLockedEdit', true);
+        markContextTagLabelSync(tr);
         view.dispatch(tr);
       }
 
@@ -4458,8 +4474,7 @@ body { background: white; }
       // For the default type: if there's a separate first-page H/F, overlay page 2 (index 1);
       //                       otherwise overlay page 1 (index 0)
       if (hfEditType === 'first') return all[0];
-      const hasFirstPage =
-        pos === 'header' ? !!firstPageHeaderContent : !!firstPageFooterContent;
+      const hasFirstPage = pos === 'header' ? !!firstPageHeaderContent : !!firstPageFooterContent;
       return hasFirstPage && all.length > 1 ? all[1] : all[0];
     },
     [hfEditType, firstPageHeaderContent, firstPageFooterContent]
@@ -4655,10 +4670,7 @@ body { background: white; }
                           color: sf?.color?.replace('#', '') || styleColor,
                           alignment:
                             ((sf?.alignment || styleAlignment) as
-                              | 'left'
-                              | 'center'
-                              | 'right'
-                              | 'justify') || 'left',
+                              'left' | 'center' | 'right' | 'justify') || 'left',
                           lineSpacing: sf?.lineSpacing || styleLineSpacing,
                           spaceBefore: styleSpaceBefore,
                           spaceAfter: styleSpaceAfter,
@@ -4955,10 +4967,12 @@ body { background: white; }
                       (() => {
                         const activeHf =
                           hfEditType === 'first'
-                            ? (hfEditPosition === 'header'
-                                ? firstPageHeaderContent
-                                : firstPageFooterContent)
-                            : (hfEditPosition === 'header' ? headerContent : footerContent);
+                            ? hfEditPosition === 'header'
+                              ? firstPageHeaderContent
+                              : firstPageFooterContent
+                            : hfEditPosition === 'header'
+                              ? headerContent
+                              : footerContent;
                         if (!activeHf) return null;
                         const targetEl = getHfTargetElement(hfEditPosition);
                         const parentEl = editorContentRef.current;
@@ -4972,7 +4986,10 @@ body { background: white; }
                             targetElement={targetEl}
                             parentElement={parentEl}
                             onSave={handleHeaderFooterSave}
-                            onClose={() => { setHfEditPosition(null); setHfEditType(null); }}
+                            onClose={() => {
+                              setHfEditPosition(null);
+                              setHfEditType(null);
+                            }}
                             onSelectionChange={handleSelectionChange}
                             onRemove={handleRemoveHeaderFooter}
                           />
