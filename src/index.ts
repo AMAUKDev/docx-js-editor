@@ -756,3 +756,24 @@ export {
   type McpToolResult,
   type McpSession,
 } from './core-plugins';
+
+// ============================================================================
+// AUTO CONTEXT-TAGGING
+// ============================================================================
+
+export {
+  findAutoTagCandidates,
+  DEFAULT_MATCH_OPTIONS,
+  COMMON_STOP_WORDS,
+  type AutoTagCandidate,
+  type AutoTagMatchOptions,
+  type MatchConfidence,
+} from './prosemirror/autoTag/autoTagMatcher';
+
+export {
+  buildAutoTagTransaction,
+  collectAutoTagHits,
+  type AutoTagHit,
+  type AutoTagResult,
+  type BuildAutoTagOptions,
+} from './prosemirror/autoTag/autoTagTransform';
