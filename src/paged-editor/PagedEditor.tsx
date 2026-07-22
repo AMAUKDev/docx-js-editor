@@ -194,6 +194,12 @@ export interface PagedEditorProps {
    * where image fields have been resolved from case_file_id to {url, name}.
    */
   loopPreviewData?: Record<string, Array<Record<string, unknown>>> | null;
+  /**
+   * Default paragraph alignment for paragraphs with no explicit alignment (after style +
+   * docDefaults resolution). Set to 'justify' so the on-screen layout matches a template
+   * whose default is justified. Omitted → historical left behaviour.
+   */
+  defaultParagraphAlignment?: 'left' | 'center' | 'right' | 'justify';
   /** Show inline comment margin panel alongside pages. */
   showCommentPanel?: boolean;
   /** Callback when comment action occurs (reply, resolve, delete). */
@@ -1832,6 +1838,7 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
       contextTags,
       renderMode,
       loopPreviewData,
+      defaultParagraphAlignment,
       onHeaderFooterDoubleClick,
       hfEditMode,
       onBodyClick,
@@ -1994,6 +2001,7 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
             numberingMap,
             renderMode,
             loopPreviewData: loopPreviewData ?? undefined,
+            defaultAlignment: defaultParagraphAlignment,
           });
           let stepTime = performance.now() - stepStart;
           if (stepTime > 500) {

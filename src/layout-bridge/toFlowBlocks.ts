@@ -47,6 +47,13 @@ export type ToFlowBlocksOptions = {
   defaultFont?: string;
   /** Default font size in points. */
   defaultSize?: number;
+  /**
+   * Default paragraph alignment applied when a paragraph (after style + docDefaults
+   * resolution) has no explicit alignment. Left undefined by default to preserve the
+   * historical left behaviour; set to 'justify' to make unset paragraphs justified so
+   * the on-screen layout matches a template whose default is justified.
+   */
+  defaultAlignment?: 'left' | 'center' | 'right' | 'justify';
   /** Theme for resolving theme colors. */
   theme?: Theme | null;
   /** Page content height in pixels (pageHeight - marginTop - marginBottom). Images taller than this are scaled down to fit. */
@@ -648,7 +655,10 @@ function paragraphToRuns(node: PMNode, startPos: number, _options: ToFlowBlocksO
 /**
  * Convert PM paragraph attrs to layout engine paragraph attrs.
  */
-function convertParagraphAttrs(pmAttrs: PMParagraphAttrs): ParagraphAttrs {
+function convertParagraphAttrs(
+  pmAttrs: PMParagraphAttrs,
+  defaultAlignment?: ToFlowBlocksOptions['defaultAlignment'],
+): ParagraphAttrs {
   const attrs: ParagraphAttrs = {};
 
   // Alignment - map DOCX values to CSS-compatible values
@@ -663,9 +673,14 @@ function convertParagraphAttrs(pmAttrs: PMParagraphAttrs): ParagraphAttrs {
       attrs.alignment = 'center';
     } else if (align === 'right') {
       attrs.alignment = 'right';
+    } else if (defaultAlignment) {
+      // Other DOCX alignments (mediumKashida, etc.) — fall back to the configured default.
+      attrs.alignment = defaultAlignment;
     }
-    // Other DOCX alignments (mediumKashida, highKashida, lowKashida, thaiDistribute, justify)
-    // default to no alignment set (inherits from style or defaults to left)
+  } else if (defaultAlignment) {
+    // No explicit alignment anywhere in the paragraph's style chain / docDefaults —
+    // apply the configured default (e.g. 'justify') so the layout matches the template.
+    attrs.alignment = defaultAlignment;
   }
 
   // Spacing
@@ -891,7 +906,7 @@ function convertParagraph(
 ): ParagraphBlock {
   const pmAttrs = node.attrs as PMParagraphAttrs;
   const runs = paragraphToRuns(node, startPos, options);
-  const attrs = convertParagraphAttrs(pmAttrs);
+  const attrs = convertParagraphAttrs(pmAttrs, options.defaultAlignment);
 
   return {
     kind: 'paragraph',

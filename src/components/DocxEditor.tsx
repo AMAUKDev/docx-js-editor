@@ -360,6 +360,11 @@ export interface DocxEditorProps {
    * where image fields have been resolved from case_file_id to {url, name}.
    */
   loopPreviewData?: Record<string, Array<Record<string, unknown>>> | null;
+  /**
+   * Default paragraph alignment for paragraphs with no explicit alignment (after style +
+   * docDefaults resolution). Set to 'justify' to match a template whose default is justified.
+   */
+  defaultParagraphAlignment?: 'left' | 'center' | 'right' | 'justify';
   /** Called when the page count changes after layout */
   onPageCountChange?: (pageCount: number) => void;
   /** When true, show gear icons on styles + "Create New Style" in dropdown */
@@ -1163,6 +1168,7 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     onProtectedRegionEdit,
     onContextTagRightClick,
     loopPreviewData,
+    defaultParagraphAlignment,
     onPageCountChange: onPageCountChangeProp,
     showCommentPanel,
     onCommentAction,
@@ -4971,6 +4977,7 @@ body { background: white; }
                       contextTags={contextTags}
                       renderMode={state.renderMode}
                       loopPreviewData={loopPreviewData}
+                      defaultParagraphAlignment={defaultParagraphAlignment}
                       onHeaderFooterDoubleClick={handleHeaderFooterDoubleClick}
                       hfEditMode={hfEditPosition}
                       onBodyClick={handleBodyClick}
