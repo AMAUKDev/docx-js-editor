@@ -690,22 +690,17 @@ export function renderLine(
     return lineEl;
   }
 
-  // Calculate justify spacing if needed
+  // Calculate justify spacing if needed.
+  // NOTE: CSS text-align/​text-align-last justification does NOT work here because each
+  // line is rendered as its own block with `white-space: pre` (below), so every line is
+  // its block's only/last line. Instead we justify manually: measure the line's natural
+  // text width and distribute the leftover space across the inter-word gaps as
+  // `word-spacing` (applied after the runs are laid out, near the end of this function).
   const isJustify = alignment === 'justify';
   let shouldJustify = false;
-
   if (isJustify && options) {
-    // Justify all lines except the last line (unless it ends with line break)
-    shouldJustify = !options.isLastLine || options.paragraphEndsWithLineBreak;
-
-    if (shouldJustify) {
-      // Use CSS text-align: justify with text-align-last: justify
-      // This forces the browser to justify even single-line blocks
-      lineEl.style.textAlign = 'justify';
-      lineEl.style.textAlignLast = 'justify';
-      // Set explicit width so browser knows how wide to justify to
-      lineEl.style.width = `${options.availableWidth}px`;
-    }
+    // Justify all lines except the last line (unless it ends with an explicit line break).
+    shouldJustify = !options.isLastLine || !!options.paragraphEndsWithLineBreak;
   }
 
   // Use white-space: pre to prevent internal wrapping AND preserve consecutive spaces.
@@ -767,6 +762,11 @@ export function renderLine(
     currentX = leftIndentPx;
   }
 
+  // For manual justification: track the natural text width laid out on this line and the
+  // number of inter-word spaces the leftover space can be distributed across.
+  const justifyStartX = currentX;
+  let justifySpaceCount = 0;
+
   // Render each run
   for (let i = 0; i < runsForLine.length; i++) {
     const run = runsForLine[i];
@@ -792,6 +792,9 @@ export function renderLine(
       const fontSize = run.fontSize || 11;
       const fontFamily = run.fontFamily || 'Calibri';
       currentX += measureText(run.text, fontSize, fontFamily);
+      // Count inter-word spaces for manual justification distribution.
+      const spaceMatches = run.text.match(/ /g);
+      if (spaceMatches) justifySpaceCount += spaceMatches.length;
     } else if (isImageRun(run)) {
       // Skip floating images - they're rendered separately at paragraph level
       const isFloating =
@@ -830,6 +833,17 @@ export function renderLine(
       // Fallback for unknown run types
       const runEl = renderRun(run, doc, options?.context);
       lineEl.appendChild(runEl);
+    }
+  }
+
+  // Manual justification: distribute the leftover width across the line's spaces.
+  // (CSS justify can't be used — see note above; each line is a `white-space: pre` block.)
+  if (shouldJustify && options && justifySpaceCount > 0) {
+    const textWidth = currentX - justifyStartX;
+    const leftover = (options.availableWidth ?? 0) - textWidth;
+    // Only expand (never compress); ignore tiny/again-negative leftovers.
+    if (leftover > 0.5) {
+      lineEl.style.wordSpacing = `${leftover / justifySpaceCount}px`;
     }
   }
 
