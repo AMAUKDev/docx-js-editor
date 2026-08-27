@@ -3707,10 +3707,25 @@ body { background: white; }
         const { schema } = view.state;
         if (!schema.nodes.image) return;
 
-        // Constrain to content area width
+        // Constrain to content area width, preserving the aspect ratio.
+        //
+        // A caller that cannot measure the source may pass a non-positive height rather
+        // than guess one. Inserting that verbatim produced a zero-height picture in the
+        // saved .docx, which Word then rendered at an arbitrary size — so an unusable
+        // height is resolved from the image's natural proportions instead.
         const maxWidth = 612;
-        let w = width;
+        let w = width > 0 ? width : maxWidth;
         let h = height;
+        if (!(h > 0)) {
+          const natural = typeof Image !== 'undefined' ? new Image() : null;
+          if (natural) {
+            natural.src = dataUrl;
+            if (natural.naturalWidth > 0 && natural.naturalHeight > 0) {
+              h = Math.round(w * (natural.naturalHeight / natural.naturalWidth));
+            }
+          }
+          if (!(h > 0)) h = Math.round(w * 0.75);
+        }
         if (w > maxWidth) {
           const scale = maxWidth / w;
           w = maxWidth;
