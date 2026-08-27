@@ -472,6 +472,22 @@ export interface DocxEditorRef {
    * `pmPos`, carrying a real Word SEQ field so it renumbers like a manual caption.
    * `text` is appended after the separator; omit it to leave the caption for the user.
    */
+  /**
+   * Insert an image. Defaults to the cursor; pass `pmPos` to place it explicitly.
+   *
+   * `ownParagraph` puts the image in a new centred paragraph AFTER the block at `pmPos`
+   * rather than inline within it. A caller placing a figure programmatically wants this:
+   * inline insertion drops the picture into that block alongside its existing text, so the
+   * words render over the image, and centring that block re-aligns its text too.
+   */
+  insertImage: (
+    dataUrl: string,
+    alt: string,
+    width: number,
+    height: number,
+    pmPos?: number,
+    ownParagraph?: boolean
+  ) => void;
   addCaption: (
     pmPos: number,
     prefix?: import('../prosemirror/captions/captionBuilder').CaptionPrefix,
@@ -3700,7 +3716,8 @@ body { background: white; }
         alt: string,
         width: number,
         height: number,
-        pmPos?: number
+        pmPos?: number,
+        ownParagraph?: boolean
       ) => {
         const view = pagedEditorRef.current?.getView();
         if (!view) return;
@@ -3751,20 +3768,41 @@ body { background: white; }
           typeof pmPos === 'number' && pmPos >= 0 && pmPos <= docSize
             ? pmPos
             : view.state.selection.from;
-        const tr = view.state.tr.insert(from, imageNode);
+        const tr = view.state.tr;
         tr.setMeta('allowLockedEdit', true);
 
-        // Centre the paragraph containing the inserted image
-        const $pos = tr.doc.resolve(from);
-        for (let d = $pos.depth; d >= 0; d--) {
-          if ($pos.node(d).type.name === 'paragraph') {
-            const paragraphPos = $pos.before(d);
-            const paragraphNode = $pos.node(d);
-            tr.setNodeMarkup(paragraphPos, undefined, {
-              ...paragraphNode.attrs,
-              justification: 'center',
-            });
-            break;
+        if (ownParagraph) {
+          // Give the image a paragraph of its own, inserted AFTER the block containing
+          // `from`. Inserting the inline image at `from` would drop it into that block
+          // alongside its existing text, so the words render on top of the picture — and
+          // centring that block would re-align its text too.
+          const $at = view.state.doc.resolve(from);
+          let blockEnd = from;
+          for (let d = $at.depth; d >= 1; d--) {
+            const node = $at.node(d);
+            if (node.type.name === 'paragraph' || node.type.name === 'table') {
+              blockEnd = $at.after(d);
+              break;
+            }
+          }
+          tr.insert(
+            blockEnd,
+            schema.nodes.paragraph.create({ justification: 'center' }, imageNode)
+          );
+        } else {
+          tr.insert(from, imageNode);
+          // Centre the paragraph containing the inserted image
+          const $pos = tr.doc.resolve(from);
+          for (let d = $pos.depth; d >= 0; d--) {
+            if ($pos.node(d).type.name === 'paragraph') {
+              const paragraphPos = $pos.before(d);
+              const paragraphNode = $pos.node(d);
+              tr.setNodeMarkup(paragraphPos, undefined, {
+                ...paragraphNode.attrs,
+                justification: 'center',
+              });
+              break;
+            }
           }
         }
 
