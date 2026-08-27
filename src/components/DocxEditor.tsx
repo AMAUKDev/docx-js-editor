@@ -109,6 +109,7 @@ import { renderDocumentWithBookmarks } from '../docx/renderWithBookmarks';
 import type { ContextTagMeta, FPDocumentMeta } from '../types/document';
 import { generateMetaId } from '../prosemirror/extensions/nodes/ContextTagExtension';
 import { markContextTagLabelSync } from '../prosemirror/contextTagSync';
+import { buildAutoTagTransaction } from '../prosemirror/autoTag/autoTagTransform';
 // ProseMirror editor
 import {
   type SelectionState,
@@ -359,6 +360,11 @@ export interface DocxEditorProps {
    * where image fields have been resolved from case_file_id to {url, name}.
    */
   loopPreviewData?: Record<string, Array<Record<string, unknown>>> | null;
+  /**
+   * Default paragraph alignment for paragraphs with no explicit alignment (after style +
+   * docDefaults resolution). Set to 'justify' to match a template whose default is justified.
+   */
+  defaultParagraphAlignment?: 'left' | 'center' | 'right' | 'justify';
   /** Called when the page count changes after layout */
   onPageCountChange?: (pageCount: number) => void;
   /** When true, show gear icons on styles + "Create New Style" in dropdown */
@@ -436,6 +442,16 @@ export interface DocxEditorRef {
   replaceAllWithContextTag: (searchText: string, tagKey: string, label?: string, removeIfEmpty?: boolean) => number;
   /** Count plain-text occurrences of searchText in the document (single-run matches). */
   countTextOccurrences: (searchText: string) => number;
+  /**
+   * Scan the whole document and convert loose text matching any value in `tagMap`
+   * into context-tag nodes (works for any key, including canonical `case.*`).
+   * High-confidence matches are applied; low-confidence (short/ambiguous) matches are
+   * returned as `deferred` for a host-driven confirm step (unless overridden in options).
+   */
+  autoTagDocument: (
+    tagMap: Record<string, string | null | undefined>,
+    options?: import('../prosemirror/autoTag/autoTagTransform').BuildAutoTagOptions
+  ) => { applied: number; deferred: import('../prosemirror/autoTag/autoTagTransform').AutoTagHit[] };
   /** Insert a cross-reference at the current cursor position */
   insertCrossRef: (
     refType: 'heading' | 'figure',
@@ -1152,6 +1168,7 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     onProtectedRegionEdit,
     onContextTagRightClick,
     loopPreviewData,
+    defaultParagraphAlignment,
     onPageCountChange: onPageCountChangeProp,
     showCommentPanel,
     onCommentAction,
@@ -3500,6 +3517,17 @@ body { background: white; }
         });
         return count;
       },
+      autoTagDocument: (tagMap, options) => {
+        const view = pagedEditorRef.current?.getView();
+        if (!view) return { applied: 0, deferred: [] };
+        const { tr, applied, deferred } = buildAutoTagTransaction(view.state, tagMap, options);
+        if (tr && applied.length > 0) {
+          tr.scrollIntoView();
+          view.dispatch(tr);
+          pagedEditorRef.current?.focus();
+        }
+        return { applied: applied.length, deferred };
+      },
       insertCrossRef: (
         refType: 'heading' | 'figure',
         refTarget: string,
@@ -4948,6 +4976,7 @@ body { background: white; }
                       contextTags={contextTags}
                       renderMode={state.renderMode}
                       loopPreviewData={loopPreviewData}
+                      defaultParagraphAlignment={defaultParagraphAlignment}
                       onHeaderFooterDoubleClick={handleHeaderFooterDoubleClick}
                       hfEditMode={hfEditPosition}
                       onBodyClick={handleBodyClick}
