@@ -177,7 +177,6 @@ import {
 } from '../prosemirror';
 import { collectHeadings } from '../utils/headingCollector';
 import { textFormattingToMarks } from '../prosemirror/extensions/marks/markUtils';
-import { insertTable as insertTableCommand } from '../prosemirror/commands/table';
 
 // Paginated editor
 import { PagedEditor, type PagedEditorRef } from '../paged-editor/PagedEditor';
@@ -3655,7 +3654,13 @@ body { background: white; }
 
         const afterSelect = pagedEditorRef.current?.getView();
         if (!afterSelect) return;
-        if (!insertTableCommand(rows, cols)(afterSelect.state, afterSelect.dispatch)) return;
+        // Commands MUST come from this editor's own extensionManager, not the module-level
+        // singleton: the singleton is bound to a different schema, so its table command
+        // silently does nothing here (no error, no change).
+        const inserted = extensionManager
+          .getCommands()
+          .insertTable(rows, cols)(afterSelect.state, afterSelect.dispatch);
+        if (!inserted) return;
 
         const data = options?.data;
         if (!data?.length) return;
