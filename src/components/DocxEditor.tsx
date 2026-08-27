@@ -3634,58 +3634,59 @@ body { background: white; }
       },
       insertTable: (rows: number, cols: number, options?: { pmPos?: number; data?: string[][] }) => {
         const view = pagedEditorRef.current?.getView();
-        if (!view || rows < 1 || cols < 1) return;
+        if (!view || !Number.isInteger(rows) || !Number.isInteger(cols)) return;
+        if (rows < 1 || cols < 1) return;
 
         // Drive the real table command rather than building the node here: it owns the
         // border/width/house-style defaults, so a table inserted this way is identical to
         // one inserted from the toolbar.
         //
-        // The command inserts at the selection, so to place a table explicitly we move the
-        // selection first. NOTE: the agent API is deliberately NOT used — DocumentAgent
-        // wraps a snapshot of the document taken for export, not the live view, so a table
+        // The command inserts at the selection, so an explicit position is applied by
+        // moving the selection first. NOTE: the agent API is deliberately NOT used —
+        // DocumentAgent wraps a snapshot taken for export, not the live view, so a table
         // inserted through it would never appear in the editor.
         const pmPos = options?.pmPos;
-        if (typeof pmPos === 'number' && pmPos >= 0 && pmPos <= view.state.doc.content.size) {
-          const selTr = view.state.tr.setSelection(TextSelection.create(view.state.doc, pmPos));
-          view.dispatch(selTr);
+        if (typeof pmPos === 'number') {
+          if (!Number.isInteger(pmPos) || pmPos < 0 || pmPos > view.state.doc.content.size) return;
+          view.dispatch(
+            view.state.tr.setSelection(TextSelection.create(view.state.doc, pmPos))
+          );
         }
 
-        const currentView = pagedEditorRef.current?.getView();
-        if (!currentView) return;
-        insertTableCommand(rows, cols)(currentView.state, currentView.dispatch);
+        const afterSelect = pagedEditorRef.current?.getView();
+        if (!afterSelect) return;
+        if (!insertTableCommand(rows, cols)(afterSelect.state, afterSelect.dispatch)) return;
 
         const data = options?.data;
-        if (!data || data.length === 0) return;
+        if (!data?.length) return;
 
-        // Fill the cells row-major in ONE transaction, so the table and its contents are a
-        // single undo step for the caller.
         const filled = pagedEditorRef.current?.getView();
         if (!filled) return;
-        let tablePos: number | null = null;
-        filled.state.doc.descendants((node, pos) => {
-          if (node.type.name === 'table') tablePos = pos;
-          return true;
-        });
-        if (tablePos == null) return;
 
-        const tableNode = filled.state.doc.nodeAt(tablePos);
-        if (!tableNode) return;
+        // Locate the table via the selection the command just placed inside it. Scanning
+        // the document for a table would find the wrong one whenever the report already
+        // contains tables after the insertion point.
+        const context = getTableContext(filled.state);
+        if (!context.isInTable || context.tablePos === undefined || !context.table) return;
+        const tablePos = context.tablePos;
+        const tableNode = context.table;
+
+        // Fill row-major in ONE transaction so the caller gets a single undo step.
+        // Positions are computed against the pre-fill document and mapped through the
+        // transaction, since each insert shifts everything after it.
         const fillTr = filled.state.tr;
         fillTr.setMeta('allowLockedEdit', true);
-        let rowIndex = 0;
-        tableNode.forEach((rowNode, rowOffset) => {
-          let colIndex = 0;
-          rowNode.forEach((_cellNode, cellOffset) => {
-            const text = data[rowIndex]?.[colIndex];
-            if (text) {
-              // +1 for the table node, +1 for the row, +1 for the cell, +1 for its paragraph
-              const paragraphStart =
-                (tablePos as number) + 1 + rowOffset + 1 + cellOffset + 1 + 1;
-              fillTr.insertText(String(text), fillTr.mapping.map(paragraphStart));
-            }
-            colIndex++;
+        tableNode.forEach((rowNode, rowOffset, rowIndex) => {
+          rowNode.forEach((cellNode, cellOffset, colIndex) => {
+            const value = data[rowIndex]?.[colIndex];
+            if (value == null || value === '') return;
+            // Only a cell whose first child is a paragraph can take text.
+            if (cellNode.firstChild?.type.name !== 'paragraph') return;
+            // table open(1) + row offset + row open(1) + cell offset + cell open(1)
+            // + paragraph open(1)
+            const paragraphStart = tablePos + 1 + rowOffset + 1 + cellOffset + 1 + 1;
+            fillTr.insertText(String(value), fillTr.mapping.map(paragraphStart));
           });
-          rowIndex++;
         });
         if (fillTr.docChanged) filled.dispatch(fillTr);
       },
