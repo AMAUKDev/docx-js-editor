@@ -25,7 +25,7 @@ import React, {
   memo,
 } from 'react';
 import type { CSSProperties } from 'react';
-import { NodeSelection, TextSelection } from 'prosemirror-state';
+import { NodeSelection } from 'prosemirror-state';
 import type { EditorState, Transaction, Plugin } from 'prosemirror-state';
 import { CellSelection } from 'prosemirror-tables';
 import type { EditorView } from 'prosemirror-view';
@@ -111,7 +111,11 @@ import {
 import type { RenderedDomContext } from '../plugin-api/types';
 import { createRenderedDomContext } from '../plugin-api/RenderedDomContext';
 import { createStyleResolver } from '../prosemirror/styles/styleResolver';
-import { textFormattingToMarks } from '../prosemirror/extensions/marks/markUtils';
+import {
+  appendCaptionToTransaction,
+  isCaptionPrefix,
+  type CaptionPrefix,
+} from '../prosemirror/captions/captionBuilder';
 import { isContextTagLabelSync } from '../prosemirror/contextTagSync';
 
 // =============================================================================
@@ -260,6 +264,14 @@ export interface PagedEditorRef {
   scrollToPosition(pmPos: number): void;
   /** Get the visible pages container element. */
   getPagesContainer(): HTMLElement | null;
+  /**
+   * Insert a numbered caption after the block containing `pmPos`.
+   *
+   * Dispatches immediately. Callers batching several edits into one transaction should
+   * use `appendCaptionToTransaction` from `prosemirror/captions/captionBuilder` instead,
+   * so the whole batch stays a single undo step.
+   */
+  addCaption(pmPos: number, prefix?: CaptionPrefix, text?: string): void;
 }
 
 // =============================================================================
@@ -3870,88 +3882,19 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
         if (!view) return;
 
         try {
-          const state = view.state;
-          const $pos = state.doc.resolve(pmPos);
-          const schema = state.schema;
-
-          // Find the parent block (paragraph or table)
-          let parentPos = $pos.before($pos.depth);
-          let parentNode = state.doc.nodeAt(parentPos);
-          // Walk up if we're deeper than a direct paragraph child
-          for (let d = $pos.depth; d >= 1; d--) {
-            const candidate = state.doc.nodeAt($pos.before(d));
-            if (candidate?.type.name === 'paragraph' || candidate?.type.name === 'table') {
-              parentPos = $pos.before(d);
-              parentNode = candidate;
-              break;
-            }
-          }
-          if (!parentNode) return;
-
-          // Compute insertion position (after the parent block)
-          const insertPos = parentPos + parentNode.nodeSize;
-
-          // Determine caption prefix: use provided prefix or default to "Figure"
-          const captionPrefix = prefix || 'Figure';
-
-          // Count only captions with the same prefix before the insertion position
-          let captionCount = 0;
-          state.doc.nodesBetween(0, insertPos, (node) => {
-            if (node.type.name === 'paragraph' && node.attrs.styleId === 'Caption') {
-              // Check if this caption uses the same prefix
-              const text = node.textContent;
-              if (text.startsWith(captionPrefix + ' ')) {
-                captionCount++;
-              }
-            }
-            return true;
-          });
-          const number = captionCount + 1;
-
-          // Resolve Caption style's run formatting and build marks
-          let captionMarks: import('prosemirror-model').Mark[] = [];
-          if (styles) {
-            const resolver = createStyleResolver(styles);
-            const resolved = resolver.resolveParagraphStyle('Caption');
-            if (resolved.runFormatting) {
-              captionMarks = textFormattingToMarks(resolved.runFormatting, schema);
-            }
-          }
-
-          // Build: text("Figure ") + field(SEQ Figure) + text(": ")
-          const prefixNode =
-            captionMarks.length > 0
-              ? schema.text(captionPrefix + ' ', captionMarks)
-              : schema.text(captionPrefix + ' ');
-          let seqField = schema.nodes.field.create({
-            fieldType: 'SEQ',
-            instruction: ` SEQ ${captionPrefix} \\* ARABIC `,
-            displayText: String(number),
-            fieldKind: 'complex',
-            dirty: false,
-          });
-          if (captionMarks.length > 0) {
-            seqField = seqField.mark(captionMarks);
-          }
-          const suffixNode =
-            captionMarks.length > 0 ? schema.text(': ', captionMarks) : schema.text(': ');
-
-          const captionParagraph = schema.nodes.paragraph.create(
-            { styleId: 'Caption', alignment: 'center' },
-            [prefixNode, seqField, suffixNode]
+          const captionPrefix = prefix && isCaptionPrefix(prefix) ? prefix : 'Figure';
+          // placeCursor: the toolbar path puts the caret after ": " so the user can type
+          // the description straight away.
+          const tr = appendCaptionToTransaction(
+            view.state.tr,
+            view.state,
+            pmPos,
+            captionPrefix,
+            undefined,
+            styles,
+            true
           );
-          const tr = state.tr.insert(insertPos, captionParagraph);
-
-          // Place cursor at end of ": " so user can type description
-          // paragraph open(1) + prefix text + field atom(1) + ": "(2)
-          const cursorPos = insertPos + 1 + captionPrefix.length + 1 + 1 + 2;
-          tr.setSelection(TextSelection.create(tr.doc, cursorPos));
-
-          // Set stored marks so continued typing inherits the caption formatting
-          if (captionMarks.length > 0) {
-            tr.setStoredMarks(captionMarks);
-          }
-
+          if (!tr) return;
           view.dispatch(tr.scrollIntoView());
           hiddenPMRef.current?.focus();
         } catch {
@@ -4240,6 +4183,20 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
         getView() {
           return hiddenPMRef.current?.getView() ?? null;
         },
+        addCaption(pmPos: number, prefix?: CaptionPrefix, text?: string) {
+          const view = hiddenPMRef.current?.getView();
+          if (!view) return;
+          const tr = appendCaptionToTransaction(
+            view.state.tr,
+            view.state,
+            pmPos,
+            prefix && isCaptionPrefix(prefix) ? prefix : 'Figure',
+            text,
+            styles,
+            false
+          );
+          if (tr) view.dispatch(tr.scrollIntoView());
+        },
         focus() {
           hiddenPMRef.current?.focus();
           setIsFocused(true);
@@ -4277,7 +4234,7 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
           return pagesContainerRef.current;
         },
       }),
-      [layout, runLayoutPipeline, scrollToPositionImpl]
+      [layout, runLayoutPipeline, scrollToPositionImpl, styles]
     );
 
     // Update selection overlay when layout changes
@@ -4321,9 +4278,23 @@ const PagedEditorComponent = forwardRef<PagedEditorRef, PagedEditorProps>(
           },
           scrollToPosition: scrollToPositionImpl,
           getPagesContainer: () => pagesContainerRef.current,
+          addCaption: (pmPos: number, prefix?: CaptionPrefix, text?: string) => {
+            const view = hiddenPMRef.current?.getView();
+            if (!view) return;
+            const tr = appendCaptionToTransaction(
+              view.state.tr,
+              view.state,
+              pmPos,
+              prefix && isCaptionPrefix(prefix) ? prefix : 'Figure',
+              text,
+              styles,
+              false
+            );
+            if (tr) view.dispatch(tr.scrollIntoView());
+          },
         });
       }
-    }, [layout, runLayoutPipeline]);
+    }, [layout, runLayoutPipeline, styles]);
     // NOTE: onReady removed from dependencies - accessed via ref to prevent infinite loops
 
     // =========================================================================
