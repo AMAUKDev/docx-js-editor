@@ -452,12 +452,39 @@ export interface DocxEditorRef {
     tagMap: Record<string, string | null | undefined>,
     options?: import('../prosemirror/autoTag/autoTagTransform').BuildAutoTagOptions
   ) => { applied: number; deferred: import('../prosemirror/autoTag/autoTagTransform').AutoTagHit[] };
-  /** Insert a cross-reference at the current cursor position */
+  /**
+   * Insert a cross-reference. Defaults to the current cursor position; pass `pmPos` to
+   * place it explicitly (for callers that have no selection, such as an agent).
+   *
+   * `refTarget` must match the target's full text as `crossRefUpdater` sees it — for a
+   * caption that includes its resolved number, e.g. "Table 1: Fuel test results". Use
+   * `getReferenceable()` to read the current targets rather than composing one by hand.
+   */
   insertCrossRef: (
     refType: 'heading' | 'figure',
     refTarget: string,
     displayText: string,
-    bookmarkName?: string
+    bookmarkName?: string,
+    pmPos?: number
+  ) => void;
+  /**
+   * Insert a numbered caption ("Figure N: " / "Table N: ") after the block containing
+   * `pmPos`, carrying a real Word SEQ field so it renumbers like a manual caption.
+   * `text` is appended after the separator; omit it to leave the caption for the user.
+   */
+  addCaption: (
+    pmPos: number,
+    prefix?: import('../prosemirror/captions/captionBuilder').CaptionPrefix,
+    text?: string
+  ) => void;
+  /**
+   * Insert a table at `pmPos` (or the cursor when omitted), sized `rows` x `cols` and
+   * optionally pre-filled row-major from `data`.
+   */
+  insertTable: (
+    rows: number,
+    cols: number,
+    options?: { pmPos?: number; data?: string[][] }
   ) => void;
   /** Get all headings and captions in the document for cross-reference picking */
   getReferenceable: () => Array<{
@@ -3532,7 +3559,8 @@ body { background: white; }
         refType: 'heading' | 'figure',
         refTarget: string,
         displayText: string,
-        bookmarkName?: string
+        bookmarkName?: string,
+        pmPos?: number
       ) => {
         const view = pagedEditorRef.current?.getView();
         if (!view) return;
@@ -3587,11 +3615,93 @@ body { background: white; }
         // Use a fresh transaction since we may have dispatched above
         const currentView = pagedEditorRef.current?.getView();
         if (!currentView) return;
-        const tr2 = currentView.state.tr.replaceSelectionWith(node).scrollIntoView();
+        // As with insertImage: an explicit position is for callers with no selection.
+        const xrDocSize = currentView.state.doc.content.size;
+        const tr2 =
+          typeof pmPos === 'number' && pmPos >= 0 && pmPos <= xrDocSize
+            ? currentView.state.tr.insert(pmPos, node).scrollIntoView()
+            : currentView.state.tr.replaceSelectionWith(node).scrollIntoView();
         currentView.dispatch(tr2);
         pagedEditorRef.current?.focus();
       },
-      insertImage: (dataUrl: string, alt: string, width: number, height: number) => {
+      addCaption: (
+        pmPos: number,
+        prefix?: import('../prosemirror/captions/captionBuilder').CaptionPrefix,
+        text?: string
+      ) => {
+        pagedEditorRef.current?.addCaption(pmPos, prefix, text);
+      },
+      insertTable: (rows: number, cols: number, options?: { pmPos?: number; data?: string[][] }) => {
+        const view = pagedEditorRef.current?.getView();
+        if (!view || !Number.isInteger(rows) || !Number.isInteger(cols)) return;
+        if (rows < 1 || cols < 1) return;
+
+        // Drive the real table command rather than building the node here: it owns the
+        // border/width/house-style defaults, so a table inserted this way is identical to
+        // one inserted from the toolbar.
+        //
+        // The command inserts at the selection, so an explicit position is applied by
+        // moving the selection first. NOTE: the agent API is deliberately NOT used —
+        // DocumentAgent wraps a snapshot taken for export, not the live view, so a table
+        // inserted through it would never appear in the editor.
+        const pmPos = options?.pmPos;
+        if (typeof pmPos === 'number') {
+          if (!Number.isInteger(pmPos) || pmPos < 0 || pmPos > view.state.doc.content.size) return;
+          view.dispatch(
+            view.state.tr.setSelection(TextSelection.create(view.state.doc, pmPos))
+          );
+        }
+
+        const afterSelect = pagedEditorRef.current?.getView();
+        if (!afterSelect) return;
+        // Commands MUST come from this editor's own extensionManager, not the module-level
+        // singleton: the singleton is bound to a different schema, so its table command
+        // silently does nothing here (no error, no change).
+        const inserted = extensionManager
+          .getCommands()
+          .insertTable(rows, cols)(afterSelect.state, afterSelect.dispatch);
+        if (!inserted) return;
+
+        const data = options?.data;
+        if (!data?.length) return;
+
+        const filled = pagedEditorRef.current?.getView();
+        if (!filled) return;
+
+        // Locate the table via the selection the command just placed inside it. Scanning
+        // the document for a table would find the wrong one whenever the report already
+        // contains tables after the insertion point.
+        const context = getTableContext(filled.state);
+        if (!context.isInTable || context.tablePos === undefined || !context.table) return;
+        const tablePos = context.tablePos;
+        const tableNode = context.table;
+
+        // Fill row-major in ONE transaction so the caller gets a single undo step.
+        // Positions are computed against the pre-fill document and mapped through the
+        // transaction, since each insert shifts everything after it.
+        const fillTr = filled.state.tr;
+        fillTr.setMeta('allowLockedEdit', true);
+        tableNode.forEach((rowNode, rowOffset, rowIndex) => {
+          rowNode.forEach((cellNode, cellOffset, colIndex) => {
+            const value = data[rowIndex]?.[colIndex];
+            if (value == null || value === '') return;
+            // Only a cell whose first child is a paragraph can take text.
+            if (cellNode.firstChild?.type.name !== 'paragraph') return;
+            // table open(1) + row offset + row open(1) + cell offset + cell open(1)
+            // + paragraph open(1)
+            const paragraphStart = tablePos + 1 + rowOffset + 1 + cellOffset + 1 + 1;
+            fillTr.insertText(String(value), fillTr.mapping.map(paragraphStart));
+          });
+        });
+        if (fillTr.docChanged) filled.dispatch(fillTr);
+      },
+      insertImage: (
+        dataUrl: string,
+        alt: string,
+        width: number,
+        height: number,
+        pmPos?: number
+      ) => {
         const view = pagedEditorRef.current?.getView();
         if (!view) return;
         const { schema } = view.state;
@@ -3618,7 +3728,14 @@ body { background: white; }
           displayMode: 'inline',
         });
 
-        const { from } = view.state.selection;
+        // An explicit position lets a caller that has no cursor (e.g. an agent applying a
+        // review) place the image deterministically; without one we fall back to the
+        // selection, which is what the toolbar has always done.
+        const docSize = view.state.doc.content.size;
+        const from =
+          typeof pmPos === 'number' && pmPos >= 0 && pmPos <= docSize
+            ? pmPos
+            : view.state.selection.from;
         const tr = view.state.tr.insert(from, imageNode);
         tr.setMeta('allowLockedEdit', true);
 
