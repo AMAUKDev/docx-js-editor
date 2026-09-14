@@ -119,8 +119,6 @@ import {
   toggleItalic,
   toggleUnderline,
   toggleStrike,
-  toggleSuperscript,
-  toggleSubscript,
   toggleAllCaps,
   toggleSmallCaps,
   setTextColor,
@@ -195,6 +193,7 @@ import {
 } from '../prosemirror/plugins/crossRefUpdater';
 import { createSelectiveEditablePlugin } from '../prosemirror/plugins/SelectiveEditablePlugin';
 import { createProtectedRegionNotifyPlugin } from '../prosemirror/plugins/ProtectedRegionNotifyPlugin';
+import { createOrdinalSuffixPlugin } from '../prosemirror/ordinalSuffix/ordinalSuffixPlugin';
 import {
   createSuggestionModePlugin,
   setSuggestionMode,
@@ -1293,7 +1292,24 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     enableKeyboardShortcuts: true,
   });
 
-  // Extension manager — built once, provides schema + plugins + commands
+  // Extension manager — built once, provides schema + plugins + commands.
+  //
+  // IMPORTANT: this schema is a SEPARATE instance from the module-level
+  // `singletonManager`/`schema` exported by `../prosemirror/schema` (which
+  // `../prosemirror/commands/formatting.ts`'s top-level command exports —
+  // toggleBold, toggleSuperscript, etc. — are permanently bound to at module
+  // load). `HiddenProseMirror`'s `createInitialState` builds this view's actual
+  // document with `manager.getSchema()` (this one), not the singleton. Mark-type
+  // equality in ProseMirror is by object identity, so a `formatting.ts` command
+  // checking "does this range have mark X" against the SINGLETON's mark-type
+  // object never matches a mark applied via THIS schema's type — e.g. one added
+  // by any plugin, an imported document, or AMAi content. The command then
+  // concludes "not marked" and ADDS its own (differently-typed) mark instead of
+  // removing the existing one, leaving two mark instances stacked on the same
+  // text (both rendering identically, e.g. nested `<sup><sup>`). Always dispatch
+  // toggle commands via `extensionManager.getCommands()` (bound to THIS view's
+  // real schema) inside this component, never the `formatting.ts` singleton
+  // exports.
   const extensionManager = useMemo(() => {
     const disable = enableContextTags ? [] : ['contextTag'];
     const mgr = new ExtensionManager(createStarterKit({ disable }));
@@ -1323,9 +1339,11 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
   // be activated/deactivated via dispatch without recreating the EditorState.
   // initialActive captures the mode at mount time (04b470b fix).
   const initialSuggestionActive = useRef(editingMode === 'suggesting');
+  const ordinalSuffixPlugin = useMemo(() => createOrdinalSuffixPlugin(), []);
   const mergedPlugins = useMemo(() => {
     const plugins = externalPlugins ? [...externalPlugins] : [];
     plugins.push(crossRefUpdaterPlugin);
+    plugins.push(ordinalSuffixPlugin);
     if (restrictedMode) {
       plugins.push(createStyleEnforcerPlugin({ allowedStyleIds }));
     }
@@ -1342,6 +1360,7 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
     allowedStyleIds,
     externalPlugins,
     crossRefUpdaterPlugin,
+    ordinalSuffixPlugin,
     lockedEditing,
     onProtectedRegionEdit,
   ]);
@@ -2593,11 +2612,15 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
         return;
       }
       if (action === 'superscript') {
-        toggleSuperscript(view.state, view.dispatch);
+        // Use the commands bound to THIS view's actual schema (extensionManager),
+        // not the module-singleton-schema-bound `toggleSuperscript` import — see
+        // the fix note above `extensionManager`'s declaration for why singleton
+        // commands silently fail to recognize marks applied via any other path.
+        extensionManager.getCommands().toggleSuperscript()(view.state, view.dispatch);
         return;
       }
       if (action === 'subscript') {
-        toggleSubscript(view.state, view.dispatch);
+        extensionManager.getCommands().toggleSubscript()(view.state, view.dispatch);
         return;
       }
       if (action === 'allCaps') {
@@ -2740,7 +2763,7 @@ export const DocxEditor = forwardRef<DocxEditorRef, DocxEditorProps>(function Do
         }
       }
     },
-    [getActiveEditorView]
+    [getActiveEditorView, extensionManager]
   );
 
   // Handle zoom change
