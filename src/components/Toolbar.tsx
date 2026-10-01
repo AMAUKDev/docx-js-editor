@@ -896,10 +896,9 @@ export function Toolbar({
             }
             ariaLabel="Toggle render mode"
             disabled={disabled}
-            className="!w-auto gap-1 px-2 !text-xs"
+            className="!w-auto px-2 !text-xs"
           >
-            <MaterialSymbol name="data_object" size={ICON_SIZE} />
-            {renderMode === 'rendered' ? 'Tag values' : 'Tag names'}
+            {renderMode === 'rendered' ? '{Tag values}' : '{Tag names}'}
           </ToolbarButton>
         </ToolbarGroup>
       )}
