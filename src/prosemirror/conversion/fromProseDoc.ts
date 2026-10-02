@@ -111,20 +111,7 @@ function extractBlocks(pmDoc: PMNode): (Paragraph | Table)[] {
     } else if (node.type.name === 'table') {
       blocks.push(convertPMTable(node));
     } else if (node.type.name === 'textBox') {
-      const attrs = node.attrs as TextBoxAttrs;
-      if (attrs._originalDrawingXml) {
-        // A text box read from the file goes back into the paragraph that held it (the block
-        // before it, see toProseDoc), at the same place in that paragraph's text.
-        let anchor = blocks[blocks.length - 1];
-        if (anchor?.type !== 'paragraph') {
-          anchor = { type: 'paragraph', content: [] };
-          blocks.push(anchor);
-        }
-        insertRunAtTextOffset(anchor, convertPMAnchoredTextBox(node), attrs._anchorTextOffset ?? 0);
-      } else {
-        // Convert text box back to a paragraph containing a shape with text body
-        blocks.push(convertPMTextBox(node));
-      }
+      addPMTextBox(blocks, node);
     } else if (node.type.name === 'pageBreak') {
       // Convert page break node to a paragraph with a page break run
       blocks.push(createPageBreakParagraph());
@@ -1431,6 +1418,8 @@ function convertPMTableCell(node: PMNode): TableCell {
       content.push(convertPMParagraph(contentNode));
     } else if (contentNode.type.name === 'table') {
       content.push(convertPMTable(contentNode));
+    } else if (contentNode.type.name === 'textBox') {
+      addPMTextBox(content, contentNode);
     }
   });
 
@@ -1626,6 +1615,26 @@ function convertPMTextBox(node: PMNode): Paragraph {
     type: 'paragraph',
     content: [run],
   };
+}
+
+/**
+ * Add a textBox node to the blocks being saved (the body's, a cell's, or a header's). A text box
+ * read from the file goes back into the paragraph that held it (the block before it, see
+ * toProseDoc), at the same place in that paragraph's text.
+ */
+function addPMTextBox(blocks: (Paragraph | Table)[], node: PMNode): void {
+  const attrs = node.attrs as TextBoxAttrs;
+  if (!attrs._originalDrawingXml) {
+    // Convert text box back to a paragraph containing a shape with text body
+    blocks.push(convertPMTextBox(node));
+    return;
+  }
+  let anchor = blocks[blocks.length - 1];
+  if (anchor?.type !== 'paragraph') {
+    anchor = { type: 'paragraph', content: [] };
+    blocks.push(anchor);
+  }
+  insertRunAtTextOffset(anchor, convertPMAnchoredTextBox(node), attrs._anchorTextOffset ?? 0);
 }
 
 /**

@@ -88,14 +88,10 @@ export function toProseDoc(document: Document, options?: ToProseDocOptions): PMN
           nodes.push(loopNode);
           continue;
         }
-        // Extract text boxes from paragraph runs before converting
-        const textBoxes = extractTextBoxesFromParagraph(block);
         const pmParagraph = convertParagraph(block, styleResolver);
         nodes.push(pmParagraph);
         // Append any text box nodes after the paragraph
-        for (const anchored of textBoxes) {
-          nodes.push(convertTextBox(anchored, styleResolver));
-        }
+        nodes.push(...convertTextBoxesIn(block, styleResolver));
         // If any run in this paragraph contains a page break, emit a pageBreak node after
         if (paragraphHasPageBreak(block)) {
           nodes.push(schema.node('pageBreak'));
@@ -1050,6 +1046,8 @@ function convertTableCell(
         contentNodes.push(
           convertParagraph(content, styleResolver, undefined, conditionalStyle?.rPr)
         );
+        // Text boxes in a cell's paragraph stand after it in the cell, as in the body
+        contentNodes.push(...convertTextBoxesIn(content, styleResolver));
       }
     } else if (content.type === 'table') {
       // Nested tables - recursively convert
@@ -1933,6 +1931,16 @@ function extractTextBoxesFromParagraph(paragraph: Paragraph): AnchoredTextBox[] 
 }
 
 /**
+ * The text boxes a paragraph holds, as textBox blocks to stand straight after it (in the body,
+ * a table cell, or a header or footer being edited). Saving puts each back in the paragraph.
+ */
+function convertTextBoxesIn(paragraph: Paragraph, styleResolver: StyleResolver | null): PMNode[] {
+  return extractTextBoxesFromParagraph(paragraph).map((anchored) =>
+    convertTextBox(anchored, styleResolver)
+  );
+}
+
+/**
  * Convert a TextBox to a ProseMirror textBox node
  */
 function convertTextBox(anchored: AnchoredTextBox, styleResolver: StyleResolver | null): PMNode {
@@ -2012,6 +2020,7 @@ export function headerFooterToProseDoc(
   for (const block of content) {
     if (block.type === 'paragraph') {
       nodes.push(convertParagraph(block, styleResolver));
+      nodes.push(...convertTextBoxesIn(block, styleResolver));
     } else if (block.type === 'table') {
       nodes.push(convertTable(block, styleResolver));
     }

@@ -1,11 +1,12 @@
 /**
- * A text box anchored in a body paragraph: it loads (the document rule has room for the
- * textBox block), its words are read and shown on the page, and saving puts Word's own XML
- * for the box back unchanged in the paragraph that held it.
+ * A text box anchored in a body paragraph or in a table cell's paragraph: it loads (the
+ * document and cell rules have room for the textBox block), its words are read and shown on
+ * the page, and saving puts Word's own XML for the box back unchanged in the paragraph that
+ * held it. A header being edited keeps its text boxes the same way.
  *
- * The .docx is built here from made-up text: a title, a "Notes: " paragraph holding an
- * anchored text box (Word's form: the drawing, with the VML picture as the fallback) and a
- * closing paragraph.
+ * The .docx is built here from made-up text: a title, a "Notes: " paragraph (or a table of
+ * photograph captions) holding an anchored text box (Word's form: the drawing, with the VML
+ * picture as the fallback) and a closing paragraph.
  */
 
 import { describe, test, expect } from 'bun:test';
@@ -15,15 +16,17 @@ import type { Node as PMNode } from 'prosemirror-model';
 import { parseDocx } from '../../docx/parser';
 import { repackDocx } from '../../docx/rezip';
 import { toFlowBlocks } from '../../layout-bridge/toFlowBlocks';
-import type { ParagraphBlock } from '../../layout-engine/types';
+import type { ParagraphBlock, TableBlock } from '../../layout-engine/types';
 import type { Document } from '../../types/document';
-import { toProseDoc } from './toProseDoc';
-import { fromProseDoc } from './fromProseDoc';
+import { headerFooterToProseDoc, toProseDoc } from './toProseDoc';
+import { fromProseDoc, proseDocToBlocks } from './fromProseDoc';
 
 const TITLE = 'MADE-UP PHOTOGRAPHIC REPORT';
 const NOTES = 'Notes: ';
 const TEXT_BOX_WORDS = 'Text box: made-up draft copy';
 const CLOSING = 'Made-up closing line.';
+const CAPTION = 'Photo 1: ';
+const OTHER_CAPTION = 'Photo 2: made-up sounding tape';
 
 const NAMESPACES = [
   'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"',
@@ -58,6 +61,14 @@ const TEXT_BOX =
   `<v:textbox>${TEXT_BOX_CONTENT}</v:textbox></v:shape></w:pict></mc:Fallback></mc:AlternateContent>`;
 const TEXT_BOX_RUN = `<w:r>${TEXT_BOX}</w:r>`;
 
+const cell = (content: string) =>
+  `<w:tc><w:tcPr><w:tcW w:w="4500" w:type="dxa"/></w:tcPr>${content}</w:tc>`;
+/** A table of two photograph captions, the first one's paragraph holding the text box. */
+const CAPTIONS_WITH_BOX =
+  '<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr>' +
+  '<w:tblGrid><w:gridCol w:w="4500"/><w:gridCol w:w="4500"/></w:tblGrid>' +
+  `<w:tr>${cell(`<w:p>${run(CAPTION)}${TEXT_BOX_RUN}</w:p>`)}${cell(paragraph(OTHER_CAPTION))}</w:tr></w:tbl>`;
+
 /** The text box XML with what is inside each w:txbxContent left out. */
 const frameOf = (xml: string) =>
   xml.replace(/<w:txbxContent>.*?<\/w:txbxContent>/g, '<w:txbxContent/>');
@@ -76,12 +87,12 @@ const PACKAGE_RELS =
   '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>' +
   '</Relationships>';
 
-/** A made-up report whose middle paragraph is `notesParagraph`. */
-async function reportDocx(notesParagraph = `<w:p>${run(NOTES)}${TEXT_BOX_RUN}</w:p>`) {
+/** A made-up report whose middle part (a paragraph or a table) is `middle`. */
+async function reportDocx(middle = `<w:p>${run(NOTES)}${TEXT_BOX_RUN}</w:p>`) {
   const documentXml =
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document ${NAMESPACES}><w:body>` +
     `<w:p><w:r><w:rPr><w:b/></w:rPr><w:t>${TITLE}</w:t></w:r></w:p>` +
-    notesParagraph +
+    middle +
     paragraph(CLOSING) +
     '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/>' +
     '<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="708" w:footer="708" w:gutter="0"/>' +
@@ -210,5 +221,73 @@ describe('text box anchored in a body paragraph', () => {
     expect(frameOf(saved)).toBe(frameOf(TEXT_BOX));
     expect(saved.split(`${TEXT_BOX_WORDS} (edited)`)).toHaveLength(3);
     expect(xml).toContain(`${NOTES}</w:t></w:r><w:r>${TEXT_BOX.slice(0, 40)}`);
+  });
+});
+
+describe('text box anchored in a table cell', () => {
+  test('the editor document is valid, with the box after its paragraph in the cell', async () => {
+    const doc = await parseDocx(await reportDocx(CAPTIONS_WITH_BOX), { preloadFonts: false });
+    const pmDoc = toProseDoc(doc);
+
+    expect(() => pmDoc.check()).not.toThrow();
+    const firstCell = pmDoc.child(1).child(0).child(0);
+    const names: string[] = [];
+    firstCell.forEach((node) => names.push(node.type.name));
+    expect(names).toEqual(['paragraph', 'textBox']);
+    expect(firstCell.child(1).textContent).toBe(TEXT_BOX_WORDS);
+  });
+
+  test("the page shows the box's words inside its cell, at the box's place in the document", async () => {
+    const doc = await parseDocx(await reportDocx(CAPTIONS_WITH_BOX), { preloadFonts: false });
+    const pmDoc = toProseDoc(doc);
+    const boxStart = positionAfter(pmDoc, CAPTION) + 1; // the caption paragraph closes, the box opens
+
+    const table = toFlowBlocks(pmDoc, { pageContentWidth: 600 })[1] as TableBlock;
+    const cellBlocks = table.rows[0].cells[0].blocks as ParagraphBlock[];
+    const textOf = (block: ParagraphBlock) =>
+      block.runs.map((r) => ('text' in r ? r.text : '')).join('');
+    expect(cellBlocks.map(textOf)).toEqual([CAPTION, TEXT_BOX_WORDS]);
+    expect(cellBlocks[1].pmStart).toBe(boxStart + 1);
+  });
+
+  test("an edit elsewhere keeps the text box's XML unchanged, in its place in its cell", async () => {
+    const doc = await parseDocx(await reportDocx(CAPTIONS_WITH_BOX), { preloadFonts: false });
+    const xml = await saveAfterTyping(doc, CLOSING, ' Edited.');
+
+    expect(xml).toContain(`${CAPTION}</w:t></w:r>${TEXT_BOX_RUN}</w:p></w:tc>`);
+    expect(xml.split('<mc:AlternateContent>')).toHaveLength(2);
+    expect(xml).toContain(OTHER_CAPTION);
+  });
+
+  test("an edit inside the box rewrites only the box's words, in the drawing and its fallback", async () => {
+    const doc = await parseDocx(await reportDocx(CAPTIONS_WITH_BOX), { preloadFonts: false });
+    const xml = await saveAfterTyping(doc, TEXT_BOX_WORDS, ' (edited)');
+
+    const saved = xml.match(/<mc:AlternateContent>.*<\/mc:AlternateContent>/)?.[0] ?? '';
+    expect(frameOf(saved)).toBe(frameOf(TEXT_BOX));
+    expect(saved.split(`${TEXT_BOX_WORDS} (edited)`)).toHaveLength(3);
+    expect(xml).toContain(`${CAPTION}</w:t></w:r><w:r>${TEXT_BOX.slice(0, 40)}`);
+  });
+});
+
+describe('text box in a header being edited', () => {
+  test('the header editor shows the box, and saving the header keeps its XML unchanged', async () => {
+    const doc = await parseDocx(await reportDocx(), { preloadFonts: false });
+    const notes = doc.package.document.content[1]; // the same paragraph, as a header would hold it
+    if (notes.type !== 'paragraph') throw new Error('expected the Notes paragraph');
+
+    const pmDoc = headerFooterToProseDoc([notes]);
+    expect(() => pmDoc.check()).not.toThrow();
+    expect(pmDoc.child(1).type.name).toBe('textBox');
+    expect(pmDoc.child(1).textContent).toBe(TEXT_BOX_WORDS);
+
+    const [saved] = proseDocToBlocks(pmDoc);
+    if (saved.type !== 'paragraph') throw new Error('expected the paragraph back');
+    const boxes = saved.content.flatMap((item) =>
+      item.type === 'run' ? item.content.filter((part) => part.type === 'shape') : []
+    );
+    expect(boxes).toEqual([
+      expect.objectContaining({ originalXml: TEXT_BOX, textBodyChanged: false }),
+    ]);
   });
 });

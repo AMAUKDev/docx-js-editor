@@ -383,7 +383,8 @@ function buildCellWidthStyles(attrs: TableCellAttrs): string[] {
 }
 
 const tableCellSpec: NodeSpec = {
-  content: '(paragraph | table | loopBlock)+',
+  // textBox: a text box read from a cell's paragraph stands after it (toProseDoc)
+  content: '(paragraph | table | textBox | loopBlock)+',
   tableRole: 'cell',
   isolating: true,
   attrs: {
@@ -441,7 +442,7 @@ const tableCellSpec: NodeSpec = {
 };
 
 const tableHeaderSpec: NodeSpec = {
-  content: '(paragraph | table | loopBlock)+',
+  content: '(paragraph | table | textBox | loopBlock)+',
   tableRole: 'header_cell',
   isolating: true,
   attrs: {
