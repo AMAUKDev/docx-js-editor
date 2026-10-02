@@ -46,9 +46,11 @@ import {
   type XmlElement,
 } from './xmlParser';
 
-// Import paragraph parser for text box content
-// Note: This creates a circular dependency that we handle by lazy importing
-// or by having textbox parsing as a separate step
+/**
+ * Parses the paragraphs of a text box (w:txbxContent). The paragraph parser hands one
+ * down through the run parser, because this module cannot import it (circular dependency).
+ */
+export type TextBoxContentParser = (txbxContent: XmlElement) => Paragraph[];
 
 // ============================================================================
 // CONSTANTS
@@ -691,17 +693,20 @@ function parseBodyProperties(bodyPr: XmlElement | null): {
 
 /**
  * Parse text box content (w:txbxContent)
- * This returns placeholder paragraphs - actual parsing happens in paragraphParser
- * to avoid circular dependencies
+ * With `parseContent` (handed down by the paragraph parser) the paragraphs are read in full.
+ * Without it, this returns one empty placeholder paragraph per w:p.
  */
-function parseTextBoxContent(txbxContent: XmlElement | null): Paragraph[] {
+function parseTextBoxContent(
+  txbxContent: XmlElement | null,
+  parseContent?: TextBoxContentParser
+): Paragraph[] {
   if (!txbxContent) {
     return [];
   }
+  if (parseContent) {
+    return parseContent(txbxContent);
+  }
 
-  // Return placeholder - actual parsing requires paragraph parser
-  // which creates a circular dependency. The document parser should
-  // handle this by parsing text box content separately.
   const paragraphs: Paragraph[] = [];
 
   const pElements = findAllByLocalName(txbxContent, 'p');
@@ -754,12 +759,14 @@ function extractTextBoxImage(
  * Parse a wps:wsp (Word Processing Shape) element
  *
  * @param node - The wps:wsp XML element
+ * @param parseContent - Reads the text box's paragraphs (see TextBoxContentParser)
  * @returns Parsed Shape object
  */
 export function parseShape(
   node: XmlElement,
   rels?: RelationshipMap,
-  media?: Map<string, MediaFile>
+  media?: Map<string, MediaFile>,
+  parseContent?: TextBoxContentParser
 ): Shape {
   const children = getChildElements(node);
 
@@ -818,7 +825,7 @@ export function parseShape(
   // Parse text body if present
   if (txbxContent || bodyPr) {
     const bodyProps = parseBodyProperties(bodyPr ?? null);
-    const content = parseTextBoxContent(txbxContent);
+    const content = parseTextBoxContent(txbxContent, parseContent);
 
     if (content.length > 0 || Object.keys(bodyProps).length > 0) {
       shape.textBody = {
@@ -841,12 +848,14 @@ export function parseShape(
  * Parse shape from a w:drawing element that contains a shape (not an image)
  *
  * @param drawingEl - The w:drawing element
+ * @param parseContent - Reads a text box's paragraphs (see TextBoxContentParser)
  * @returns Parsed Shape object or null if not a shape
  */
 export function parseShapeFromDrawing(
   drawingEl: XmlElement,
   rels?: RelationshipMap,
-  media?: Map<string, MediaFile>
+  media?: Map<string, MediaFile>,
+  parseContent?: TextBoxContentParser
 ): Shape | null {
   const children = getChildElements(drawingEl);
 
@@ -871,7 +880,7 @@ export function parseShapeFromDrawing(
   if (!wsp) return null;
 
   // Parse the shape
-  const shape = parseShape(wsp, rels, media);
+  const shape = parseShape(wsp, rels, media, parseContent);
 
   // Get extent from container (overrides spPr size)
   const extent = findByFullName(container, 'wp:extent');

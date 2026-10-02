@@ -721,13 +721,49 @@ function serializeShapeTextBody(paragraphs: Paragraph[]): string {
   return paragraphs.map((p) => serializeParagraph(p)).join('');
 }
 
+const TEXT_BOX_CONTENT_TAG = /<(\/?)w:txbxContent(?=[\s/>])[^>]*?(\/?)>/g;
+
+/**
+ * Replace what is inside each outermost w:txbxContent of a text box's original XML (the
+ * drawing and, under mc:AlternateContent, its VML fallback) and keep everything else as it was.
+ */
+function replaceTextBoxContent(xml: string, innerXml: string): string {
+  let result = '';
+  let copiedTo = 0;
+  let depth = 0;
+  for (const tag of xml.matchAll(TEXT_BOX_CONTENT_TAG)) {
+    const [text, closing, selfClosing] = tag;
+    const start = tag.index ?? 0;
+    if (selfClosing) {
+      if (depth === 0) {
+        result += `${xml.slice(copiedTo, start)}<w:txbxContent>${innerXml}</w:txbxContent>`;
+        copiedTo = start + text.length;
+      }
+    } else if (!closing) {
+      if (depth === 0) {
+        result += xml.slice(copiedTo, start + text.length) + innerXml;
+      }
+      depth++;
+    } else {
+      depth--;
+      if (depth === 0) copiedTo = start;
+    }
+  }
+  return result + xml.slice(copiedTo);
+}
+
 /**
  * Serialize shape content to full DrawingML XML (wps:wsp inside w:drawing)
  */
 function serializeShapeContent(content: ShapeContent): string {
   // If we have preserved original XML, emit it verbatim (lossless round-trip)
   if (content.originalXml) {
-    return content.originalXml;
+    return content.textBodyChanged && content.shape.textBody
+      ? replaceTextBoxContent(
+          content.originalXml,
+          serializeShapeTextBody(content.shape.textBody.content)
+        )
+      : content.originalXml;
   }
 
   const shape = content.shape;

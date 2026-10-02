@@ -53,6 +53,8 @@ import type {
   TableCellAttrs,
 } from '../schema/nodes';
 import type { TextColorAttrs, UnderlineAttrs, FontFamilyAttrs } from '../schema/marks';
+import type { TextBoxAttrs } from '../extensions/nodes/TextBoxExtension';
+import { insertRunAtTextOffset, textBoxContentKey } from './textBoxAnchor';
 
 /**
  * Convert a ProseMirror document to our Document type
@@ -109,8 +111,20 @@ function extractBlocks(pmDoc: PMNode): (Paragraph | Table)[] {
     } else if (node.type.name === 'table') {
       blocks.push(convertPMTable(node));
     } else if (node.type.name === 'textBox') {
-      // Convert text box back to a paragraph containing a shape with text body
-      blocks.push(convertPMTextBox(node));
+      const attrs = node.attrs as TextBoxAttrs;
+      if (attrs._originalDrawingXml) {
+        // A text box read from the file goes back into the paragraph that held it (the block
+        // before it, see toProseDoc), at the same place in that paragraph's text.
+        let anchor = blocks[blocks.length - 1];
+        if (anchor?.type !== 'paragraph') {
+          anchor = { type: 'paragraph', content: [] };
+          blocks.push(anchor);
+        }
+        insertRunAtTextOffset(anchor, convertPMAnchoredTextBox(node), attrs._anchorTextOffset ?? 0);
+      } else {
+        // Convert text box back to a paragraph containing a shape with text body
+        blocks.push(convertPMTextBox(node));
+      }
     } else if (node.type.name === 'pageBreak') {
       // Convert page break node to a paragraph with a page break run
       blocks.push(createPageBreakParagraph());
@@ -1534,11 +1548,10 @@ function tableCellAttrsToFormatting(attrs: TableCellAttrs): TableCellFormatting 
 // ============================================================================
 
 /**
- * Convert a ProseMirror textBox node back to a Paragraph wrapping a ShapeContent run.
- * The text box content becomes a Shape with textBody.
+ * The Shape a ProseMirror textBox node saves as: its content becomes the shape's textBody.
  */
-function convertPMTextBox(node: PMNode): Paragraph {
-  const attrs = node.attrs as import('../extensions/nodes/TextBoxExtension').TextBoxAttrs;
+function textBoxShape(node: PMNode): Shape {
+  const attrs = node.attrs as TextBoxAttrs;
 
   // Extract child paragraphs from the text box content
   const childParagraphs: Paragraph[] = [];
@@ -1597,13 +1610,40 @@ function convertPMTextBox(node: PMNode): Paragraph {
     };
   }
 
+  return shape;
+}
+
+/**
+ * Convert a ProseMirror textBox node back to a Paragraph wrapping a ShapeContent run.
+ * The text box content becomes a Shape with textBody.
+ */
+function convertPMTextBox(node: PMNode): Paragraph {
   // Wrap the shape in a paragraph with a run containing ShapeContent
-  const shapeContent: ShapeContent = { type: 'shape', shape };
+  const shapeContent: ShapeContent = { type: 'shape', shape: textBoxShape(node) };
   const run: Run = { type: 'run', content: [shapeContent] };
 
   return {
     type: 'paragraph',
     content: [run],
+  };
+}
+
+/**
+ * Convert a text box read from the file back to the run that held it: Word's own XML for
+ * the box, saved unchanged, with only its paragraphs rewritten when they were edited.
+ */
+function convertPMAnchoredTextBox(node: PMNode): Run {
+  const attrs = node.attrs as TextBoxAttrs;
+  const shapeContent: ShapeContent = {
+    type: 'shape',
+    shape: textBoxShape(node),
+    originalXml: attrs._originalDrawingXml ?? undefined,
+    textBodyChanged: textBoxContentKey(node.content) !== attrs._originalContentKey,
+  };
+  return {
+    type: 'run',
+    formatting: attrs._anchorRunFormatting ?? undefined,
+    content: [shapeContent],
   };
 }
 

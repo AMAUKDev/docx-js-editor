@@ -27,6 +27,7 @@ import type {
   ParagraphAttrs,
 } from '../layout-engine/types';
 import type { ParagraphAttrs as PMParagraphAttrs } from '../prosemirror/schema/nodes';
+import type { TextBoxAttrs } from '../prosemirror/extensions/nodes/TextBoxExtension';
 import type {
   TextColorAttrs,
   UnderlineAttrs,
@@ -657,7 +658,7 @@ function paragraphToRuns(node: PMNode, startPos: number, _options: ToFlowBlocksO
  */
 function convertParagraphAttrs(
   pmAttrs: PMParagraphAttrs,
-  defaultAlignment?: ToFlowBlocksOptions['defaultAlignment'],
+  defaultAlignment?: ToFlowBlocksOptions['defaultAlignment']
 ): ParagraphAttrs {
   const attrs: ParagraphAttrs = {};
 
@@ -1216,6 +1217,54 @@ function convertTable(node: PMNode, startPos: number, options: ToFlowBlocksOptio
 }
 
 /**
+ * Convert a text box node: its paragraphs and tables flow straight after the paragraph that
+ * holds the box, framed by the box's outline and filled with its fill, so its words can be read
+ * and edited in place. (Word floats the box beside the text instead.)
+ */
+function convertTextBox(node: PMNode, startPos: number, options: ToFlowBlocksOptions): FlowBlock[] {
+  const attrs = node.attrs as TextBoxAttrs;
+  const frame: BorderStyle | undefined =
+    attrs.outlineWidth && attrs.outlineWidth > 0
+      ? {
+          style: attrs.outlineStyle || 'solid',
+          width: Math.max(1, attrs.outlineWidth),
+          color: attrs.outlineColor || '#000000',
+          space: 0,
+        }
+      : undefined;
+  // The box's side margins go in the indent (which measuring counts), not in the border spacing
+  const borders = frame && {
+    top: { ...frame, space: attrs.marginTop ?? undefined },
+    bottom: { ...frame, space: attrs.marginBottom ?? undefined },
+    left: frame,
+    right: frame,
+  };
+
+  const blocks: FlowBlock[] = [];
+  node.forEach((child, offset) => {
+    const childPos = startPos + 1 + offset; // +1 for the text box's opening tag
+    if (child.type.name === 'table') {
+      blocks.push(convertTable(child, childPos, options));
+    } else if (child.type.name === 'paragraph') {
+      const block = convertParagraph(child, childPos, options);
+      const indent = block.attrs?.indent;
+      block.attrs = {
+        ...block.attrs,
+        borders: block.attrs?.borders ?? borders,
+        shading: block.attrs?.shading ?? attrs.fillColor ?? undefined,
+        indent: {
+          ...indent,
+          left: (indent?.left ?? 0) + (attrs.marginLeft ?? 0),
+          right: (indent?.right ?? 0) + (attrs.marginRight ?? 0),
+        },
+      };
+      blocks.push(block);
+    }
+  });
+  return blocks;
+}
+
+/**
  * Convert an image node to an ImageBlock.
  */
 function convertImage(node: PMNode, startPos: number, pageContentHeight?: number): ImageBlock {
@@ -1496,6 +1545,11 @@ export function toFlowBlocks(doc: PMNode, options: ToFlowBlocksOptions = {}): Fl
 
       case 'table':
         blocks.push(convertTable(node, pos, opts));
+        i++;
+        break;
+
+      case 'textBox':
+        blocks.push(...convertTextBox(node, pos, opts));
         i++;
         break;
 

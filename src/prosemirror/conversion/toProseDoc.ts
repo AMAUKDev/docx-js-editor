@@ -47,6 +47,7 @@ import type {
 import { emuToPixels } from '../../docx/imageParser';
 import { resolveOutlineColor, resolveFillColor } from '../../docx/shapeParser';
 import { createStyleResolver, type StyleResolver } from '../styles';
+import { textBoxContentKey, textLengthOf } from './textBoxAnchor';
 import type { TableAttrs, TableRowAttrs, TableCellAttrs } from '../schema/nodes';
 
 /**
@@ -92,8 +93,8 @@ export function toProseDoc(document: Document, options?: ToProseDocOptions): PMN
         const pmParagraph = convertParagraph(block, styleResolver);
         nodes.push(pmParagraph);
         // Append any text box nodes after the paragraph
-        for (const tb of textBoxes) {
-          nodes.push(convertTextBox(tb, styleResolver));
+        for (const anchored of textBoxes) {
+          nodes.push(convertTextBox(anchored, styleResolver));
         }
         // If any run in this paragraph contains a page break, emit a pageBreak node after
         if (paragraphHasPageBreak(block)) {
@@ -1877,30 +1878,51 @@ function convertShape(shape: Shape, originalXml?: string): PMNode {
 // TEXT BOX CONVERSION
 // ============================================================================
 
+/** A text box read from a paragraph, with what saving needs to put it back unchanged. */
+interface AnchoredTextBox {
+  textBox: TextBox;
+  /** Word's own XML for the box (w:drawing or mc:AlternateContent) */
+  originalXml?: string;
+  /** Characters of the paragraph's text before the box */
+  textOffset: number;
+  /** Formatting of the run that held the box */
+  runFormatting?: TextFormatting;
+}
+
 /**
  * Extract text boxes from paragraph runs.
  * Text boxes appear as ShapeContent where the shape has textBody,
  * or as DrawingContent that contains a text box instead of an image.
  */
-function extractTextBoxesFromParagraph(paragraph: Paragraph): TextBox[] {
-  const textBoxes: TextBox[] = [];
-  for (const content of paragraph.content) {
+function extractTextBoxesFromParagraph(paragraph: Paragraph): AnchoredTextBox[] {
+  const textBoxes: AnchoredTextBox[] = [];
+  for (let index = 0; index < paragraph.content.length; index++) {
+    const content = paragraph.content[index];
     if (content.type === 'run') {
-      for (const rc of content.content) {
+      for (let partIndex = 0; partIndex < content.content.length; partIndex++) {
+        const rc = content.content[partIndex];
         if (rc.type === 'shape' && 'shape' in rc) {
           const shape = rc.shape as Shape;
           if (shape.textBody && shape.textBody.content.length > 0) {
             // Convert shape with text body to TextBox
             textBoxes.push({
-              type: 'textBox',
-              id: shape.id,
-              size: shape.size,
-              position: shape.position,
-              wrap: shape.wrap,
-              fill: shape.fill,
-              outline: shape.outline,
-              content: shape.textBody.content,
-              margins: shape.textBody.margins,
+              textBox: {
+                type: 'textBox',
+                id: shape.id,
+                size: shape.size,
+                position: shape.position,
+                wrap: shape.wrap,
+                fill: shape.fill,
+                outline: shape.outline,
+                content: shape.textBody.content,
+                margins: shape.textBody.margins,
+              },
+              originalXml: rc.originalXml,
+              textOffset: textLengthOf([
+                ...paragraph.content.slice(0, index),
+                { ...content, content: content.content.slice(0, partIndex) },
+              ]),
+              runFormatting: content.formatting,
             });
           }
         }
@@ -1913,7 +1935,8 @@ function extractTextBoxesFromParagraph(paragraph: Paragraph): TextBox[] {
 /**
  * Convert a TextBox to a ProseMirror textBox node
  */
-function convertTextBox(textBox: TextBox, styleResolver: StyleResolver | null): PMNode {
+function convertTextBox(anchored: AnchoredTextBox, styleResolver: StyleResolver | null): PMNode {
+  const { textBox } = anchored;
   const widthPx = textBox.size?.width ? emuToPixels(textBox.size.width) : 200;
   const heightPx = textBox.size?.height ? emuToPixels(textBox.size.height) : undefined;
 
@@ -1966,6 +1989,10 @@ function convertTextBox(textBox: TextBox, styleResolver: StyleResolver | null): 
       marginBottom,
       marginLeft,
       marginRight,
+      _originalDrawingXml: anchored.originalXml ?? null,
+      _anchorTextOffset: anchored.textOffset,
+      _anchorRunFormatting: anchored.runFormatting ?? null,
+      _originalContentKey: textBoxContentKey(Fragment.from(contentNodes)),
     },
     contentNodes
   );
