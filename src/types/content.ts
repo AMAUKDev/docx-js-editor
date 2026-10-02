@@ -126,6 +126,11 @@ export interface ShapeContent {
   shape: Shape;
   /** Original mc:AlternateContent or w:drawing XML for lossless round-trip */
   originalXml?: string;
+  /**
+   * The text box's paragraphs were edited: saving keeps originalXml but rewrites the
+   * text inside it (every w:txbxContent) from shape.textBody.
+   */
+  textBodyChanged?: boolean;
 }
 
 /**

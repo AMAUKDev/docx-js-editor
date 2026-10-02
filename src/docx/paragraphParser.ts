@@ -59,6 +59,8 @@ import {
 } from './bookmarkParser';
 import { parseSectionProperties } from './sectionParser';
 import { consolidateParagraphContent } from './runConsolidator';
+import { parseTextBoxContent } from './textBoxParser';
+import type { TextBoxContentParser } from './shapeParser';
 
 // ============================================================================
 // SDT PROPERTIES PARSER
@@ -615,7 +617,8 @@ export function parseParagraphProperties(
     const fpLockedAt = findChild(pPr, 'w', 'fpLockedAt');
     if (fpLockedAt) formatting.protectedAt = getAttribute(fpLockedAt, 'w', 'val') ?? undefined;
     const fpLockedReason = findChild(pPr, 'w', 'fpLockedReason');
-    if (fpLockedReason) formatting.protectedReason = getAttribute(fpLockedReason, 'w', 'val') ?? undefined;
+    if (fpLockedReason)
+      formatting.protectedReason = getAttribute(fpLockedReason, 'w', 'val') ?? undefined;
   }
 
   return Object.keys(formatting).length > 0 ? formatting : undefined;
@@ -787,12 +790,17 @@ function parseParagraphContents(
   paraElement: XmlElement,
   styles: StyleMap | null,
   theme: Theme | null,
-  _numbering: NumberingMap | null,
+  numbering: NumberingMap | null,
   rels: RelationshipMap | null,
   media: Map<string, MediaFile> | null
 ): ParagraphContent[] {
   const contents: ParagraphContent[] = [];
   const children = getChildElements(paraElement);
+
+  // A text box's paragraphs are read here, where parseParagraph is in scope; without this
+  // the shape parser can only leave an empty placeholder paragraph for each one.
+  const parseTextBox: TextBoxContentParser = (txbxContent) =>
+    parseTextBoxContent(txbxContent, parseParagraph, null, styles, theme, numbering, rels, media);
 
   // State for tracking complex fields
   let inComplexField = false;
@@ -832,7 +840,7 @@ function parseParagraphContents(
     switch (localName) {
       case 'r': {
         // Check for field characters in this run
-        const run = parseRun(child, styles, theme, rels, media);
+        const run = parseRun(child, styles, theme, rels, media, parseTextBox);
 
         // Look for field characters
         let hasFieldBegin = false;

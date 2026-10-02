@@ -7,6 +7,7 @@
  */
 
 import { createNodeExtension } from '../create';
+import type { TextFormatting } from '../../../types/document';
 
 export interface TextBoxAttrs {
   /** Width in pixels */
@@ -39,6 +40,14 @@ export interface TextBoxAttrs {
   cssFloat?: 'left' | 'right' | 'none';
   /** Wrap type */
   wrapType?: string;
+  /** Word's own XML for a text box read from a file (w:drawing or mc:AlternateContent), kept for saving */
+  _originalDrawingXml?: string | null;
+  /** Characters of the holding paragraph's text before the box */
+  _anchorTextOffset?: number | null;
+  /** Formatting of the run that held the box */
+  _anchorRunFormatting?: TextFormatting | null;
+  /** Fingerprint of the box's content when read, to tell on save whether it was edited */
+  _originalContentKey?: string | null;
 }
 
 export const TextBoxExtension = createNodeExtension({
@@ -65,6 +74,11 @@ export const TextBoxExtension = createNodeExtension({
       displayMode: { default: 'inline' },
       cssFloat: { default: null },
       wrapType: { default: 'inline' },
+      // Saving puts a text box read from a file back into the paragraph that held it (fromProseDoc)
+      _originalDrawingXml: { default: null },
+      _anchorTextOffset: { default: null },
+      _anchorRunFormatting: { default: null },
+      _originalContentKey: { default: null },
     },
     parseDOM: [
       {

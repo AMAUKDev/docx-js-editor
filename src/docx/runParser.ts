@@ -54,7 +54,7 @@ import {
 } from './xmlParser';
 import { resolveThemeFontRef } from './themeParser';
 import { parseImage } from './imageParser';
-import { parseShapeFromDrawing } from './shapeParser';
+import { parseShapeFromDrawing, type TextBoxContentParser } from './shapeParser';
 
 /**
  * Parse color value from attributes
@@ -514,7 +514,8 @@ function parseInstrText(element: XmlElement): InstrTextContent {
 function parseDrawingContent(
   element: XmlElement,
   rels: RelationshipMap | null,
-  media: Map<string, MediaFile> | null
+  media: Map<string, MediaFile> | null,
+  parseTextBox?: TextBoxContentParser
 ): DrawingContent | ShapeContent | null {
   // Try parsing as an image first
   const image = parseImage(element, rels ?? undefined, media ?? undefined);
@@ -529,7 +530,7 @@ function parseDrawingContent(
   // Fall back to shape parsing (e.g. connector lines, basic shapes).
   // This handles drawings that contain wps:wsp shapes (lines, rects, etc.)
   // rather than actual images (a:blip).
-  const shape = parseShapeFromDrawing(element, rels ?? undefined, media ?? undefined);
+  const shape = parseShapeFromDrawing(element, rels ?? undefined, media ?? undefined, parseTextBox);
   if (shape) {
     return {
       type: 'shape',
@@ -555,7 +556,8 @@ function getLocalName(name: string | undefined): string {
 function parseRunContents(
   runElement: XmlElement,
   rels: RelationshipMap | null,
-  media: Map<string, MediaFile> | null
+  media: Map<string, MediaFile> | null,
+  parseTextBox?: TextBoxContentParser
 ): RunContent[] {
   const contents: RunContent[] = [];
   const children = getChildElements(runElement);
@@ -616,7 +618,7 @@ function parseRunContents(
 
       case 'drawing': {
         // Drawing/image
-        const drawing = parseDrawingContent(child, rels, media);
+        const drawing = parseDrawingContent(child, rels, media, parseTextBox);
         if (drawing) {
           // Capture original drawing XML for shapes (not images, which may change)
           if (drawing.type === 'shape') {
@@ -647,7 +649,7 @@ function parseRunContents(
             if (inner.type !== 'element') continue;
             const innerLocal = getLocalName(inner.name);
             if (innerLocal === 'drawing') {
-              const d = parseDrawingContent(inner, rels, media);
+              const d = parseDrawingContent(inner, rels, media, parseTextBox);
               if (d) {
                 if (d.type === 'shape') {
                   (d as ShapeContent).originalXml = originalXml;
@@ -727,6 +729,7 @@ function parseRunContents(
  * @param theme - Theme for resolving theme colors/fonts
  * @param rels - Relationship map for resolving image references
  * @param media - Media files map for image data
+ * @param parseTextBox - Reads a text box's paragraphs (handed down by the paragraph parser)
  * @returns Parsed Run object
  */
 export function parseRun(
@@ -734,7 +737,8 @@ export function parseRun(
   styles: StyleMap | null,
   theme: Theme | null,
   rels: RelationshipMap | null = null,
-  media: Map<string, MediaFile> | null = null
+  media: Map<string, MediaFile> | null = null,
+  parseTextBox?: TextBoxContentParser
 ): Run {
   const run: Run = {
     type: 'run',
@@ -748,7 +752,7 @@ export function parseRun(
   }
 
   // Parse run contents (text, tabs, breaks, images, etc.)
-  run.content = parseRunContents(node, rels, media);
+  run.content = parseRunContents(node, rels, media, parseTextBox);
 
   return run;
 }
